@@ -10,8 +10,8 @@ import type {
 export interface PlatformAdapter {
   readonly platform: string
 
-  /** 创建二维码登录票据 */
-  createQrLogin(): Promise<QrLoginTicket>
+  /** 创建二维码登录票据；channel 由平台自定（如 QQ音乐的 qqmusic/wechat/qq） */
+  createQrLogin(channel?: string): Promise<QrLoginTicket>
 
   /** 轮询二维码登录状态 */
   checkQrLogin(key: string): Promise<QrLoginResult>

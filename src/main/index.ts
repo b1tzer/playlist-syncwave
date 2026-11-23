@@ -2,7 +2,7 @@ import { app, BrowserWindow, ipcMain, safeStorage } from 'electron'
 import { join } from 'node:path'
 import { netease, saveNeteaseCredential, getNeteaseCredential, logoutNetease } from './neteaseService'
 import { getQqMusic, saveQqMusicCredential, getQqMusicCredential, logoutQqMusic } from './qqMusicService'
-import { registerPlatform, getPlatform } from './platformRegistry'
+import { registerPlatform, getPlatform, resolveAdapter } from './platformRegistry'
 import { syncPlaylist } from '@core/sync/syncPlaylist'
 import type { SyncTarget } from '@core/models/sync'
 import type { MatchQuery } from '@core/models/match'
@@ -30,6 +30,13 @@ registerPlatform('qqmusic', {
   getCredential: getQqMusicCredential,
   saveCredential: saveQqMusicCredential,
   logout: logoutQqMusic,
+})
+
+// 应用就绪时预热 QQ音乐服务（异步，不阻塞启动）
+app.whenReady().then(() => {
+  void getQqMusic().catch((e) => {
+    console.error('QQ音乐服务启动失败:', e instanceof Error ? e.message : e)
+  })
 })
 
 function createWindow(): void {
@@ -64,13 +71,18 @@ ipcMain.handle('crypto:encrypt', (_event, plain: string) => {
 
 ipcMain.handle('platform:list', () => ['netease', 'qqmusic'])
 
-ipcMain.handle('platform:create-qr', async (_event, platform: string) => {
-  return getPlatform(platform).adapter.createQrLogin()
-})
+ipcMain.handle(
+  'platform:create-qr',
+  async (_event, platform: string, channel?: string) => {
+    const adapter = await resolveAdapter(platform)
+    return adapter.createQrLogin(channel)
+  },
+)
 
 ipcMain.handle('platform:check-qr', async (_event, platform: string, key: string) => {
   const services = getPlatform(platform)
-  const result = await services.adapter.checkQrLogin(key)
+  const adapter = await resolveAdapter(platform)
+  const result = await adapter.checkQrLogin(key)
   if (result.status === 'success' && result.cookie) {
     services.saveCredential(result.cookie)
   }
@@ -81,7 +93,8 @@ ipcMain.handle('platform:login-status', async (_event, platform: string) => {
   const services = getPlatform(platform)
   const credential = services.getCredential()
   if (!credential) return null
-  return services.adapter.getLoginStatus(credential)
+  const adapter = await resolveAdapter(platform)
+  return adapter.getLoginStatus(credential)
 })
 
 ipcMain.handle('platform:logout', (_event, platform: string) => {
@@ -92,16 +105,18 @@ ipcMain.handle('platform:user-playlists', async (_event, platform: string) => {
   const services = getPlatform(platform)
   const credential = services.getCredential()
   if (!credential) throw new Error('尚未登录')
-  const account = await services.adapter.getLoginStatus(credential)
+  const adapter = await resolveAdapter(platform)
+  const account = await adapter.getLoginStatus(credential)
   if (!account) throw new Error('登录已过期，请重新扫码')
-  return services.adapter.getUserPlaylists(credential, account.userId)
+  return adapter.getUserPlaylists(credential, account.userId)
 })
 
 ipcMain.handle('platform:playlist-songs', async (_event, platform: string, playlistId: string) => {
   const services = getPlatform(platform)
   const credential = services.getCredential()
   if (!credential) throw new Error('尚未登录')
-  return services.adapter.getPlaylistSongs(credential, playlistId)
+  const adapter = await resolveAdapter(platform)
+  return adapter.getPlaylistSongs(credential, playlistId)
 })
 
 ipcMain.handle(
@@ -114,7 +129,7 @@ ipcMain.handle(
     const services = getPlatform(platform)
     const credential = services.getCredential()
     if (!credential) throw new Error('尚未登录目标平台')
-    const adapter = services.adapter
+    const adapter = await resolveAdapter(platform)
     const target: SyncTarget = {
       searchSongs: (keyword, limit) => adapter.searchSongs(credential, keyword, limit),
       createPlaylist: (name) => adapter.createPlaylist(credential, name),

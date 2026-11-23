@@ -1,11 +1,18 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { PlatformAccount } from '@core/models/platform'
-import LoginSection from './components/LoginSection'
-import PlaylistSection from './components/PlaylistSection'
+import Sidebar, { type View } from './components/Sidebar'
 import TextCreator from './components/TextCreator'
+import PlaylistSection from './components/PlaylistSection'
+import LoginSection from './components/LoginSection'
+import SyncCenter, { type SyncTaskRecord } from './components/SyncCenter'
+import SettingsView from './components/SettingsView'
 
 export default function App() {
+  const [view, setView] = useState<View>('create')
   const [accounts, setAccounts] = useState<Record<string, PlatformAccount | null>>({})
+  const [tasks, setTasks] = useState<SyncTaskRecord[]>([])
+  const [search, setSearch] = useState('')
+  const searchRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     window.electronAPI.platforms
@@ -23,22 +30,103 @@ export default function App() {
     setAccounts((prev) => ({ ...prev, [platform]: account }))
   }
 
-  return (
-    <main className="min-h-screen bg-slate-50 p-8 text-slate-800">
-      <header className="mb-6 flex items-baseline justify-between">
-        <h1 className="text-2xl font-semibold">歌单同步</h1>
-        <span className="text-xs text-slate-400">本地优先 · 跨平台歌单工具</span>
-      </header>
+  const handleTaskUpdate = (t: SyncTaskRecord) => {
+    setTasks((prev) => {
+      const idx = prev.findIndex((x) => x.id === t.id)
+      if (idx === -1) return [t, ...prev]
+      const next = [...prev]
+      next[idx] = t
+      return next
+    })
+  }
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-5">
-        <div className="space-y-6 lg:col-span-2">
-          <LoginSection accounts={accounts} onAccountChange={handleAccountChange} />
-          <PlaylistSection accounts={accounts} />
-        </div>
-        <div className="lg:col-span-3">
-          <TextCreator accounts={accounts} />
-        </div>
+  const handleSearch = (value: string) => {
+    setSearch(value)
+    if (value.trim() && view !== 'playlists') setView('playlists')
+  }
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey)) return
+      const k = e.key.toLowerCase()
+      if (k === 'n') {
+        e.preventDefault()
+        setView('create')
+      } else if (k === 'p') {
+        e.preventDefault()
+        setView('playlists')
+      } else if (k === 's') {
+        e.preventDefault()
+        setView('sync')
+      } else if (k === 'a') {
+        e.preventDefault()
+        setView('accounts')
+      } else if (k === ',') {
+        e.preventDefault()
+        setView('settings')
+      } else if (k === 'k') {
+        e.preventDefault()
+        searchRef.current?.focus()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
+  const runningTasks = tasks.filter((t) => t.status === 'running').length
+
+  return (
+    <div className="flex h-full overflow-hidden">
+      <Sidebar
+        view={view}
+        onNavigate={setView}
+        runningTasks={runningTasks}
+        accounts={accounts}
+      />
+
+      <div className="flex min-w-0 flex-1 flex-col">
+        <header className="flex items-center gap-4 border-b border-outline-variant px-6 py-3">
+          <div className="flex w-96 items-center gap-2 rounded-lg border border-outline-variant bg-surface-container-low px-3 py-2 transition-colors focus-within:border-primary">
+            <span className="material-symbols-outlined text-base text-outline">search</span>
+            <input
+              ref={searchRef}
+              value={search}
+              onChange={(e) => handleSearch(e.target.value)}
+              placeholder="搜索歌单"
+              className="w-full bg-transparent font-body-md text-body-md text-on-surface outline-none placeholder:text-outline"
+            />
+            {search && (
+              <button
+                onClick={() => handleSearch('')}
+                className="text-outline transition-colors hover:text-on-surface"
+              >
+                <span className="material-symbols-outlined text-base">close</span>
+              </button>
+            )}
+            <span className="shrink-0 font-label-mono text-label-mono text-outline">⌘K</span>
+          </div>
+          <div className="ml-auto flex items-center gap-2 font-label-mono text-label-mono text-outline">
+            <span className="material-symbols-outlined text-sm">security</span>
+            本地优先 · 凭证经系统钥匙串加密
+          </div>
+        </header>
+
+        <main className="flex-1 overflow-y-auto">
+          <div className="mx-auto max-w-5xl px-6 py-6">
+            {view === 'create' && (
+              <TextCreator accounts={accounts} onTaskUpdate={handleTaskUpdate} />
+            )}
+            {view === 'playlists' && (
+              <PlaylistSection accounts={accounts} searchQuery={search} />
+            )}
+            {view === 'sync' && <SyncCenter tasks={tasks} onNewTask={() => setView('create')} />}
+            {view === 'accounts' && (
+              <LoginSection accounts={accounts} onAccountChange={handleAccountChange} />
+            )}
+            {view === 'settings' && <SettingsView />}
+          </div>
+        </main>
       </div>
-    </main>
+    </div>
   )
 }

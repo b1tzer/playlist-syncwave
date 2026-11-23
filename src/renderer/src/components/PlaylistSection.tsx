@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import type { PlatformAccount, PlatformPlaylist, PlatformSong } from '@core/models/platform'
 
 interface PlaylistSectionProps {
   accounts: Record<string, PlatformAccount | null>
+  searchQuery: string
 }
 
 const PLATFORM_NAMES: Record<string, string> = {
@@ -10,29 +11,47 @@ const PLATFORM_NAMES: Record<string, string> = {
   qqmusic: 'QQ音乐',
 }
 
-export default function PlaylistSection({ accounts }: PlaylistSectionProps) {
+export default function PlaylistSection({ accounts, searchQuery }: PlaylistSectionProps) {
   const [active, setActive] = useState<string>('netease')
   const [playlists, setPlaylists] = useState<PlatformPlaylist[]>([])
   const [songs, setSongs] = useState<PlatformSong[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string>('')
 
   const loggedIn = accounts[active] !== null
+  const keyword = searchQuery.trim().toLowerCase()
+
+  const visiblePlaylists = keyword
+    ? playlists.filter((p) => p.name.toLowerCase().includes(keyword))
+    : playlists
+
+  const fetchPlaylists = useCallback(async () => {
+    if (!loggedIn) return
+    setLoading(true)
+    setError('')
+    try {
+      setPlaylists(await window.electronAPI.platforms.userPlaylists(active))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '拉取歌单失败')
+    } finally {
+      setLoading(false)
+    }
+  }, [active, loggedIn])
 
   useEffect(() => {
     setPlaylists([])
     setSongs([])
     setActiveId(null)
-    if (!loggedIn) return
-    setLoading(true)
-    setError('')
-    window.electronAPI.platforms
-      .userPlaylists(active)
-      .then(setPlaylists)
-      .catch((e) => setError(e instanceof Error ? e.message : '拉取歌单失败'))
-      .finally(() => setLoading(false))
-  }, [active, loggedIn])
+    void fetchPlaylists()
+  }, [fetchPlaylists])
+
+  const handleRefresh = async () => {
+    setRefreshing(true)
+    await fetchPlaylists()
+    setRefreshing(false)
+  }
 
   const openPlaylist = async (id: string) => {
     setActiveId(id)
@@ -48,20 +67,32 @@ export default function PlaylistSection({ accounts }: PlaylistSectionProps) {
   }
 
   return (
-    <section className="rounded-xl border border-slate-200 bg-white p-5">
-      <div className="flex items-center justify-between">
-        <h2 className="text-base font-semibold text-slate-800">我的歌单</h2>
-        <div className="flex gap-1">
+    <div>
+      <div className="flex items-start justify-between">
+        <div>
+          <div className="flex items-center gap-2 font-label-mono text-label-mono text-primary">
+            <span className="material-symbols-outlined text-sm">library_music</span>
+            <span>MODULE://PLAYLIST_BROWSER</span>
+          </div>
+          <h1 className="mt-1 font-headline-lg text-headline-lg font-semibold">我的歌单</h1>
+          <p className="mt-1 font-body-md text-body-md text-on-surface-variant">
+            浏览已授权平台的歌单与歌曲，作为同步任务的来源
+          </p>
+        </div>
+        <div className="flex gap-1 rounded-lg border border-outline-variant bg-surface-container-low p-1">
           {Object.keys(PLATFORM_NAMES).map((p) => (
             <button
               key={p}
               onClick={() => setActive(p)}
-              className={`rounded-lg px-2.5 py-1 text-xs ${
+              className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 font-label-md text-label-md transition-colors ${
                 active === p
-                  ? 'bg-slate-800 text-white'
-                  : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
+                  ? 'bg-surface-container-highest text-primary'
+                  : 'text-on-surface-variant hover:text-on-surface'
               }`}
             >
+              <span className="material-symbols-outlined text-base">
+                {p === 'netease' ? 'graphic_eq' : 'equalizer'}
+              </span>
               {PLATFORM_NAMES[p]}
             </button>
           ))}
@@ -69,40 +100,105 @@ export default function PlaylistSection({ accounts }: PlaylistSectionProps) {
       </div>
 
       {!loggedIn ? (
-        <p className="mt-3 text-sm text-slate-400">登录后查看你的歌单</p>
+        <div className="mt-6 flex flex-col items-center rounded-lg border border-dashed border-outline-variant bg-surface-container-low px-6 py-14 text-center">
+          <span className="material-symbols-outlined text-5xl text-outline">queue_music</span>
+          <p className="mt-3 font-body-md text-body-md text-on-surface-variant">
+            登录后查看你的歌单
+          </p>
+          <p className="mt-1 font-label-sm text-label-sm text-outline">
+            前往「账号管理」扫码登录 {PLATFORM_NAMES[active]}
+          </p>
+        </div>
       ) : (
-        <div className="mt-3 flex gap-4">
-          <ul className="w-56 shrink-0 space-y-1">
-            {loading && playlists.length === 0 && (
-              <li className="text-sm text-slate-400">加载中…</li>
-            )}
-            {playlists.map((p) => (
-              <li key={p.id}>
-                <button
-                  onClick={() => openPlaylist(p.id)}
-                  className={`w-full truncate rounded-lg px-3 py-2 text-left text-sm ${
-                    activeId === p.id
-                      ? 'bg-red-50 text-red-600'
-                      : 'text-slate-600 hover:bg-slate-50'
-                  }`}
-                >
-                  {p.name}
-                  <span className="ml-1 text-xs text-slate-400">{p.songCount}</span>
-                </button>
-              </li>
-            ))}
-          </ul>
+        <div className="mt-6 flex gap-4">
+          <div className="w-64 shrink-0">
+            <div className="rounded-lg border border-outline-variant bg-surface-container-low">
+              <div className="flex items-center justify-between border-b border-outline-variant px-3 py-2">
+                <div className="flex items-center gap-1.5">
+                  <span className="font-label-sm text-label-sm text-on-surface-variant">
+                    歌单列表
+                  </span>
+                  <button
+                    onClick={handleRefresh}
+                    disabled={refreshing || loading}
+                    title="刷新歌单列表"
+                    className="flex items-center rounded-md p-1 text-on-surface-variant transition-colors hover:bg-surface-container-highest hover:text-primary disabled:opacity-50"
+                  >
+                    <span
+                      className={`material-symbols-outlined text-base ${refreshing ? 'animate-spin' : ''}`}
+                    >
+                      refresh
+                    </span>
+                  </button>
+                </div>
+                <span className="font-label-mono text-label-mono text-outline">
+                  {playlists.length}
+                </span>
+              </div>
+              <ul className="max-h-[32rem] space-y-0.5 overflow-y-auto p-1.5">
+                {loading && playlists.length === 0 && (
+                  <li className="px-2 py-2 font-label-md text-label-md text-outline">
+                    加载中…
+                  </li>
+                )}
+                {!loading && visiblePlaylists.length === 0 && (
+                  <li className="px-2 py-2 font-label-md text-label-md text-outline">
+                    {keyword ? '没有匹配的歌单' : '暂无歌单'}
+                  </li>
+                )}
+                {visiblePlaylists.map((p) => (
+                  <li key={p.id}>
+                    <button
+                      onClick={() => openPlaylist(p.id)}
+                      className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left transition-colors ${
+                        activeId === p.id
+                          ? 'bg-primary-container/15 text-primary'
+                          : 'text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface'
+                      }`}
+                    >
+                      <span className="material-symbols-outlined text-base">
+                        {activeId === p.id ? 'playlist_play' : 'queue_music'}
+                      </span>
+                      <span className="min-w-0 flex-1 truncate font-body-md text-body-md">
+                        {p.name}
+                      </span>
+                      <span className="font-label-mono text-label-mono text-outline">
+                        {p.songCount}
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
 
-          <div className="min-w-0 flex-1">
-            {error && <p className="mb-2 text-sm text-red-500">{error}</p>}
-            {loading && <p className="text-sm text-slate-400">加载中…</p>}
+          <div className="min-w-0 flex-1 rounded-lg border border-outline-variant bg-surface-container-low">
+            <div className="flex items-center justify-between border-b border-outline-variant px-4 py-2">
+              <span className="font-label-sm text-label-sm text-on-surface-variant">
+                {activeId ? `歌曲列表 · ${songs.length} 首` : '选择左侧歌单查看歌曲'}
+              </span>
+              {activeId && (
+                <span className="font-label-mono text-label-mono text-outline">
+                  {PLATFORM_NAMES[active]}
+                </span>
+              )}
+            </div>
+            {error && <p className="px-4 py-2 font-label-sm text-label-sm text-error">{error}</p>}
+            {loading && (
+              <p className="px-4 py-2 font-label-md text-label-md text-outline">加载中…</p>
+            )}
             {!loading && activeId && (
-              <ul className="max-h-96 divide-y divide-slate-100 overflow-y-auto">
+              <ul className="max-h-[30rem] divide-y divide-outline-variant overflow-y-auto">
                 {songs.map((s, i) => (
-                  <li key={s.id} className="flex items-center gap-2 py-1.5 text-sm">
-                    <span className="w-6 text-right text-xs text-slate-400">{i + 1}</span>
-                    <span className="truncate text-slate-700">{s.title}</span>
-                    <span className="truncate text-xs text-slate-400">{s.artist}</span>
+                  <li
+                    key={s.id}
+                    className="flex items-center gap-3 px-4 py-1.5 font-body-md text-body-md"
+                  >
+                    <span className="w-6 text-right font-label-mono text-label-mono text-outline">
+                      {i + 1}
+                    </span>
+                    <span className="truncate">{s.title}</span>
+                    <span className="truncate text-on-surface-variant">{s.artist}</span>
                   </li>
                 ))}
               </ul>
@@ -110,6 +206,6 @@ export default function PlaylistSection({ accounts }: PlaylistSectionProps) {
           </div>
         </div>
       )}
-    </section>
+    </div>
   )
 }

@@ -68,9 +68,23 @@ describe('QqMusicAdapter — serverless HTTP 映射', () => {
     const adapter = new QqMusicAdapter(handler, env)
     const ticket = await adapter.createQrLogin()
     expect(ticket).toEqual({ key: 'uk-1', qrBase64: 'data:image/png;base64,ABC' })
-    // key 请求带 channel=wechat
+    // key 请求默认 channel=qqmusic
+    expect(calls[0].url.searchParams.get('channel')).toBe('qqmusic')
+    expect(calls[0].method).toBe('GET')
+  })
+
+  it('二维码登录：支持指定通道（wechat/qq）', async () => {
+    const { handler, calls } = makeHandler((_method, url) => {
+      if (url.pathname === '/login/qr/key') {
+        expect(url.searchParams.get('channel')).toBe('wechat')
+        return json({ code: 200, data: { unikey: 'uk-2' } })
+      }
+      return json({ code: 200, data: { qrimg: 'data:image/png;base64,XYZ' } })
+    })
+    const adapter = new QqMusicAdapter(handler, env)
+    const ticket = await adapter.createQrLogin('wechat')
+    expect(ticket.key).toBe('uk-2')
     expect(calls[0].url.searchParams.get('channel')).toBe('wechat')
-    expect(calls[0].method).toBe('POST')
   })
 
   it('二维码轮询：800→expired、801→waiting、802→scanned、803→success', async () => {
@@ -104,16 +118,36 @@ describe('QqMusicAdapter — serverless HTTP 映射', () => {
     expect(account).toEqual({ platform: 'qqmusic', userId: '123', nickname: '测试用户' })
   })
 
-  it('歌单列表映射：tid/title/songCnt', async () => {
+  it('歌单列表映射：tid/dirName/songNum（QQ音乐真实字段）', async () => {
     const { handler } = makeHandler(() =>
       json({
         code: 200,
-        playlist: [{ tid: 111, title: '我的歌单', songCnt: 33 }],
+        playlist: [{ tid: 111, dirName: '我的歌单', songNum: 33, picUrl: 'http://x/y.jpg' }],
       }),
     )
     const adapter = new QqMusicAdapter(handler, env)
     const list = await adapter.getUserPlaylists('tok', '123')
-    expect(list).toEqual([{ id: '111', name: '我的歌单', songCount: 33, coverUrl: undefined }])
+    expect(list).toEqual([
+      { id: '111', name: '我的歌单', songCount: 33, coverUrl: 'http://x/y.jpg' },
+    ])
+  })
+
+  it('歌单列表：过滤收藏类（dirId >= 200 的我喜欢与收藏歌单）', async () => {
+    const { handler } = makeHandler(() =>
+      json({
+        code: 200,
+        playlist: [
+          { tid: 1, dirId: 1, dirName: '自建歌单', songNum: 10 },
+          { tid: 2, dirId: 201, dirName: '我喜欢', songNum: 77 },
+          { tid: 3, dirId: 8314, name: '收藏的歌单', songnum: 99 },
+        ],
+      }),
+    )
+    const adapter = new QqMusicAdapter(handler, env)
+    const list = await adapter.getUserPlaylists('tok', '123')
+    expect(list).toHaveLength(1)
+    expect(list[0].id).toBe('1')
+    expect(list[0].name).toBe('自建歌单')
   })
 
   it('歌单歌曲映射：songlist → 平台歌曲', async () => {

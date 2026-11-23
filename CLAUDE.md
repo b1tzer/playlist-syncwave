@@ -36,9 +36,10 @@
 - 已验收：网易云扫码登录；已修复：搜索风控（限速+重试）、EPIPE 崩溃、启动失败。
 - 待验收：网易云端到端同步、QQ音乐扫码登录与同步。
 - 已验证的工具链版本：TypeScript 6.0.3（TS7 与 typescript-eslint 冲突）、Vite 8、Vitest 5、Electron 45。
-- 平台集成：网易云用 `NeteaseCloudMusicApi`（CJS + createRequire）；QQ音乐用 `@yakult-green-tea/qq-music-api` 的 serverless `handleRequest`（ESM 具名导入，主进程内嵌，无本地 HTTP 服务）。
-- 平台架构：`platformRegistry` 注册表 + 通用 `platform:*` IPC；新增平台只需实现 `PlatformAdapter` 并注册。
-- ESM 下不要用 `const require = createRequire()` —— 与 electron-vite 注入的 require 冲突。
+- 平台集成：网易云用 `NeteaseCloudMusicApi`（CJS + createRequire）；QQ音乐用 `@yakult-green-tea/qq-music-api` 的 **Node 模式**（主进程加载包根模块启动内置 Koa 服务，含 MQTT，监听动态空闲端口；主进程 handler 转发到 127.0.0.1:端口）。QQ音乐 serverless 模式不支持 qqmusic 通道（需 MQTT），勿回退。
+- 平台架构：`platformRegistry` 注册表（支持异步适配器工厂）+ 通用 `platform:*` IPC；新增平台只需实现 `PlatformAdapter` 并注册。
+- ESM 下不要用 `const require = createRequire()` —— 与 electron-vite 注入的 require 冲突；用内联 `createRequire(import.meta.url)(...)`。
+- QQ音乐 Node 模式的 `/login/qr/*`（key/create/check）路由是 **GET**，不是 POST（serverless 模式可以 POST，Node 模式会 405）。
 - 主进程必须吞掉 stdout/stderr 的 EPIPE（NCM logger 写 console 会触发崩溃）。
 - native 模块（better-sqlite3/keytar）尚未引入；引入前先验证 rebuild。
 - npm 11 默认拦截安装脚本（如 electron 二进制），需 `npm install-scripts approve <pkg>` 后再 rebuild。

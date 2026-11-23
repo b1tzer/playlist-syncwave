@@ -37,7 +37,7 @@ export class NeteaseAdapter implements PlatformAdapter {
 
   constructor(private readonly api: NcmApi) {}
 
-  async createQrLogin(): Promise<QrLoginTicket> {
+  async createQrLogin(_channel?: string): Promise<QrLoginTicket> {
     const keyRes = asObject(await this.api.login_qr_key!())
     const key = pickString(asObject(asObject(keyRes.body).data).unikey)
     if (!key) throw new Error('网易云：获取二维码 key 失败')

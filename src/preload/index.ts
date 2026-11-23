@@ -21,8 +21,8 @@ const api = {
 
   platforms: {
     list: (): Promise<string[]> => ipcRenderer.invoke('platform:list'),
-    createQr: (platform: string): Promise<QrLoginTicket> =>
-      ipcRenderer.invoke('platform:create-qr', platform),
+    createQr: (platform: string, channel?: string): Promise<QrLoginTicket> =>
+      ipcRenderer.invoke('platform:create-qr', platform, channel),
     checkQr: (platform: string, key: string): Promise<QrLoginResult> =>
       ipcRenderer.invoke('platform:check-qr', platform, key),
     loginStatus: (platform: string): Promise<PlatformAccount | null> =>

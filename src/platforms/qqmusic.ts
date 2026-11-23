@@ -33,7 +33,10 @@ function extractSessionToken(setCookie: string | null): string | undefined {
   return entry.split(';')[0]?.split('=')[1]?.trim() || undefined
 }
 
-/** QQ 音乐适配器：基于 @yakult-green-tea/qq-music-api 的 serverless handleRequest */
+/** QQ 音乐登录通道：qqmusic=QQ音乐App 扫码，wechat=微信扫码，qq=手机QQ扫码 */
+export type QqLoginChannel = 'qqmusic' | 'wechat' | 'qq'
+
+/** QQ 音乐适配器：基于 @yakult-green-tea/qq-music-api（Node 模式本地服务或注入 handler） */
 export class QqMusicAdapter implements PlatformAdapter {
   readonly platform = 'qqmusic'
 
@@ -70,12 +73,16 @@ export class QqMusicAdapter implements PlatformAdapter {
     return parsed
   }
 
-  async createQrLogin(): Promise<QrLoginTicket> {
-    const keyRes = await this.call('POST', '/login/qr/key?channel=wechat', '')
+  async createQrLogin(channel: string = 'qqmusic'): Promise<QrLoginTicket> {
+    const keyRes = await this.call(
+      'GET',
+      `/login/qr/key?channel=${encodeURIComponent(channel)}`,
+      '',
+    )
     const key = pickString(asObject(keyRes.data).unikey)
     if (!key) throw new Error('QQ音乐：获取二维码 key 失败')
 
-    const qrRes = await this.call('POST', `/login/qr/create?key=${encodeURIComponent(key)}`, '')
+    const qrRes = await this.call('GET', `/login/qr/create?key=${encodeURIComponent(key)}`, '')
     const qrBase64 = pickString(asObject(qrRes.data).qrimg)
     if (!qrBase64) throw new Error('QQ音乐：生成二维码失败')
 
@@ -85,7 +92,7 @@ export class QqMusicAdapter implements PlatformAdapter {
   async checkQrLogin(key: string): Promise<QrLoginResult> {
     // 轮询接口的 session token 在 set-cookie 头返回，单独处理
     const url = new URL(`/login/qr/check?key=${encodeURIComponent(key)}`, 'http://local')
-    const res = await this.handle(new Request(url, { method: 'POST' }), this.env)
+    const res = await this.handle(new Request(url, { method: 'GET' }), this.env)
     const body = asObject(JSON.parse((await res.text()) || '{}') as JsonObject)
     switch (body.code) {
       case 800:
@@ -117,15 +124,16 @@ export class QqMusicAdapter implements PlatformAdapter {
   async getUserPlaylists(token: string, userId: string): Promise<PlatformPlaylist[]> {
     const res = await this.call('GET', `/user/playlist?uid=${encodeURIComponent(userId)}`, token)
     const list = asArray(res.playlist)
-    return list.map((p) => {
-      const item = asObject(p)
-      return {
+    return list
+      .map((p) => asObject(p))
+      // dirId >= 200 是「我喜欢」收藏夹与收藏的他人歌单（与包内写入限制一致）
+      .filter((item) => Number(item.dirId ?? 0) < 200)
+      .map((item) => ({
         id: pickString(item.tid, item.id) ?? '',
-        name: pickString(item.title, item.name) ?? '未命名歌单',
-        songCount: Number(item.songCnt ?? item.song_count ?? 0),
-        coverUrl: pickString(item.coverUrl, item.picUrl),
-      }
-    })
+        name: pickString(item.dirName, item.title, item.name) ?? '未命名歌单',
+        songCount: Number(item.songNum ?? item.songCnt ?? item.song_count ?? 0),
+        coverUrl: pickString(item.picUrl, item.coverUrl),
+      }))
   }
 
   async getPlaylistSongs(token: string, playlistId: string): Promise<PlatformSong[]> {
