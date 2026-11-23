@@ -71,17 +71,42 @@ tests/
 - **验证命令**：`npm run test -- parser`
 - **实际结果**：TDD 红→绿完成，11/11 测试通过；typecheck、lint、build 均通过。文件：`src/core/models/parse.ts`、`src/core/parser/parseText.ts`、`tests/core/parser/parseText.test.ts`。
 
-### T3 — 匹配引擎 + 网易云平台适配器（读）
+### T3 — 匹配引擎 + 网易云平台适配器（读）✅ 编码完成（手工登录验收待用户执行）
 - **交付物**：`core/matcher`、`platforms/base.ts`、`platforms/netease.ts`，账号授权与歌单读取
 - **验收**：扫码登录后可拉取歌单列表与歌曲；文本解析结果匹配到平台歌曲，置信度评分可用
 - **边界情况**：登录过期、API 变更、限流、歌曲下架
 - **验证命令**：`npm run test -- matcher` + 手工登录验收
+- **实际结果**：
+  - 匹配引擎 `src/core/matcher/matchSong.ts`：归一化（小写/繁转简 opencc-js/全角转半角/去括号）+ 评分（标题精确 0.8 / 变体 0.7 / 部分 0.5，歌手精确 +0.15，时长 +0.02），TDD 13/13 通过。
+  - `platforms/base.ts`：统一 `PlatformAdapter` 接口（二维码登录、账号状态、歌单列表、歌单歌曲、搜索）。
+  - `platforms/netease.ts`：基于社区包 `NeteaseCloudMusicApi@4.34.1`（CJS，主进程 `createRequire` 加载），响应映射为领域模型，依赖注入设计使其可离线单测，7/7 通过。
+  - 主进程：`credentialStore.ts`（safeStorage 加密落盘 + 内存缓存）、`neteaseService.ts`、IPC 白名单（create-qr/check-qr/login-status/logout/user-playlists/playlist-songs/search）。
+  - preload 暴露 `window.electronAPI.netease.*`。
+  - typecheck、lint、build、31 项测试全部通过。
+- **待办**：用户执行 `npm run dev` 手工扫码登录验收（二维码登录 → 拉歌单列表 → 拉歌曲）。
 
-### T4 — 单向同步引擎 + 最小可用 UI
+### T4 — 单向同步引擎 + 最小可用 UI ✅ 编码完成（手工端到端验收待用户执行）
 - **交付物**：`core/sync`、`renderer` 最小界面（文本输入 → 预览 → 选择目标 → 同步 → 结果）
 - **验收**：端到端跑通「粘贴文本 → 创建歌单 → 同步到网易云」，有进度与结果报告
 - **边界情况**：部分失败、重复歌曲、网络中断重试
 - **验证命令**：`npm run test` + 手工端到端验收
+- **实际结果**：
+  - `core/sync/syncPlaylist.ts`：单向同步引擎（逐首搜索→匹配→建单→分批添加→报告），依赖注入 `SyncTarget`，9/9 测试通过。搜索词仅用歌名，歌手由匹配引擎二次校验。
+  - `PlatformAdapter` 扩展 `createPlaylist` / `addSongsToPlaylist`；网易云适配器实现并补 4 项映射测试。
+  - 主进程 IPC `netease:sync-playlist`（组装 SyncTarget 执行同步，进度经 `netease:sync-progress` 事件推送到渲染进程）。
+  - UI：文本创建区新增「创建歌单并同步到网易云」按钮、歌单名输入、进度条、结果报告（成功数/失败明细）。
+  - typecheck、lint、44 项测试、build 全部通过。
+- **待办**：用户手工端到端验收（粘贴文本 → 同步 → 网易云 App 确认歌单）。
+
+### 修复记录 — 搜索风控与歌单过滤 ✅
+- **问题 1**：18 首全部「搜索失败」并创建了空歌单。诊断：网易云对带登录态的 `search` 请求返回 `405 操作频繁`（瞬时连发触发风控），且空匹配时仍创建空歌单。
+- **修复**：
+  - 同步引擎：搜索限速（默认 500ms/首）+ 可重试错误指数退避重试（默认 2 次）+ 全部未匹配时不建单（失败明细保留）+ `rate-limited` 错误分类。
+  - 网易云适配器：`searchSongs` 把 NCM 风格错误包装为 `SearchError`（405/5xx 可重试）；`getUserPlaylists` 过滤 `specialType=5`（我喜欢的音乐收藏夹）。
+  - UI：区分「未建单」与「部分失败」文案；风控提示「稍等几分钟再试」。
+  - 测试：同步引擎 9→14 项，适配器 11→13 项，共 51 项全绿。
+- **问题 2**：主进程 `EPIPE` 崩溃（NeteaseCloudMusicApi 的 logger 写 console 时管道破裂）。修复：入口吞掉 stdout/stderr 的 EPIPE。
+- **问题 3**：应用启动失败。修复：`package.json` 缺 `main` 字段；npm 11 默认拦截安装脚本导致 Electron 二进制未下载（`npm install-scripts approve electron`）。
 
 ---
 

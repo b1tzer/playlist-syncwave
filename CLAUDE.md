@@ -32,7 +32,11 @@
 - 依赖版本以 package.json 为准，不臆造不存在的包名或版本。
 
 ## 当前阶段
-- V0.1 MVP。已完成：`PRD.md`、`planning.md`、工程骨架、T2 文本解析器（11 项测试全绿）。
-- 下一步：T3 匹配引擎 + 网易云适配器（读）。
+- V0.1 MVP。已完成：`PRD.md`、`planning.md`、工程骨架、T2 文本解析器、T3 匹配引擎 + 网易云适配器、T4 单向同步引擎 + 最小可用 UI。
+- 扫码登录已验收通过；搜索风控（405 限流）已修复：同步引擎内置搜索限速与重试。
 - 已验证的工具链版本：TypeScript 6.0.3（TS7 与 typescript-eslint 冲突）、Vite 8、Vitest 5、Electron 45。
+- 网易云集成使用社区包 `NeteaseCloudMusicApi`（CJS），仅主进程通过 `createRequire` 加载。
+- 主进程必须吞掉 stdout/stderr 的 EPIPE（NCM logger 写 console 会触发崩溃）。
 - native 模块（better-sqlite3/keytar）尚未引入；引入前先验证 rebuild。
+- npm 11 默认拦截安装脚本（如 electron 二进制），需 `npm install-scripts approve <pkg>` 后再 rebuild。
+- 网易云 API 风控敏感：搜索请求需限速（>=500ms）并支持重试；连续快速请求会触发 405 风控。

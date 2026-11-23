@@ -15,6 +15,9 @@ export default defineConfig({
   },
   preload: {
     plugins: [externalizeDepsPlugin()],
+    resolve: {
+      alias: { '@core': resolve(root, 'src/core') },
+    },
   },
   renderer: {
     resolve: {
