@@ -32,11 +32,15 @@
 - 依赖版本以 package.json 为准，不臆造不存在的包名或版本。
 
 ## 当前阶段
-- V0.1 MVP。已完成：`PRD.md`、`planning.md`、工程骨架、T2 文本解析器、T3 匹配引擎 + 网易云适配器、T4 单向同步引擎 + 最小可用 UI。
-- 扫码登录已验收通过；搜索风控（405 限流）已修复：同步引擎内置搜索限速与重试。
+- V0.1 MVP。已完成：`PRD.md`、`planning.md`、工程骨架、T2 文本解析器、T3 匹配引擎 + 网易云适配器、T4 单向同步引擎 + 最小可用 UI、T5 QQ音乐接入。
+- 已验收：网易云扫码登录；已修复：搜索风控（限速+重试）、EPIPE 崩溃、启动失败。
+- 待验收：网易云端到端同步、QQ音乐扫码登录与同步。
 - 已验证的工具链版本：TypeScript 6.0.3（TS7 与 typescript-eslint 冲突）、Vite 8、Vitest 5、Electron 45。
-- 网易云集成使用社区包 `NeteaseCloudMusicApi`（CJS），仅主进程通过 `createRequire` 加载。
+- 平台集成：网易云用 `NeteaseCloudMusicApi`（CJS + createRequire）；QQ音乐用 `@yakult-green-tea/qq-music-api` 的 serverless `handleRequest`（ESM 具名导入，主进程内嵌，无本地 HTTP 服务）。
+- 平台架构：`platformRegistry` 注册表 + 通用 `platform:*` IPC；新增平台只需实现 `PlatformAdapter` 并注册。
+- ESM 下不要用 `const require = createRequire()` —— 与 electron-vite 注入的 require 冲突。
 - 主进程必须吞掉 stdout/stderr 的 EPIPE（NCM logger 写 console 会触发崩溃）。
 - native 模块（better-sqlite3/keytar）尚未引入；引入前先验证 rebuild。
 - npm 11 默认拦截安装脚本（如 electron 二进制），需 `npm install-scripts approve <pkg>` 后再 rebuild。
 - 网易云 API 风控敏感：搜索请求需限速（>=500ms）并支持重试；连续快速请求会触发 405 风控。
+- QQ音乐 sealed token 依赖 `QQ_SESSION_SECRET`，该密钥已持久化到 userData，删除会导致全部登录失效。

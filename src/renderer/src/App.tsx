@@ -5,14 +5,23 @@ import PlaylistSection from './components/PlaylistSection'
 import TextCreator from './components/TextCreator'
 
 export default function App() {
-  const [account, setAccount] = useState<PlatformAccount | null>(null)
+  const [accounts, setAccounts] = useState<Record<string, PlatformAccount | null>>({})
 
   useEffect(() => {
-    window.electronAPI.netease
-      .loginStatus()
-      .then(setAccount)
-      .catch(() => setAccount(null))
+    window.electronAPI.platforms
+      .list()
+      .then(async (platforms) => {
+        const entries = await Promise.all(
+          platforms.map(async (p) => [p, await window.electronAPI.platforms.loginStatus(p)] as const),
+        )
+        setAccounts(Object.fromEntries(entries))
+      })
+      .catch(() => setAccounts({}))
   }, [])
+
+  const handleAccountChange = (platform: string, account: PlatformAccount | null) => {
+    setAccounts((prev) => ({ ...prev, [platform]: account }))
+  }
 
   return (
     <main className="min-h-screen bg-slate-50 p-8 text-slate-800">
@@ -23,11 +32,11 @@ export default function App() {
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-5">
         <div className="space-y-6 lg:col-span-2">
-          <LoginSection account={account} onAccountChange={setAccount} />
-          <PlaylistSection loggedIn={account !== null} />
+          <LoginSection accounts={accounts} onAccountChange={handleAccountChange} />
+          <PlaylistSection accounts={accounts} />
         </div>
         <div className="lg:col-span-3">
-          <TextCreator loggedIn={account !== null} />
+          <TextCreator accounts={accounts} />
         </div>
       </div>
     </main>

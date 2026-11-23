@@ -110,7 +110,16 @@ tests/
 
 ---
 
-## 4. 风险与缓解
+### T5 — QQ音乐平台接入 ✅ 编码完成（手工验收待用户执行）
+- **交付物**：`platforms/qqmusic.ts`、`platforms/httpHandler.ts`、多平台注册表与 IPC、多平台 UI
+- **实现**：
+  - 采用 `@yakult-green-tea/qq-music-api@3.3.8` 的 serverless `handleRequest` 函数式调用（无本地 HTTP 服务），主进程内嵌。
+  - `QQ_SESSION_SECRET` 随机生成后持久化到 userData（sealed token 依赖它解密，必须跨重启稳定）。
+  - QQ 音乐适配器 9/9 测试通过（mock HttpHandler 验证映射与参数）。
+  - 架构重构：主进程 `platformRegistry` 注册表 + 通用 `platform:*` IPC（platform 参数分发），替换原 netease 专属 IPC。
+  - UI：登录区/歌单区双平台标签页；同步区增加「同步到」平台下拉。
+  - 踩坑：ESM 下 `createRequire` 的 `const require` 与 electron-vite 注入的 require 冲突 → 改 ESM 具名导入 `handleRequest`。
+- **待办**：用户手工验收（QQ音乐扫码登录 → 拉歌单 → 文本同步创建歌单）。
 
 | 风险 | 缓解 |
 |---|---|

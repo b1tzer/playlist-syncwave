@@ -2,25 +2,34 @@ import { useState } from 'react'
 import { parseText } from '@core/parser/parseText'
 import type { ParseResult } from '@core/models/parse'
 import type { SyncReport } from '@core/models/sync'
+import type { PlatformAccount } from '@core/models/platform'
 
 const EXAMPLE = `晴天 - 周杰伦
 稻香——周杰伦
 夜曲 | 周杰伦
 说谎 - 林宥嘉`
 
+export const TARGET_PLATFORMS: Array<{ id: string; name: string }> = [
+  { id: 'netease', name: '网易云音乐' },
+  { id: 'qqmusic', name: 'QQ音乐' },
+]
+
 interface TextCreatorProps {
-  loggedIn: boolean
+  accounts: Record<string, PlatformAccount | null>
 }
 
-export default function TextCreator({ loggedIn }: TextCreatorProps) {
+export default function TextCreator({ accounts }: TextCreatorProps) {
   const [text, setText] = useState('')
   const [result, setResult] = useState<ParseResult | null>(null)
   const [order, setOrder] = useState<'title-first' | 'artist-first'>('title-first')
   const [playlistName, setPlaylistName] = useState('')
+  const [target, setTarget] = useState('netease')
   const [syncing, setSyncing] = useState(false)
   const [progress, setProgress] = useState<{ ratio: number; stage: string } | null>(null)
   const [report, setReport] = useState<SyncReport | null>(null)
   const [syncError, setSyncError] = useState<string>('')
+
+  const loggedIn = accounts[target] !== null
 
   const handleParse = () => {
     setResult(parseText(text, { order }))
@@ -34,11 +43,13 @@ export default function TextCreator({ loggedIn }: TextCreatorProps) {
     setSyncError('')
     setReport(null)
     setProgress({ ratio: 0, stage: 'matching' })
-    const off = window.electronAPI.netease.onSyncProgress((p) => setProgress(p))
+    const off = window.electronAPI.platforms.onSyncProgress((p) => {
+      if (p.platform === target) setProgress(p)
+    })
     try {
       const name = playlistName.trim() || `文本导入 ${new Date().toLocaleDateString()}`
       const queries = result.songs.map((s) => ({ title: s.title, artist: s.artist }))
-      setReport(await window.electronAPI.netease.syncPlaylist(queries, name))
+      setReport(await window.electronAPI.platforms.syncPlaylist(target, queries, name))
     } catch (e) {
       setSyncError(e instanceof Error ? e.message : '同步失败')
     } finally {
@@ -97,6 +108,17 @@ export default function TextCreator({ loggedIn }: TextCreatorProps) {
       <div className="mt-3 rounded-lg border border-slate-100 bg-slate-50 p-3">
         {loggedIn ? (
           <div className="flex items-center gap-2">
+            <select
+              value={target}
+              onChange={(e) => setTarget(e.target.value)}
+              className="shrink-0 rounded-lg border border-slate-200 bg-white px-2 py-2 text-sm outline-none"
+            >
+              {TARGET_PLATFORMS.map((p) => (
+                <option key={p.id} value={p.id}>
+                  同步到 {p.name}
+                </option>
+              ))}
+            </select>
             <input
               value={playlistName}
               onChange={(e) => setPlaylistName(e.target.value)}
@@ -108,11 +130,13 @@ export default function TextCreator({ loggedIn }: TextCreatorProps) {
               disabled={syncing || !result || result.songs.length === 0}
               className="shrink-0 rounded-lg bg-red-500 px-4 py-2 text-sm font-medium text-white hover:bg-red-600 disabled:opacity-50"
             >
-              {syncing ? '同步中…' : '创建歌单并同步到网易云'}
+              {syncing ? '同步中…' : '创建歌单并同步'}
             </button>
           </div>
         ) : (
-          <p className="text-xs text-slate-400">登录网易云后即可一键同步创建歌单</p>
+          <p className="text-xs text-slate-400">
+            请先在左侧登录 {TARGET_PLATFORMS.find((p) => p.id === target)?.name ?? ''}
+          </p>
         )}
 
         {syncing && progress && (

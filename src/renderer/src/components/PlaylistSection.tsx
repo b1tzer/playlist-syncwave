@@ -1,39 +1,45 @@
 import { useEffect, useState } from 'react'
-import type { PlatformPlaylist, PlatformSong } from '@core/models/platform'
+import type { PlatformAccount, PlatformPlaylist, PlatformSong } from '@core/models/platform'
 
 interface PlaylistSectionProps {
-  loggedIn: boolean
+  accounts: Record<string, PlatformAccount | null>
 }
 
-export default function PlaylistSection({ loggedIn }: PlaylistSectionProps) {
+const PLATFORM_NAMES: Record<string, string> = {
+  netease: '网易云',
+  qqmusic: 'QQ音乐',
+}
+
+export default function PlaylistSection({ accounts }: PlaylistSectionProps) {
+  const [active, setActive] = useState<string>('netease')
   const [playlists, setPlaylists] = useState<PlatformPlaylist[]>([])
   const [songs, setSongs] = useState<PlatformSong[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string>('')
 
+  const loggedIn = accounts[active] !== null
+
   useEffect(() => {
-    if (!loggedIn) {
-      setPlaylists([])
-      setSongs([])
-      setActiveId(null)
-      return
-    }
+    setPlaylists([])
+    setSongs([])
+    setActiveId(null)
+    if (!loggedIn) return
     setLoading(true)
     setError('')
-    window.electronAPI.netease
-      .userPlaylists()
+    window.electronAPI.platforms
+      .userPlaylists(active)
       .then(setPlaylists)
       .catch((e) => setError(e instanceof Error ? e.message : '拉取歌单失败'))
       .finally(() => setLoading(false))
-  }, [loggedIn])
+  }, [active, loggedIn])
 
   const openPlaylist = async (id: string) => {
     setActiveId(id)
     setLoading(true)
     setError('')
     try {
-      setSongs(await window.electronAPI.netease.playlistSongs(id))
+      setSongs(await window.electronAPI.platforms.playlistSongs(active, id))
     } catch (e) {
       setError(e instanceof Error ? e.message : '拉取歌曲失败')
     } finally {
@@ -43,7 +49,24 @@ export default function PlaylistSection({ loggedIn }: PlaylistSectionProps) {
 
   return (
     <section className="rounded-xl border border-slate-200 bg-white p-5">
-      <h2 className="text-base font-semibold text-slate-800">我的歌单</h2>
+      <div className="flex items-center justify-between">
+        <h2 className="text-base font-semibold text-slate-800">我的歌单</h2>
+        <div className="flex gap-1">
+          {Object.keys(PLATFORM_NAMES).map((p) => (
+            <button
+              key={p}
+              onClick={() => setActive(p)}
+              className={`rounded-lg px-2.5 py-1 text-xs ${
+                active === p
+                  ? 'bg-slate-800 text-white'
+                  : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
+              }`}
+            >
+              {PLATFORM_NAMES[p]}
+            </button>
+          ))}
+        </div>
+      </div>
 
       {!loggedIn ? (
         <p className="mt-3 text-sm text-slate-400">登录后查看你的歌单</p>

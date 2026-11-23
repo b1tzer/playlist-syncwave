@@ -16,6 +16,7 @@
     "format": "prettier --write \"src/**/*.{ts,tsx,css}\" \"tests/**/*.ts\""
   },
   "dependencies": {
+    "@yakult-green-tea/qq-music-api": "^3.3.8",
     "NeteaseCloudMusicApi": "^4.34.1",
     "opencc-js": "^1.4.2",
     "react": "^19.3.1",
