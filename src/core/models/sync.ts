@@ -13,19 +13,44 @@ export interface SyncTarget {
 
 export interface SyncFailedItem {
   query: MatchQuery
-  reason: 'search-failed' | 'no-match' | 'rate-limited'
+  reason: 'search-failed' | 'no-match' | 'rate-limited' | 'unresolved'
   message: string
 }
 
+/** 同歌不同作者：需要用户手动选择的目标候选 */
+export interface SyncChoice {
+  query: MatchQuery
+  candidates: PlatformSong[]
+}
+
+/** 用户对某个 choice 的选择 */
+export interface SyncSelection {
+  /** plan.choices 的下标 */
+  choiceIndex: number
+  songId: string
+}
+
+/** 同步计划：搜索+金标准判定后的产物（未建单） */
+export interface SyncPlan {
+  total: number
+  matched: Array<{ query: MatchQuery; songId: string }>
+  choices: SyncChoice[]
+  failed: SyncFailedItem[]
+}
+
 export interface SyncReport {
+  /** done：已建单完成；choice-needed：存在同歌不同作者，等待手动选择 */
+  status: 'done' | 'choice-needed'
   /** 歌单名 */
   playlistName: string
-  /** 新歌单 ID */
+  /** 新歌单 ID（未建单时为空串） */
   playlistId: string
   total: number
   matched: number
   added: number
   failed: SyncFailedItem[]
+  /** status 为 choice-needed 时非空 */
+  choices: SyncChoice[]
 }
 
 export interface SyncOptions {

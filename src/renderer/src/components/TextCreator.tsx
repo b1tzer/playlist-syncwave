@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { parseText } from '@core/parser/parseText'
 import type { ParseResult } from '@core/models/parse'
-import type { SyncReport } from '@core/models/sync'
+import type { SyncChoice, SyncReport } from '@core/models/sync'
 import type { PlatformAccount } from '@core/models/platform'
 import type { SyncTaskRecord } from './SyncCenter'
 
@@ -34,7 +34,6 @@ const FORMATS = [
 export default function TextCreator({ accounts, onTaskUpdate }: TextCreatorProps) {
   const [text, setText] = useState('')
   const [result, setResult] = useState<ParseResult | null>(null)
-  const [order, setOrder] = useState<'title-first' | 'artist-first'>('title-first')
   const [playlistName, setPlaylistName] = useState('')
   const [target, setTarget] = useState('netease')
   const [syncing, setSyncing] = useState(false)
@@ -42,13 +41,30 @@ export default function TextCreator({ accounts, onTaskUpdate }: TextCreatorProps
   const [report, setReport] = useState<SyncReport | null>(null)
   const [syncError, setSyncError] = useState<string>('')
   const [showFormats, setShowFormats] = useState(false)
+  const [pendingTaskId, setPendingTaskId] = useState<string | null>(null)
+  const [pendingChoices, setPendingChoices] = useState<SyncChoice[] | null>(null)
+  const [selections, setSelections] = useState<Record<number, string>>({})
 
   const loggedIn = accounts[target] !== null
 
   const handleParse = () => {
-    setResult(parseText(text, { order }))
+    setResult(parseText(text))
     setReport(null)
     setSyncError('')
+  }
+
+  const applyCandidate = (index: number, title: string, artist?: string) => {
+    setResult((prev) => {
+      if (!prev) return prev
+      return {
+        ...prev,
+        songs: prev.songs.map((s, i) =>
+          i === index
+            ? { ...s, title, artist, confidence: Math.max(s.confidence, 0.7) }
+            : s,
+        ),
+      }
+    })
   }
 
   const handleSync = async () => {
@@ -60,7 +76,11 @@ export default function TextCreator({ accounts, onTaskUpdate }: TextCreatorProps
 
     const name = playlistName.trim() || `文本导入 ${new Date().toLocaleDateString()}`
     const taskId = `task-${Date.now()}`
-    const queries = result.songs.map((s) => ({ title: s.title, artist: s.artist }))
+    const queries = result.songs.map((s) => ({
+      title: s.title,
+      artist: s.artist,
+      alternatives: s.candidates?.map((c) => ({ title: c.title, artist: c.artist })),
+    }))
 
     onTaskUpdate({
       id: taskId,
@@ -96,7 +116,29 @@ export default function TextCreator({ accounts, onTaskUpdate }: TextCreatorProps
     })
 
     try {
-      const rep = await window.electronAPI.platforms.syncPlaylist(target, queries, name)
+      const { taskId: syncTaskId, report: rep } =
+        await window.electronAPI.platforms.syncPlaylist(target, queries, name)
+
+      if (rep.status === 'choice-needed') {
+        setPendingTaskId(syncTaskId)
+        setPendingChoices(rep.choices)
+        setSelections({})
+        onTaskUpdate({
+          id: taskId,
+          name,
+          targetPlatform: target,
+          source: '文本导入',
+          status: 'running',
+          total: queries.length,
+          added: 0,
+          failed: rep.failed.length,
+          createdAt: new Date().toLocaleTimeString('zh-CN', { hour12: false }),
+          progress: 1,
+          failedDetail: rep.failed.map((f) => `${f.query.title}（${f.message}）`),
+        })
+        return
+      }
+
       setReport(rep)
       const ok = rep.playlistId !== ''
       onTaskUpdate({
@@ -128,6 +170,51 @@ export default function TextCreator({ accounts, onTaskUpdate }: TextCreatorProps
         progress: 1,
         failedDetail: [msg],
       })
+    } finally {
+      off()
+      setSyncing(false)
+      setProgress(null)
+    }
+  }
+
+  const handleConfirm = async () => {
+    if (!pendingTaskId || !pendingChoices) return
+    const sel = pendingChoices
+      .map((_, i) => ({ choiceIndex: i, songId: selections[i] }))
+      .filter((s) => typeof s.songId === 'string')
+    if (sel.length < pendingChoices.length) return
+
+    setSyncing(true)
+    setSyncError('')
+    setReport(null)
+    setProgress({ ratio: 0, stage: 'adding' })
+
+    const off = window.electronAPI.platforms.onSyncProgress((p) => {
+      if (p.platform === target) setProgress(p)
+    })
+
+    try {
+      const rep = await window.electronAPI.platforms.confirmSync(target, pendingTaskId, sel)
+      setReport(rep)
+      setPendingTaskId(null)
+      setPendingChoices(null)
+      setSelections({})
+      const ok = rep.playlistId !== ''
+      onTaskUpdate({
+        id: `task-${Date.now()}`,
+        name: rep.playlistName,
+        targetPlatform: target,
+        source: '文本导入',
+        status: ok ? 'done' : 'failed',
+        total: rep.total,
+        added: rep.added,
+        failed: rep.failed.length,
+        createdAt: new Date().toLocaleTimeString('zh-CN', { hour12: false }),
+        progress: 1,
+        failedDetail: rep.failed.map((f) => `${f.query.title}（${f.message}）`),
+      })
+    } catch (e) {
+      setSyncError(e instanceof Error ? e.message : '同步失败')
     } finally {
       off()
       setSyncing(false)
@@ -223,17 +310,10 @@ export default function TextCreator({ accounts, onTaskUpdate }: TextCreatorProps
               <span className="material-symbols-outlined text-base">delete_sweep</span>
               清空
             </button>
-            <label className="ml-auto font-label-sm text-label-sm text-on-surface-variant">
-              解析格式：
-              <select
-                value={order}
-                onChange={(e) => setOrder(e.target.value as typeof order)}
-                className="ml-1 rounded-lg border border-outline-variant bg-surface-container-low px-2 py-1 text-on-surface outline-none focus:border-primary"
-              >
-                <option value="title-first">歌名 - 歌手</option>
-                <option value="artist-first">歌手 - 歌名</option>
-              </select>
-            </label>
+            <span className="ml-auto font-label-sm text-label-sm text-on-surface-variant">
+              <span className="material-symbols-outlined align-bottom text-sm">auto_awesome</span>{' '}
+              格式与字段顺序自动识别，无需手动指定
+            </span>
           </div>
         </div>
 
@@ -260,7 +340,7 @@ export default function TextCreator({ accounts, onTaskUpdate }: TextCreatorProps
               />
               <button
                 onClick={handleSync}
-                disabled={syncing || !result || result.songs.length === 0}
+                disabled={syncing || pendingChoices !== null || !result || result.songs.length === 0}
                 className="mt-1 flex w-full items-center justify-center gap-1.5 rounded-lg bg-primary px-4 py-2 font-label-md text-label-md font-medium text-on-primary transition-colors hover:bg-primary/85 disabled:opacity-40"
               >
                 <span className="material-symbols-outlined text-base">
@@ -337,30 +417,62 @@ export default function TextCreator({ accounts, onTaskUpdate }: TextCreatorProps
               {failedCount > 0 && (
                 <span className="ml-2 text-tertiary">{failedCount} 行解析失败</span>
               )}
+              {result.detectedOrder && (
+                <span className="ml-2 rounded-full bg-surface-container-highest px-2 py-0.5 text-label-sm text-on-surface-variant">
+                  已自动识别：{result.detectedOrder === 'title-first' ? '歌名 - 歌手' : '歌手 - 歌名'}
+                </span>
+              )}
             </p>
             <span className="font-label-mono text-label-mono text-outline">
-              PARSE PREVIEW
+              {result.format === 'share' ? 'SHARE TEXT' : 'PARSE PREVIEW'}
             </span>
           </div>
 
           {result.songs.length > 0 && (
-            <ul className="max-h-64 divide-y divide-outline-variant overflow-y-auto">
-              {result.songs.map((s, i) => (
-                <li
-                  key={`${s.lineNumber}-${i}`}
-                  className="flex items-center gap-3 px-4 py-1.5 font-body-md text-body-md"
-                >
-                  <span className="w-6 text-right font-label-mono text-label-mono text-outline">
-                    {i + 1}
-                  </span>
-                  <span className="truncate">{s.title}</span>
-                  {s.artist ? (
-                    <span className="truncate text-on-surface-variant">- {s.artist}</span>
-                  ) : (
-                    <span className="text-tertiary">未识别歌手</span>
-                  )}
-                </li>
-              ))}
+            <ul className="max-h-96 divide-y divide-outline-variant overflow-y-auto">
+              {result.songs.map((s, i) => {
+                const ambiguous = s.candidates && s.candidates.length > 1
+                return (
+                  <li
+                    key={`${s.lineNumber}-${i}`}
+                    className={`flex items-center gap-3 px-4 py-1.5 font-body-md text-body-md ${
+                      ambiguous ? 'bg-tertiary/10' : ''
+                    }`}
+                  >
+                    <span className="w-6 text-right font-label-mono text-label-mono text-outline">
+                      {i + 1}
+                    </span>
+                    <span className="truncate">{s.title}</span>
+                    {s.artist ? (
+                      <span className="truncate text-on-surface-variant">- {s.artist}</span>
+                    ) : (
+                      <span className="text-tertiary">未识别歌手</span>
+                    )}
+                    {ambiguous && (
+                      <div className="ml-auto flex shrink-0 items-center gap-1">
+                        {s.candidates!.map((c) => {
+                          const active = c.title === s.title
+                          return (
+                            <button
+                              key={c.title}
+                              onClick={() => applyCandidate(i, c.title, c.artist)}
+                              title="点选使用该候选"
+                              className={
+                                active
+                                  ? 'rounded-lg border border-primary bg-primary px-2 py-0.5 font-label-sm text-label-sm text-on-primary'
+                                  : 'rounded-lg border border-outline-variant bg-surface-container-low px-2 py-0.5 font-label-sm text-label-sm text-on-surface transition-colors hover:border-primary'
+                              }
+                            >
+                              {c.title}
+                              {c.artist ? ` · ${c.artist}` : ''}
+                            </button>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </li>
+                )
+              })}
             </ul>
           )}
 
@@ -374,6 +486,79 @@ export default function TextCreator({ accounts, onTaskUpdate }: TextCreatorProps
               ))}
             </ul>
           )}
+
+          {result.ignoredLines.length > 0 && (
+            <p className="border-t border-outline-variant px-4 py-2 font-label-sm text-label-sm text-on-surface-variant">
+              已自动忽略 {result.ignoredLines.length} 行非歌曲内容（分享文案/歌词信息等）
+            </p>
+          )}
+        </div>
+      )}
+
+      {pendingChoices && pendingChoices.length > 0 && (
+        <div className="mt-4 rounded-lg border border-tertiary bg-surface-container-low p-4">
+          <div className="flex items-center gap-2">
+            <span className="material-symbols-outlined text-tertiary">playlist_add_check</span>
+            <p className="font-body-md text-body-md font-medium">
+              发现 {pendingChoices.length} 首同名不同歌手的歌曲，请手动选择
+            </p>
+            <span className="ml-auto font-label-sm text-label-sm text-on-surface-variant">
+              其余完全匹配的歌曲将自动添加
+            </span>
+          </div>
+          <ul className="mt-3 space-y-2">
+            {pendingChoices.map((choice, i) => (
+              <li
+                key={i}
+                className="rounded-lg border border-outline-variant bg-surface-container-lowest p-3"
+              >
+                <p className="font-label-md text-label-md text-on-surface">
+                  {choice.query.title}
+                  {choice.query.artist && (
+                    <span className="ml-1 text-on-surface-variant">- {choice.query.artist}</span>
+                  )}
+                </p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {choice.candidates.map((c) => {
+                    const selected = selections[i] === c.id
+                    const duration = c.durationMs
+                      ? ` · ${Math.floor(c.durationMs / 60_000)}:${String(
+                          Math.floor((c.durationMs % 60_000) / 1000),
+                        ).padStart(2, '0')}`
+                      : ''
+                    return (
+                      <button
+                        key={c.id}
+                        onClick={() => setSelections((prev) => ({ ...prev, [i]: c.id }))}
+                        className={
+                          selected
+                            ? 'flex items-center gap-1 rounded-lg border border-primary bg-primary px-3 py-1.5 font-label-sm text-label-sm text-on-primary'
+                            : 'flex items-center gap-1 rounded-lg border border-outline-variant bg-surface-container-low px-3 py-1.5 font-label-sm text-label-sm text-on-surface transition-colors hover:border-primary'
+                        }
+                      >
+                        <span className="font-medium">{c.artist}</span>
+                        {c.album && <span className="opacity-70">{c.album}</span>}
+                        {duration}
+                      </button>
+                    )
+                  })}
+                </div>
+              </li>
+            ))}
+          </ul>
+          <button
+            onClick={handleConfirm}
+            disabled={
+              syncing || Object.keys(selections).length < pendingChoices.length
+            }
+            className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-lg bg-primary px-4 py-2 font-label-md text-label-md font-medium text-on-primary transition-colors hover:bg-primary/85 disabled:opacity-40"
+          >
+            <span className="material-symbols-outlined text-base">
+              {syncing ? 'progress_activity' : 'task_alt'}
+            </span>
+            {syncing ? '写入中…' : '确认选择并创建歌单'}
+          </button>
+          {syncError && <p className="mt-2 font-label-sm text-label-sm text-error">{syncError}</p>}
         </div>
       )}
     </div>

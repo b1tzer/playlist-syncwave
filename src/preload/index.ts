@@ -7,7 +7,7 @@ import type {
   QrLoginTicket,
 } from '@core/models/platform'
 import type { MatchQuery } from '@core/models/match'
-import type { SyncReport } from '@core/models/sync'
+import type { SyncReport, SyncSelection } from '@core/models/sync'
 
 export interface SyncProgress {
   platform: string
@@ -37,8 +37,14 @@ const api = {
       queries: MatchQuery[],
       playlistName: string,
       batchSize?: number,
-    ): Promise<SyncReport> =>
+    ): Promise<{ taskId: string; report: SyncReport }> =>
       ipcRenderer.invoke('platform:sync-playlist', platform, { queries, playlistName, batchSize }),
+    confirmSync: (
+      platform: string,
+      taskId: string,
+      selections: SyncSelection[],
+    ): Promise<SyncReport> =>
+      ipcRenderer.invoke('platform:confirm-sync', platform, taskId, selections),
     onSyncProgress: (callback: (progress: SyncProgress) => void): (() => void) => {
       const listener = (_event: unknown, progress: SyncProgress) => callback(progress)
       ipcRenderer.on('sync:progress', listener)

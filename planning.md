@@ -113,13 +113,102 @@ tests/
 ### T5 — QQ音乐平台接入 ✅ 编码完成（手工验收待用户执行）
 - **交付物**：`platforms/qqmusic.ts`、`platforms/httpHandler.ts`、多平台注册表与 IPC、多平台 UI
 - **实现**：
-  - 采用 `@yakult-green-tea/qq-music-api@3.3.8` 的 serverless `handleRequest` 函数式调用（无本地 HTTP 服务），主进程内嵌。
-  - `QQ_SESSION_SECRET` 随机生成后持久化到 userData（sealed token 依赖它解密，必须跨重启稳定）。
-  - QQ 音乐适配器 9/9 测试通过（mock HttpHandler 验证映射与参数）。
-  - 架构重构：主进程 `platformRegistry` 注册表 + 通用 `platform:*` IPC（platform 参数分发），替换原 netease 专属 IPC。
-  - UI：登录区/歌单区双平台标签页；同步区增加「同步到」平台下拉。
-  - 踩坑：ESM 下 `createRequire` 的 `const require` 与 electron-vite 注入的 require 冲突 → 改 ESM 具名导入 `handleRequest`。
-- **待办**：用户手工验收（QQ音乐扫码登录 → 拉歌单 → 文本同步创建歌单）。
+  - 采用 `@yakult-green-tea/qq-music-api@3.3.8`。**注意**：serverless 模式只支持 wechat/qq(网页登录)，不支持 QQ音乐 App 扫码（qqmusic 通道需要 MQTT 长连接）；为支持 qqmusic 通道已切换到 **Node 模式**（主进程加载包根模块启动内置 Koa 服务，含 MQTT），监听动态空闲端口（实测 51270 等）。
+  - `QQ_SESSION_SECRET`、设备身份 `qq-device.json`、加密会话 `qq-session.json` 均持久化到 userData，登录态跨重启保留。
+  - QQ 音乐适配器 10/10 测试通过（mock HttpHandler 验证映射与参数）；`createQrLogin(channel)` 支持 qqmusic/wechat/qq 三通道。
+  - 架构重构：主进程 `platformRegistry` 注册表（支持异步适配器工厂）+ 通用 `platform:*` IPC（platform 参数分发），替换原 netease 专属 IPC。
+  - UI：登录区/歌单区双平台标签页；同步区增加「同步到」平台下拉；QQ音乐扫码弹窗内可切换扫码方式（QQ音乐 App / 微信 / 手机QQ）。
+  - 踩坑：ESM 下 `createRequire` 的 `const require` 与 electron-vite 注入的 require 冲突 → Node 模式加载包根模块时用 `createRequire(import.meta.url)(...)` 内联形式。
+- **待办**：用户手工验收（QQ音乐 App 扫码登录 → 拉歌单 → 文本同步创建歌单）。
+
+### T6 — 文本快速创建全自动解析（设计已定，待实施）
+
+> 目标：移除「解析格式」手动选择，用户粘贴任意文本后全自动完成解析（格式探测 → 去噪 → 字段顺序判定 → 可选搜索验证）。
+
+**问题清单（分析结论）**
+
+| # | 问题 | 现状 | 影响 |
+|---|---|---|---|
+| P1 | 格式需手动指定 | UI 下拉框 `order`（title-first/artist-first），全局生效 | 混排来源文本一半解析错位，歌名/歌手互换后匹配全失败 |
+| P2 | 字段顺序本质歧义 | `晴天 - 周杰伦` vs `周杰伦 - 晴天` 无纯文本区分法 | 必须靠外部知识（词典/搜索）判定 |
+| P3 | 输入格式多样 | 仅支持行式拆分 | m3u/csv/json/lrc/分享文本/聊天混排/URL 均无法正确解析 |
+| P4 | 噪声识别不足 | `isNoise` 只过滤无字行 | 分享模板行、聊天语、歌词元信息（作词/作曲）被当纯歌名塞进 songs |
+| P5 | 多歌手/复合字段 | 只取前两个分隔段 | `周杰伦、蔡依林 - 歌名`、`A feat. B - 歌名`、`歌名 (Cover: x)` 处理不完整 |
+| P6 | 分隔符歧义 | 固定正则 | 歌名内含 `-`、全角/半角混用、分隔符混用会误拆 |
+| P7 | 版本词/书名号语义 | 不识别 | `《乌梅子酱》李荣浩` 整行当歌名；`(Live)` 挂在错误字段 |
+| P8 | 无外部校验闭环 | 置信度 0.9/0.6 为常量 | 顺序判错无反馈；纯歌名无歌手，后续匹配宽松且易错 |
+| P9 | 验证成本与风控 | — | 数百行全量搜索会触发 405 风控（已有踩坑记录） |
+| P10 | 交互缺失 | 预览只读 | PRD 要求逐条修正；失败行与预览脱节 |
+
+**方案：四级流水线（用户零选择）**
+
+1. **格式自动探测 `detectFormat`**：JSON（可 parse）> m3u（`#EXTM3U`/`#EXTINF`）> LRC（时间戳行占比≥60%）> CSV/表格（≥80% 行列数一致）> 平台分享模板（URL 域名/分享词）> 行式文本。结果记录 `ParseResult.format`，用户可见「已自动识别：xxx」但无需选择。
+2. **行分类器 + 结构解析**：每行分 `song/meta/template/chat/link/noise`。meta（作词/作曲/专辑）过滤、template（"分享xx的歌单《x》"）过滤但含《歌名》时可提取、chat 剥 `名字:` 前缀后递归解析、link 提 URL 走平台 API（最高置信度来源）。分隔符按整段统计选主导符，优先空格包围的 ` - `。
+3. **字段顺序自动判定 `inferOrder`**：信号加权——书名号（+0.40 歌名）、版本词 Live/Remix/Cover/OST（+0.35 歌名）、多人名连接词 `、` `/` `&`（+0.35 歌手）、`feat./ft.`（+0.30 歌手）、内置歌手名词典命中（+0.30 歌手，压缩数百 KB 随版本更新，未命中不计负分）、字段长度/歌名高频词（弱信号）。差值≥0.25 定序；否则标记 `ambiguous` 保留双候选。整段一致性投票校正个别行。
+4. **搜索验证闭环（按需、限速、缓存）**：仅对 `ambiguous` / 低置信度行触发；候选 A/B 分别搜索 + 复用 `matchSong` 评分，胜者回写；结果写 SongMapping 缓存；限速 ≥500ms/首纳入风控预算；未登录/断网降级为纯本地解析并标记「未验证」。验证器经依赖注入 `SongVerifier`（主进程用 `PlatformAdapter.searchSongs` 组装），core 保持平台无关。
+
+**数据模型变更**（`core/models/parse.ts`）
+
+- `ParseOptions.order` 保留为高级覆盖项（缺省全自动）；新增可选 `verify?: SongVerifier`
+- `ParsedSong` 新增 `orderConfidence?`、`candidates?`（歧义候选含验证得分）、`verified?`
+- `FailedLine.reason` 扩展 `'ambiguous-order' | 'unrecognized'`
+- `ParseResult` 新增 `format: DetectedFormat`、`detectedOrder?`、`ignoredLines`（模板/元信息/聊天噪声，供 UI 折叠展示）
+
+**UI 变更（TextCreator）**：删除「解析格式」下拉框，解析后显示「自动识别：歌名-歌手（置信度 92%）」；歧义行黄色高亮 + 候选一键切换；预览行内可编辑 title/artist（PRD FR-2.1 逐条修正）；被忽略行折叠展示。
+
+**验收标准**
+
+- 不传任何选项，混排两种顺序的构造文本（≥20 行）解析正确率 100%
+- 网易云/QQ 音乐分享文本自动提取歌曲列表；m3u/csv/json/lrc 自动识别
+- 聊天混排：噪声行进 `ignoredLines`，歌曲行进 `songs`
+- 歧义行标记 `ambiguous-order` 且预览可一键切换候选
+- 搜索验证仅触发低置信度行，限速 ≥500ms，结果缓存；断网降级不阻塞
+- 数百行文本解析 < 1s（不含搜索验证）
+- 现有 11 项测试除「混排」用例外全部保持通过；「混排」用例断言「分享歌单：我的收藏」被当纯歌名，与 PRD FR-2.1「自动忽略非歌曲行」相悖，属需求演进，实施时经确认后更新该用例并记录
+
+**边界情况**：空输入、全噪声、超长行、重复行（保留不去重）、繁简体、混合语言、行内多分隔符、CSV 引号转义、分享链接失效（降级为行式解析）。
+
+**实施拆分**：T6.1 格式探测 + 行分类器（纯本地）→ T6.2 顺序自动判定（信号+投票）→ T6.3 结构格式解析器（json/csv/m3u/lrc/share）→ T6.4 搜索验证闭环 + UI 改造。均 TDD，每步 `npm run test` + `npm run typecheck`。
+
+**T6.4 金标准匹配已实施 ✅（同歌不同作者手动选择）**
+- **金标准**：行业真金标准 ISRC 国内平台不暴露 → 代理金标准 = 标题归一化精确相等 + 歌手归一化精确相等（`normalize` 含繁转简/去括号/全角转半角）。
+- `core/matcher/exactMatch.ts`（新）：`classifyCandidates` 三类判定——`exact`（完全匹配，自动选；同歌同唱多收录按时长最接近者选）、`title-only`（同歌不同作者，产出候选待手动选）、`variant`（交给 `findBestMatch` 评分）。
+- 同步引擎两阶段改造（`core/sync/syncPlaylist.ts`）：`planSync`（搜索+判定，产出 `SyncPlan{matched,choices,failed}`，不建单）+ `executeSync`（确认后建单+分批添加，未确认 choice 计 `unresolved`）+ `syncPlaylist` 组合入口（有 choices 返回 `status:'choice-needed'`）。
+- 主进程：`platform:sync-playlist` 返回 `{taskId, report}`，choice-needed 时 plan 缓存进 `pendingSyncs`；新增 `platform:confirm-sync(taskId, selections)` 完成写入。preload 暴露 `confirmSync`。
+- UI（TextCreator）：choice-needed 时展示「同名不同歌手」选择面板（候选含歌手/专辑/时长），全部选定后「确认选择并创建歌单」；完全匹配的歌曲自动添加，无需干预。
+- 测试：exactMatch 10 项 + syncPlaylist 新增 7 项（完全匹配自动选、同歌不同作者 choice-needed、无歌手唯一标题自动、混合场景暂不建单、confirm 后合并写入、未选择计 unresolved），共 79 项全绿；typecheck、lint 通过。
+- 待办：手工端到端验收（构造含翻唱的文本 → 选择面板 → 确认创建）。
+
+**T6.1 + T6.2 全自动解析已实施 ✅**
+- `core/parser/detect.ts`（新）：`detectFormat` 格式自动探测（json > m3u > lrc > csv > share > lines）+ `classifyLine` 行分类（song/meta/template/chat/link/noise；模板行先于聊天前缀剥离判断，避免「分享歌单：xxx」误当说话人；chat 支持 `名字:` 与 `【昵称】` 前缀多层剥离）。
+- `core/parser/artistLexicon.ts`（新）：内置常见歌手词典（华语/欧美/日韩 ~150 条，经 normalize 归一化匹配），仅作正信号。
+- `core/parser/orderInfer.ts`（新）：`inferPair` 字段顺序信号评分（书名号+0.40/版本词+0.35 歌名侧；多人名+0.35/feat.+0.30/词典+0.30/短名+0.10 歌手侧；差值≥0.25 定序否则 ambiguous）+ `majorityOrder` 整段投票（≥80% 且样本≥2 裁决歧义行）+ `splitQuotedTitle` 书名号锚定（《歌名》歌手/歌手《歌名》）。
+- `parseText` 管线重写：探测 → 行分类去噪（空行/纯符号静默跳过，meta/template/link 进 ignoredLines，模板行含《歌名》时提取为歌）→ 书名号锚定 → 分隔符拆分 → 顺序判定（override > 信号 > 投票）；歧义行保留双候选。`ParseOptions.order` 仅作高级覆盖，默认全自动。
+- 模型：`ParseResult` 新增 `format`/`detectedOrder`/`ignoredLines`；`ParsedSong` 新增 `orderConfidence`/`candidates`。
+- UI（TextCreator）：移除「解析格式」下拉框；预览显示「已自动识别：歌名 - 歌手」标签；歧义行高亮 + 一键切换候选；展示已忽略行数。
+- 测试：detect 14 项 + orderInfer 14 项 + parseText 由 11 项扩至 18 项（混排两种顺序全自动、投票纠正、聊天行、书名号、歧义候选、模板提取、share 探测），共 115 项全绿；typecheck、lint 通过。
+- 需求演进更新的既有断言（计划内，非改测试过测）：置信度 0.9 常量 → 信号计算值；混排用例「分享歌单：我的收藏」从纯歌名改为 ignoredLines（PRD FR-2.1「自动忽略非歌曲行」）；空输入 toEqual 增加新模型字段。
+- 待办：T6.3 结构格式解析器（json/csv/m3u/lrc，当前探测后返回空结果）；手工验收混排/分享文本解析。
+
+**T6.3 结构格式解析器已实施 ✅（T6 全部完成）**
+- `core/parser/structured.ts`（新）：`parseJson`（数组/嵌套对象取第一个数组，键别名 title/name/song/track + artist/singer/author）、`parseM3u`（提取 `#EXTINF` 逗号后描述）、`parseLrc`（剥时间戳后复用行式管线，元信息行进 ignoredLines）、`parseCsv`（tab/逗号主导分隔符，表头列映射 title/artist 键别名，无表头按 [歌名,歌手]）。
+- 行式管线抽至 `core/parser/lines.ts`（`parseLineText`），供 m3u/lrc 复用（避免循环依赖）；`parseText` 瘦身为「探测 + 分派」入口。
+- 测试：structured 8 项（json 数组/键别名嵌套/m3u/lrc/csv 表头与无表头/空歌手列），共 123 项全绿；typecheck、lint 通过。
+- T6 全部交付：格式自动探测、行分类去噪、字段顺序自动判定 + 投票、书名号锚定、结构格式解析、金标准匹配（完全匹配自动选/同歌不同作者手动选）。UI 已移除手动格式下拉框。
+- 待办：手工端到端验收（混排两种顺序文本、分享文本、csv/m3u/lrc 粘贴、含翻唱的同步选择面板）。
+
+### 修复记录 — 英文独立乐队清单解析失败 ✅
+- **问题**（用户实测清单 Radiohead/Black Country New Road 等 7 首）：
+  1. `Weird Fishes/Arpeggi` 被 `MULTI_ARTIST` 误判（斜杠当多人名分隔符）→ 首行 title/artist 颠倒；
+  2. 其余 6 行为英文独立乐队、不在歌手词典 → 顺序歧义 → 默认 title=乐队名 → 同步搜索词是乐队名，全部匹配失败；UI 歧义行 artist 缺失显示不完整；
+  3. 预览「切换候选」是交替盲切，用户无法明确选择。
+- **修复**：
+  1. `MULTI_ARTIST` 收窄为「顿号连接的中文人名」（英文逗号/斜杠常见于乐队名与歌名）；
+  2. 歌手词典扩充 ~60 个欧美摇滚/独立/电子/爵士艺人（含清单 7 个），存储改为 `normalize` 归一化 key；移除歧义单词型乐队名（Ride）；
+  3. **搜索验证闭环**（T6 第四级落地）：`MatchQuery.alternatives` 携带歧义行双候选，`planSync` 主候选无匹配时逐个搜索备选——备选完全匹配自动选、备选多版本进 choice 面板；
+  4. UI：歧义行改为两个明确候选按钮（点选即用）；同步请求自动携带 `alternatives`；预览列表高度 max-h-64→96 避免末条裁剪。
+- **测试**：回归用例（用户清单 7 行全对、斜杠/逗号乐队名不误判）3 项 + planSync alternatives 4 项，共 131 项全绿；typecheck、lint 通过。
+- 待办：手工验收真实平台同步（该清单应 7 首全部匹配并自动建单）。
 
 | 风险 | 缓解 |
 |---|---|

@@ -3,8 +3,8 @@ import { join } from 'node:path'
 import { netease, saveNeteaseCredential, getNeteaseCredential, logoutNetease } from './neteaseService'
 import { getQqMusic, saveQqMusicCredential, getQqMusicCredential, logoutQqMusic } from './qqMusicService'
 import { registerPlatform, getPlatform, resolveAdapter } from './platformRegistry'
-import { syncPlaylist } from '@core/sync/syncPlaylist'
-import type { SyncTarget } from '@core/models/sync'
+import { executeSync, planSync } from '@core/sync/syncPlaylist'
+import type { SyncPlan, SyncSelection, SyncTarget } from '@core/models/sync'
 import type { MatchQuery } from '@core/models/match'
 
 // Electron 从终端启动后管道可能已关闭（如启动命令退出），
@@ -119,6 +119,12 @@ ipcMain.handle('platform:playlist-songs', async (_event, platform: string, playl
   return adapter.getPlaylistSongs(credential, playlistId)
 })
 
+/** 待确认的同步会话：choice-needed 后缓存 plan，等待用户选择 */
+const pendingSyncs = new Map<
+  string,
+  { plan: SyncPlan; target: SyncTarget; playlistName: string; batchSize?: number }
+>()
+
 ipcMain.handle(
   'platform:sync-playlist',
   async (
@@ -135,8 +141,53 @@ ipcMain.handle(
       createPlaylist: (name) => adapter.createPlaylist(credential, name),
       addSongs: (playlistId, songIds) => adapter.addSongsToPlaylist(credential, playlistId, songIds),
     }
-    return syncPlaylist(payload.queries, payload.playlistName, target, {
+    const notify = (ratio: number, stage: 'matching' | 'adding') => {
+      if (!event.sender.isDestroyed()) {
+        event.sender.send('sync:progress', { platform, ratio, stage })
+      }
+    }
+
+    const plan = await planSync(payload.queries, target, { onProgress: notify })
+
+    if (plan.choices.length > 0) {
+      const taskId = `sync-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+      pendingSyncs.set(taskId, {
+        plan,
+        target,
+        playlistName: payload.playlistName,
+        batchSize: payload.batchSize,
+      })
+      return {
+        taskId,
+        report: {
+          status: 'choice-needed',
+          playlistName: payload.playlistName,
+          playlistId: '',
+          total: plan.total,
+          matched: plan.matched.length,
+          added: 0,
+          failed: plan.failed,
+          choices: plan.choices,
+        },
+      }
+    }
+
+    const report = await executeSync(plan, [], payload.playlistName, target, {
       batchSize: payload.batchSize,
+      onProgress: notify,
+    })
+    return { taskId: '', report }
+  },
+)
+
+ipcMain.handle(
+  'platform:confirm-sync',
+  async (event, platform: string, taskId: string, selections: SyncSelection[]) => {
+    const pending = pendingSyncs.get(taskId)
+    if (!pending) throw new Error('同步会话已过期，请重新解析')
+    pendingSyncs.delete(taskId)
+    return executeSync(pending.plan, selections, pending.playlistName, pending.target, {
+      batchSize: pending.batchSize,
       onProgress: (ratio, stage) => {
         if (!event.sender.isDestroyed()) {
           event.sender.send('sync:progress', { platform, ratio, stage })

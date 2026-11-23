@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { syncPlaylist } from '@core/sync/syncPlaylist'
+import { executeSync, planSync, syncPlaylist } from '@core/sync/syncPlaylist'
 import { SearchError, type SyncOptions, type SyncTarget } from '@core/models/sync'
 import type { MatchQuery } from '@core/models/match'
 import type { PlatformSong } from '@core/models/platform'
@@ -215,5 +215,209 @@ describe('syncPlaylist — 单向同步引擎（T4）', () => {
       searchIntervalMs: 120,
     })
     expect(stamps[1] - stamps[0]).toBeGreaterThanOrEqual(110)
+  })
+})
+
+describe('syncPlaylist — 金标准两阶段（T6.4）', () => {
+  it('完全匹配（标题+歌手精确）→ 自动选择并建单，无需确认', async () => {
+    const target = makeTarget({
+      晴天: [song('1', '晴天', '周杰伦'), song('2', '晴天', '翻唱者')],
+    })
+    const report = await run(
+      [{ title: '晴天', artist: '周杰伦' }],
+      'x',
+      target,
+    )
+    expect(report.status).toBe('done')
+    expect(report.choices).toHaveLength(0)
+    expect(report.added).toBe(1)
+    expect(target.addSongs).toHaveBeenCalledWith('pl-x', ['1'])
+  })
+
+  it('同歌不同作者（标题精确、歌手不匹配）→ choice-needed，不建单', async () => {
+    const target = makeTarget({
+      勇气: [song('1', '勇气', '棉子'), song('2', '勇气', '金志文')],
+    })
+    const report = await run([{ title: '勇气', artist: '梁静茹' }], 'x', target)
+    expect(report.status).toBe('choice-needed')
+    expect(report.playlistId).toBe('')
+    expect(report.choices).toHaveLength(1)
+    expect(report.choices[0].candidates.map((c) => c.id)).toEqual(['1', '2'])
+    expect(target.createPlaylist).not.toHaveBeenCalled()
+  })
+
+  it('query 无歌手且唯一标题精确 → 自动选择', async () => {
+    const target = makeTarget({ 稻香: [song('1', '稻香', '周杰伦')] })
+    const report = await run([{ title: '稻香' }], 'x', target)
+    expect(report.status).toBe('done')
+    expect(report.added).toBe(1)
+  })
+
+  it('query 无歌手且多个标题精确不同歌手 → choice-needed', async () => {
+    const target = makeTarget({
+      勇气: [song('1', '勇气', '棉子'), song('2', '勇气', '金志文')],
+    })
+    const report = await run([{ title: '勇气' }], 'x', target)
+    expect(report.status).toBe('choice-needed')
+    expect(report.choices[0].candidates).toHaveLength(2)
+  })
+
+  it('混合：确定的匹配暂不建单，等用户确认选择后一并写入', async () => {
+    const target = makeTarget({
+      晴天: [song('1', '晴天', '周杰伦')],
+      勇气: [song('2', '勇气', '棉子'), song('3', '勇气', '金志文')],
+    })
+    const report = await run(
+      [{ title: '晴天', artist: '周杰伦' }, { title: '勇气', artist: '梁静茹' }],
+      'x',
+      target,
+    )
+    expect(report.status).toBe('choice-needed')
+    expect(report.matched).toBe(1)
+    expect(target.createPlaylist).not.toHaveBeenCalled()
+  })
+
+  it('executeSync：确认选择后建单，matched 与选定项一并添加', async () => {
+    const target = makeTarget({
+      晴天: [song('1', '晴天', '周杰伦')],
+      勇气: [song('2', '勇气', '棉子'), song('3', '勇气', '金志文')],
+    })
+    const queries = [
+      { title: '晴天', artist: '周杰伦' },
+      { title: '勇气', artist: '梁静茹' },
+    ]
+    const plan = await planSync(queries, target, { searchIntervalMs: 0 })
+    expect(plan.matched).toHaveLength(1)
+    expect(plan.choices).toHaveLength(1)
+    const final = await executeSync(plan, [{ choiceIndex: 0, songId: '3' }], 'x', target, {
+      searchIntervalMs: 0,
+    })
+    expect(final.status).toBe('done')
+    expect(final.added).toBe(2)
+    expect(target.addSongs).toHaveBeenCalledWith('pl-x', ['1', '3'])
+  })
+
+  it('executeSync：未选择的 choice 计为 unresolved 失败', async () => {
+    const target = makeTarget({
+      晴天: [song('1', '晴天', '周杰伦')],
+      勇气: [song('2', '勇气', '棉子'), song('3', '勇气', '金志文')],
+    })
+    const plan = await planSync(
+      [{ title: '晴天', artist: '周杰伦' }, { title: '勇气', artist: '梁静茹' }],
+      target,
+      { searchIntervalMs: 0 },
+    )
+    const final = await executeSync(plan, [], 'x', target, { searchIntervalMs: 0 })
+    expect(final.status).toBe('done')
+    expect(final.added).toBe(1)
+    expect(final.failed).toHaveLength(1)
+    expect(final.failed[0].reason).toBe('unresolved')
+  })
+})
+
+describe('planSync — 备选候选搜索验证（T6.4 闭环）', () => {
+  it('主候选无匹配、备选精确匹配 → 自动采用备选', async () => {
+    const target = makeTarget({
+      'Black Country, New Road': [],
+      'Basketball Shoes': [song('1', 'Basketball Shoes', 'Black Country, New Road')],
+    })
+    const plan = await planSync(
+      [
+        {
+          title: 'Black Country, New Road',
+          artist: 'Basketball Shoes',
+          alternatives: [{ title: 'Basketball Shoes', artist: 'Black Country, New Road' }],
+        },
+      ],
+      target,
+      { searchIntervalMs: 0 },
+    )
+    expect(plan.matched).toHaveLength(1)
+    expect(plan.matched[0].songId).toBe('1')
+    expect(plan.choices).toHaveLength(0)
+    expect(plan.failed).toHaveLength(0)
+  })
+
+  it('备选精确匹配（歌手命中）→ 自动选择，不产生 choice', async () => {
+    const target = makeTarget({
+      'Cory Wong': [],
+      Golden: [song('2', 'Golden', 'Harry Styles'), song('3', 'Golden', 'Cory Wong')],
+    })
+    const plan = await planSync(
+      [
+        {
+          title: 'Cory Wong',
+          artist: 'Golden',
+          alternatives: [{ title: 'Golden', artist: 'Cory Wong' }],
+        },
+      ],
+      target,
+      { searchIntervalMs: 0 },
+    )
+    expect(plan.matched).toHaveLength(1)
+    expect(plan.matched[0].songId).toBe('3')
+    expect(plan.choices).toHaveLength(0)
+  })
+
+  it('备选多版本且歌手均不匹配 → choice-needed 供用户手动选择', async () => {
+    const target = makeTarget({
+      'Cory Wong': [],
+      Golden: [song('2', 'Golden', 'Harry Styles'), song('3', 'Golden', 'Jill Scott')],
+    })
+    const plan = await planSync(
+      [
+        {
+          title: 'Cory Wong',
+          artist: 'Golden',
+          alternatives: [{ title: 'Golden', artist: 'Cory Wong' }],
+        },
+      ],
+      target,
+      { searchIntervalMs: 0 },
+    )
+    expect(plan.choices).toHaveLength(1)
+    expect(plan.choices[0].query).toMatchObject({ title: 'Golden', artist: 'Cory Wong' })
+    expect(plan.choices[0].candidates.map((c) => c.id)).toEqual(['2', '3'])
+  })
+
+  it('主候选精确匹配 → 不触发备选搜索', async () => {
+    const target = makeTarget({
+      'Hidden Place': [song('1', 'Hidden Place', 'Björk')],
+    })
+    target.searchSongs = vi.fn(async (keyword: string) => {
+      if (keyword === 'Hidden Place') return [song('1', 'Hidden Place', 'Björk')]
+      if (keyword === 'Björk') throw new Error('不应搜索备选')
+      return []
+    })
+    const plan = await planSync(
+      [
+        {
+          title: 'Hidden Place',
+          artist: 'Björk',
+          alternatives: [{ title: 'Björk', artist: 'Hidden Place' }],
+        },
+      ],
+      target,
+      { searchIntervalMs: 0 },
+    )
+    expect(plan.matched).toHaveLength(1)
+    expect(target.searchSongs).toHaveBeenCalledTimes(1)
+  })
+
+  it('主备均无匹配 → no-match 失败', async () => {
+    const target = makeTarget({})
+    const plan = await planSync(
+      [
+        {
+          title: '无名乐队',
+          artist: '无名歌',
+          alternatives: [{ title: '无名歌', artist: '无名乐队' }],
+        },
+      ],
+      target,
+      { searchIntervalMs: 0 },
+    )
+    expect(plan.failed).toHaveLength(1)
+    expect(plan.failed[0].reason).toBe('no-match')
   })
 })
