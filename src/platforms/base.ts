@@ -70,17 +70,11 @@ export interface LoginStatusRaw {
   nickname?: string
 }
 
-/** 保活原语原始结果：平台续期成功时返回新凭证 */
-export interface KeepAliveRaw {
+/** 保活结果：模板方法与平台原语共用，主进程据此更新凭证或清除登录态 */
+export interface KeepAliveResult {
   /** 凭证是否仍有效（false 表示登录态已失效） */
   alive: boolean
   /** 续期后的新凭证；凭证无变化时为 undefined */
-  cookie?: string
-}
-
-/** 保活结果：模板方法统一返回，主进程据此更新凭证或清除登录态 */
-export interface KeepAliveResult {
-  alive: boolean
   cookie?: string
 }
 
@@ -163,15 +157,15 @@ export abstract class BasePlatformAdapter implements PlatformAdapter {
       'keepalive.check',
       async () => {
         try {
-          const raw = await this.doKeepAlive(credential)
-          if (!raw.alive) {
+          const result = await this.doKeepAlive(credential)
+          if (!result.alive) {
             this.log.warn('keepalive.check', '凭证已失效')
-          } else if (raw.cookie) {
+          } else if (result.cookie) {
             this.log.info('keepalive.check', '凭证保活成功，已续期')
           } else {
             this.log.debug('keepalive.check', '凭证保活校验通过')
           }
-          return { alive: raw.alive, cookie: raw.cookie }
+          return result
         } catch (e) {
           // 网络波动等异常不应误判失效：保持现状，等待下一轮重试
           this.log.warn('keepalive.check', '保活检查失败，保持现状', {
@@ -295,7 +289,7 @@ export abstract class BasePlatformAdapter implements PlatformAdapter {
    * 保活原语：默认通过查询登录态校验凭证是否仍有效（不做续期）。
    * 平台可覆写实现真正续期（如 login_refresh），续期成功后返回新 cookie。
    */
-  protected async doKeepAlive(credential: string): Promise<KeepAliveRaw> {
+  protected async doKeepAlive(credential: string): Promise<KeepAliveResult> {
     const raw = await this.fetchLoginStatus(credential)
     return { alive: Boolean(raw.userId) }
   }

@@ -1,14 +1,5 @@
 import type { PlatformPlaylist, PlatformSong } from '@core/models/platform'
-
-/** 缓存表数据库接口 */
-export interface PlaylistCacheDb {
-  prepare(sql: string): {
-    run(...params: unknown[]): unknown
-    get(...params: unknown[]): unknown
-    all(...params: unknown[]): unknown[]
-  }
-  exec(sql: string): unknown
-}
+import type { SqliteDb } from './sqlite'
 
 interface PlaylistRow {
   id: string
@@ -31,7 +22,7 @@ interface SongRow {
 }
 
 /** 歌单列表与歌单歌曲的本地缓存存储（SQLite，整单替换写入） */
-export function createPlaylistCacheStore(db: PlaylistCacheDb) {
+export function createPlaylistCacheStore(db: SqliteDb) {
   db.exec(`
 CREATE TABLE IF NOT EXISTS playlist_cache (
   platform TEXT NOT NULL,

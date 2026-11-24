@@ -25,28 +25,30 @@ class IpcLogTransport implements LogTransport {
 
 const ipcTransport = new IpcLogTransport()
 
+/** 渲染进程默认传输：开发环境控制台 + IPC 落盘留痕 */
+function buildTransports(): LogTransport[] {
+  const transports: LogTransport[] = []
+  if (import.meta.env?.DEV) transports.push(createConsoleTransport())
+  transports.push(ipcTransport)
+  return transports
+}
+
 /**
  * 安装渲染进程全局默认传输：
  * 渲染进程中未显式指定传输的 logger（如 core 的 parser）也统一经 IPC 落盘。
  */
 export function installRendererLogging(): void {
-  const transports: LogTransport[] = []
-  if (import.meta.env?.DEV) transports.push(createConsoleTransport())
-  transports.push(ipcTransport)
-  setDefaultTransports(transports)
+  setDefaultTransports(buildTransports())
 }
 
 /** 渲染进程日志工厂：开发环境输出到控制台并使用 debug 级别，始终经 IPC 落盘留痕 */
 export function createRendererLogger(module: string): Logger {
   const dev = Boolean(import.meta.env?.DEV)
-  const transports: LogTransport[] = []
-  if (dev) transports.push(createConsoleTransport())
-  transports.push(ipcTransport)
   return createLogger({
     module,
     process: 'renderer',
     level: dev ? 'debug' : 'info',
-    transports,
+    transports: buildTransports(),
   })
 }
 

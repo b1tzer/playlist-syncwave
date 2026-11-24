@@ -13,6 +13,9 @@ const zhCN = {
   'nav.accounts': '账号管理',
   'nav.settings': '设置',
   'common.loading': '加载中…',
+  'sidebar.version': 'v{version}',
+  'sidebar.statusTitle': '运行状态',
+  'sidebar.engine': 'Electron · 本地引擎',
   'sidebar.platformsOnline': '{count}/{total} 平台在线',
   'textCreator.title': '文本快速创建',
   'textCreator.subtitle':
@@ -189,6 +192,9 @@ const enUS: Record<TranslationKey, string> = {
   'nav.accounts': 'Accounts',
   'nav.settings': 'Settings',
   'common.loading': 'Loading…',
+  'sidebar.version': 'v{version}',
+  'sidebar.statusTitle': 'Status',
+  'sidebar.engine': 'Electron · Local engine',
   'sidebar.platformsOnline': '{count}/{total} platforms online',
   'textCreator.title': 'Quick Create from Text',
   'textCreator.subtitle':

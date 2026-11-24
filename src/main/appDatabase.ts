@@ -6,6 +6,7 @@ import { createSyncHistoryStore, type SyncHistoryStore } from './syncHistoryStor
 import { createSettingsStore, type SettingsStore } from './settingsStore'
 import { createMappingStore, type MappingStore } from './mappingStore'
 import { createPlaylistCacheStore, type PlaylistCacheStore } from './playlistCacheStore'
+import type { SqliteDb } from './sqlite'
 
 /** 应用 SQLite 数据库：统一打开连接，初始化全部业务表 */
 export interface AppDatabase {
@@ -15,21 +16,10 @@ export interface AppDatabase {
   playlistCache: PlaylistCacheStore
 }
 
-type RawDatabase = {
-  prepare(sql: string): {
-    run(...params: unknown[]): { changes: number }
-    get(...params: unknown[]): unknown
-    all(...params: unknown[]): unknown[]
-  }
-  exec(sql: string): unknown
-  pragma(sql: string): unknown
-  close(): unknown
-}
-
 let instance: AppDatabase | null = null
 
 /** 旧版 sync-history.db 存在时，把数据搬到 app.db 后删除旧文件 */
-function migrateLegacyHistory(db: RawDatabase): void {
+function migrateLegacyHistory(db: SqliteDb): void {
   const userData = app.getPath('userData')
   const legacyPath = join(userData, 'sync-history.db')
   if (!existsSync(legacyPath)) return
@@ -37,7 +27,7 @@ function migrateLegacyHistory(db: RawDatabase): void {
   try {
     const legacy = createRequire(import.meta.url)('better-sqlite3')(legacyPath, {
       readonly: true,
-    }) as RawDatabase
+    }) as SqliteDb
     try {
       const rows = legacy
         .prepare('SELECT * FROM sync_tasks')
@@ -51,7 +41,7 @@ function migrateLegacyHistory(db: RawDatabase): void {
         for (const row of rows) insert.run(row)
       }
     } finally {
-      legacy.close()
+      legacy.close?.()
     }
     // 迁移成功后清理旧库（连同 WAL 文件）
     for (const suffix of ['', '-wal', '-shm']) {
@@ -68,8 +58,8 @@ export function getDatabase(): AppDatabase {
     // CJS native 模块：内联 createRequire，避免与 electron-vite 注入的 require 冲突
     const Database = createRequire(import.meta.url)('better-sqlite3')
     const dbPath = join(app.getPath('userData'), 'app.db')
-    const db = new Database(dbPath) as RawDatabase
-    db.pragma('journal_mode = WAL')
+    const db = new Database(dbPath) as SqliteDb
+    db.pragma?.('journal_mode = WAL')
     instance = {
       syncHistory: createSyncHistoryStore(db),
       settings: createSettingsStore(db),

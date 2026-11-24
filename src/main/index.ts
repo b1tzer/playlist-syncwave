@@ -1,9 +1,16 @@
-import { app, BrowserWindow, ipcMain, safeStorage, shell } from 'electron'
+import {
+  app,
+  BrowserWindow,
+  ipcMain,
+  safeStorage,
+  shell,
+  type IpcMainInvokeEvent,
+} from 'electron'
 import { join } from 'node:path'
 import { platformModules } from '../platforms'
 import { registerPlatform, getPlatform, resolveAdapter, listPlatforms } from './platformRegistry'
 import type { AdapterContext } from '../platforms/meta'
-import { executeSync, planSync } from '@core/sync/syncPlaylist'
+import { choiceNeededReport, executeSync, planSync } from '@core/sync/syncPlaylist'
 import {
   SearchError,
   SyncAbortedError,
@@ -17,7 +24,13 @@ import type { MatchQuery } from '@core/models/match'
 import { logCenter } from './logging/logCenter'
 import { upsertSyncTask, listSyncTasks, removeSyncTask, clearSyncTasks } from './syncHistoryService'
 import { getSetting, setSetting, getAllSettings } from './settingsService'
-import { saveConfirmedMapping, clearMappings, mappingStats, findMappings } from './mappingService'
+import {
+  saveAutoMapping,
+  saveConfirmedMapping,
+  clearMappings,
+  mappingStats,
+  findMappings,
+} from './mappingService'
 import { startKeepAliveScheduler, stopKeepAliveScheduler } from './keepAliveService'
 import { createPlaylistCacheService } from './playlistCacheService'
 import { getDatabase } from './appDatabase'
@@ -206,14 +219,20 @@ ipcMain.handle('platform:logout', (_event, platform: string) =>
   ),
 )
 
+/** 歌单类 IPC 的统一前置：已登录平台 + 凭证 */
+async function withPlaylistCredential(platform: string) {
+  const services = getPlatform(platform)
+  const credential = services.getCredential()
+  if (!credential) throw new Error('尚未登录')
+  const adapter = await resolveAdapter(platform)
+  return { credential, adapter }
+}
+
 ipcMain.handle('platform:user-playlists', (_event, platform: string, force?: boolean) =>
   ipcLog.time(
     'platform.user-playlists',
     async () => {
-      const services = getPlatform(platform)
-      const credential = services.getCredential()
-      if (!credential) throw new Error('尚未登录')
-      const adapter = await resolveAdapter(platform)
+      const { credential, adapter } = await withPlaylistCredential(platform)
       const result = await playlistCache.playlists(
         platform,
         // 登录态校验并入实际拉取路径：缓存命中时不产生平台请求
@@ -243,10 +262,7 @@ ipcMain.handle(
     ipcLog.time(
       'platform.playlist-songs',
       async () => {
-        const services = getPlatform(platform)
-        const credential = services.getCredential()
-        if (!credential) throw new Error('尚未登录')
-        const adapter = await resolveAdapter(platform)
+        const { credential, adapter } = await withPlaylistCredential(platform)
         const result = await playlistCache.songs(
           platform,
           playlistId,
@@ -265,15 +281,6 @@ ipcMain.handle(
       { platform, playlistId, force: force === true },
     ),
 )
-
-/** 歌单管理类 IPC 的统一前置：已登录平台 + 凭证 */
-async function withPlaylistCredential(platform: string) {
-  const services = getPlatform(platform)
-  const credential = services.getCredential()
-  if (!credential) throw new Error('尚未登录')
-  const adapter = await resolveAdapter(platform)
-  return { credential, adapter }
-}
 
 ipcMain.handle('platform:search-songs', (_event, platform: string, keyword: string, limit?: number) =>
   ipcLog.time(
@@ -400,6 +407,36 @@ function stoppedReport(partial: SyncAbortedError['partial'], playlistName: strin
   }
 }
 
+/** 注册运行中的同步任务并构建引擎控制选项（abort / skip / step / progress 广播） */
+function beginRunningSync(
+  event: IpcMainInvokeEvent,
+  taskId: string,
+  notify: (ratio: number, stage: 'matching' | 'adding') => void,
+): {
+  signal: AbortSignal
+  skipCheck: () => boolean
+  onStep: (item: SyncItemResult) => void
+  onProgress: (ratio: number, stage: 'matching' | 'adding') => void
+} {
+  const ctrl = new AbortController()
+  const skip = { requested: false }
+  runningSyncs.set(taskId, { abort: ctrl, skip })
+  return {
+    signal: ctrl.signal,
+    skipCheck: () => {
+      const requested = skip.requested
+      skip.requested = false
+      return requested
+    },
+    onStep: (item) => {
+      if (!event.sender.isDestroyed()) {
+        event.sender.send('sync:step', { taskId, item })
+      }
+    },
+    onProgress: notify,
+  }
+}
+
 ipcMain.handle(
   'platform:sync-playlist',
   (
@@ -425,7 +462,8 @@ ipcMain.handle(
         const target: SyncTarget = {
           searchSongs: (keyword, limit) =>
             withTimeout(adapter.searchSongs(credential, keyword, limit), REQUEST_TIMEOUT_MS),
-          createPlaylist: (name) => adapter.createPlaylist(credential, name),
+          createPlaylist: (name) =>
+            withTimeout(adapter.createPlaylist(credential, name), REQUEST_TIMEOUT_MS),
           addSongs: (playlistId, songIds) =>
             withTimeout(adapter.addSongsToPlaylist(credential, playlistId, songIds), REQUEST_TIMEOUT_MS),
           lookupMapping: (query) => {
@@ -436,7 +474,11 @@ ipcMain.handle(
           },
           saveMapping: (query, songId) => {
             // 只缓存非人工确认的自动匹配（人工确认经 confirm-sync 单独写入）
-            getDatabase().mappings.saveAutoMatch(platform, query, { id: songId, title: query.title, artist: query.artist ?? '' }, 1)
+            saveAutoMapping(platform, query, {
+              id: songId,
+              title: query.title,
+              artist: query.artist ?? '',
+            }, 1)
           },
         }
         const notify = (ratio: number, stage: 'matching' | 'adding') => {
@@ -444,28 +486,10 @@ ipcMain.handle(
             event.sender.send('sync:progress', { platform, taskId, ratio, stage })
           }
         }
-        const ctrl = new AbortController()
-        const skip = { requested: false }
-        runningSyncs.set(taskId, { abort: ctrl, skip })
-        const controlOptions = {
-          signal: ctrl.signal,
-          skipCheck: () => {
-            const requested = skip.requested
-            skip.requested = false
-            return requested
-          },
-          onStep: (item: SyncItemResult) => {
-            if (!event.sender.isDestroyed()) {
-              event.sender.send('sync:step', { taskId, item })
-            }
-          },
-        }
+        const controlOptions = beginRunningSync(event, taskId, notify)
 
         try {
-          const plan = await planSync(payload.queries, target, {
-            onProgress: notify,
-            ...controlOptions,
-          })
+          const plan = await planSync(payload.queries, target, controlOptions)
 
           // 歌单名留空时自动命名：今日日期 + 第一首歌风格
           const autoName = [payload.autoNameDate, plan.firstGenre].filter(Boolean).join(' ')
@@ -488,26 +512,11 @@ ipcMain.handle(
               choices: plan.choices.length,
               failed: plan.failed.length,
             })
-            return {
-              taskId,
-              report: {
-                status: 'choice-needed',
-                playlistName: finalName,
-                playlistId: '',
-                total: plan.total,
-                matched: plan.matched.length,
-                added: 0,
-                failed: plan.failed,
-                choices: plan.choices,
-                items: plan.items,
-                firstGenre: plan.firstGenre,
-              },
-            }
+            return { taskId, report: choiceNeededReport(finalName, plan) }
           }
 
           const report = await executeSync(plan, [], finalName, target, {
             batchSize: payload.batchSize,
-            onProgress: notify,
             ...controlOptions,
           })
           // 目标平台新建了歌单：失效其列表缓存，下次访问拉取最新
@@ -706,28 +715,16 @@ ipcMain.handle(
             saveConfirmedMapping(platform, choice, selection.songId)
           }
         }
-        const ctrl = new AbortController()
-        const skip = { requested: false }
-        runningSyncs.set(taskId, { abort: ctrl, skip })
+        const notify = (ratio: number, stage: 'matching' | 'adding') => {
+          if (!event.sender.isDestroyed()) {
+            event.sender.send('sync:progress', { platform, taskId, ratio, stage })
+          }
+        }
+        const controlOptions = beginRunningSync(event, taskId, notify)
         try {
           const report = await executeSync(pending.plan, selections, pending.playlistName, pending.target, {
             batchSize: pending.batchSize,
-            signal: ctrl.signal,
-            skipCheck: () => {
-              const requested = skip.requested
-              skip.requested = false
-              return requested
-            },
-            onStep: (item) => {
-              if (!event.sender.isDestroyed()) {
-                event.sender.send('sync:step', { taskId, item })
-              }
-            },
-            onProgress: (ratio, stage) => {
-              if (!event.sender.isDestroyed()) {
-                event.sender.send('sync:progress', { platform, taskId, ratio, stage })
-              }
-            },
+            ...controlOptions,
           })
           if (report.playlistId !== '') {
             playlistCacheStore.invalidatePlaylists(platform)

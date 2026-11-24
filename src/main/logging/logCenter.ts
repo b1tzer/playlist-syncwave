@@ -3,7 +3,6 @@ import { join } from 'node:path'
 import {
   ConsoleTransport,
   createLogger,
-  formatJsonLine,
   isLogLevel,
   sanitizeContext,
   setDefaultTransports,
@@ -144,5 +143,3 @@ class LogCenter {
 }
 
 export const logCenter = new LogCenter()
-
-export { formatJsonLine }

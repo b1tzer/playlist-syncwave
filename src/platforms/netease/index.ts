@@ -5,30 +5,18 @@ import type {
 } from '@core/models/platform'
 import { SearchError } from '@core/models/sync'
 import type { PlatformModule } from '../meta'
-import { BasePlatformAdapter, type KeepAliveRaw, type LoginStatusRaw, type QrCheckRaw } from '../base'
+import {
+  BasePlatformAdapter,
+  type KeepAliveResult,
+  type LoginStatusRaw,
+  type QrCheckRaw,
+} from '../base'
+import { artistNames, asArray, asObject, pickString, type JsonObject } from '../json'
 
 /** NeteaseCloudMusicApi 的模块函数签名（CJS） */
 export type NcmApiFn = (query?: Record<string, unknown>) => Promise<unknown>
 
 export type NcmApi = Record<string, NcmApiFn>
-
-type JsonObject = Record<string, unknown>
-
-function asObject(v: unknown): JsonObject {
-  return typeof v === 'object' && v !== null ? (v as JsonObject) : {}
-}
-
-function pickString(...values: unknown[]): string | undefined {
-  for (const v of values) {
-    if (typeof v === 'string' && v.length > 0) return v
-    if (typeof v === 'number') return String(v)
-  }
-  return undefined
-}
-
-function asStringArray(v: unknown): unknown[] {
-  return Array.isArray(v) ? v : []
-}
 
 /**
  * NCM 接口调用：将 NCM 风格对象异常（{ body: { code, message } }）
@@ -93,7 +81,7 @@ export class NeteaseAdapter extends BasePlatformAdapter {
     }
   }
 
-  protected async doKeepAlive(cookie: string): Promise<KeepAliveRaw> {
+  protected async doKeepAlive(cookie: string): Promise<KeepAliveResult> {
     // 优先走 login_refresh 续期；扫码登录无 refresh token 时接口报错，回退为登录态校验
     try {
       const res = asObject(await callNcm(this.api.login_refresh!, { cookie }))
@@ -132,7 +120,7 @@ export class NeteaseAdapter extends BasePlatformAdapter {
   protected async fetchPlaylistSongs(cookie: string, playlistId: string): Promise<PlatformSong[]> {
     const res = asObject(await callNcm(this.api.playlist_detail!, { id: playlistId, cookie }))
     const tracks = asObject(asObject(res.body).playlist).tracks
-    return asStringArray(tracks).map(mapTrack)
+    return asArray(tracks).map(mapTrack)
   }
 
   protected async doSearch(cookie: string, keyword: string, limit: number): Promise<PlatformSong[]> {
@@ -154,7 +142,7 @@ export class NeteaseAdapter extends BasePlatformAdapter {
       throw new SearchError(message, retryable, code === 405)
     }
     const songs = asObject(asObject(res.body).result).songs
-    return asStringArray(songs).map(mapTrack)
+    return asArray(songs).map(mapTrack)
   }
 
   // --- 写原语 ---
@@ -166,69 +154,58 @@ export class NeteaseAdapter extends BasePlatformAdapter {
   }
 
   protected async doAddSongs(cookie: string, playlistId: string, songIds: string[]): Promise<void> {
-    // 新版批量操作接口（/api/playlist/manipulate/tracks）：老接口 playlist_track_add 易被风控 401
-    const res = asObject(
-      await callNcm(this.api.playlist_tracks!, {
-        op: 'add',
-        pid: playlistId,
-        tracks: songIds.join(','),
-        cookie,
-      }),
-    )
-    const body = asObject(res.body)
-    if (body.code !== undefined && Number(body.code) !== 200) {
-      throw new Error(
-        `网易云：添加歌曲失败 code=${String(body.code)}：${pickString(body.message, body.msg) ?? ''}`,
-      )
-    }
+    await this.updateTracks(cookie, playlistId, 'add', songIds, '添加歌曲')
   }
 
   protected async doRenamePlaylist(cookie: string, playlistId: string, name: string): Promise<void> {
     const res = asObject(await callNcm(this.api.playlist_name_update!, { id: playlistId, name, cookie }))
-    const body = asObject(res.body)
-    if (body.code !== undefined && Number(body.code) !== 200) {
-      throw new Error(`网易云：重命名歌单失败 code=${String(body.code)}`)
-    }
+    assertOk(asObject(res.body), '重命名歌单')
   }
 
   protected async doDeletePlaylist(cookie: string, playlistId: string): Promise<void> {
     const res = asObject(await callNcm(this.api.playlist_delete!, { id: playlistId, cookie }))
-    const body = asObject(res.body)
-    if (body.code !== undefined && Number(body.code) !== 200) {
-      throw new Error(`网易云：删除歌单失败 code=${String(body.code)}`)
-    }
+    assertOk(asObject(res.body), '删除歌单')
   }
 
   protected async doRemoveSongs(cookie: string, playlistId: string, songIds: string[]): Promise<void> {
-    // 与添加一致，使用新版批量操作接口
+    await this.updateTracks(cookie, playlistId, 'del', songIds, '移除歌曲')
+  }
+
+  /** 批量增删歌曲共用接口（新版批量操作，老接口易被风控） */
+  private async updateTracks(
+    cookie: string,
+    playlistId: string,
+    op: 'add' | 'del',
+    songIds: string[],
+    label: string,
+  ): Promise<void> {
     const res = asObject(
       await callNcm(this.api.playlist_tracks!, {
-        op: 'del',
+        op,
         pid: playlistId,
         tracks: songIds.join(','),
         cookie,
       }),
     )
-    const body = asObject(res.body)
-    if (body.code !== undefined && Number(body.code) !== 200) {
-      throw new Error(
-        `网易云：移除歌曲失败 code=${String(body.code)}：${pickString(body.message, body.msg) ?? ''}`,
-      )
-    }
+    assertOk(asObject(res.body), label, pickString(asObject(res.body).message, asObject(res.body).msg) ?? '')
+  }
+}
+
+/** 写操作响应校验：code 非 200 抛出带原因的平台错误 */
+function assertOk(body: JsonObject, action: string, message?: string): void {
+  if (body.code !== undefined && Number(body.code) !== 200) {
+    const suffix = message !== undefined ? `：${message}` : ''
+    throw new Error(`网易云：${action}失败 code=${String(body.code)}${suffix}`)
   }
 }
 
 function mapTrack(t: unknown): PlatformSong {
   const item = asObject(t)
   const album = asObject(item.al ?? item.album)
-  const artistList = asStringArray(item.ar ?? item.artists)
   return {
     id: String(item.id),
     title: pickString(item.name, item.title) ?? '未知歌曲',
-    artist: artistList
-      .map((a) => pickString(asObject(a).name))
-      .filter((n): n is string => Boolean(n))
-      .join(' / '),
+    artist: artistNames(asArray(item.ar ?? item.artists)),
     album: pickString(album.name),
     coverUrl: pickString(album.picUrl),
     durationMs: typeof item.dt === 'number' ? item.dt : undefined,

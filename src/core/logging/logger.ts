@@ -51,6 +51,35 @@ function detectProcess(): LogProcess {
   return 'main'
 }
 
+/**
+ * 异常对象 → 可读文本：Error 取 message，字符串原样，
+ * 其余对象序列化为脱敏 JSON（不可序列化时兜底 String）。
+ * 供错误日志与用户提示共用，避免被吞成 [object Object]。
+ */
+export function serializeErrorValue(error: unknown, maxLen = 500): string {
+  if (error instanceof Error) return error.message
+  if (typeof error === 'string') return error
+  try {
+    const json = JSON.stringify(sanitizeContext(error as Record<string, unknown>))
+    if (json !== undefined) return json.slice(0, maxLen)
+  } catch {
+    // 不可序列化对象走兜底
+  }
+  try {
+    return String(error).slice(0, maxLen)
+  } catch {
+    return '[unserializable error]'
+  }
+}
+
+/** 同步流程的用户可读错误消息：对象异常带「接口错误」前缀，空对象视为未知错误 */
+export function errorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message
+  if (typeof error === 'string') return error
+  const text = serializeErrorValue(error, 200)
+  return text !== '{}' && text !== '[unserializable error]' ? `接口错误：${text}` : '操作失败'
+}
+
 function extractErrorInfo(error: unknown): LogErrorInfo | undefined {
   if (error === undefined || error === null) return undefined
   if (error instanceof Error) {
@@ -61,21 +90,8 @@ function extractErrorInfo(error: unknown): LogErrorInfo | undefined {
     }
   }
   if (typeof error === 'string') return { name: 'Error', message: error }
-  // 对象异常（如平台接口抛出的 { body: { code, message } }）：
-  // 序列化记录真实内容（脱敏），避免被吞成 [object Object]
-  try {
-    const json = JSON.stringify(sanitizeContext(error as Record<string, unknown>))
-    if (json !== undefined) {
-      return { name: 'ObjectError', message: json.slice(0, 500) }
-    }
-  } catch {
-    // 不可序列化对象走兜底
-  }
-  try {
-    return { name: 'ObjectError', message: String(error).slice(0, 500) }
-  } catch {
-    return { name: 'ObjectError', message: '[unserializable error]' }
-  }
+  // 对象异常（如平台接口抛出的 { body: { code, message } }）：序列化记录真实内容（脱敏）
+  return { name: 'ObjectError', message: serializeErrorValue(error) }
 }
 
 class LoggerImpl implements Logger {

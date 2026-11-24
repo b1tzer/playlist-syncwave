@@ -1,6 +1,6 @@
 import { findBestMatch } from '@core/matcher/matchSong'
 import { classifyCandidates } from '@core/matcher/exactMatch'
-import { createLogger } from '@core/logging'
+import { createLogger, errorMessage } from '@core/logging'
 import type { MatchQuery } from '@core/models/match'
 import type { PlatformSong } from '@core/models/platform'
 import {
@@ -18,19 +18,6 @@ import {
 const log = createLogger({ module: 'sync.playlist' })
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
-
-function errorMessage(e: unknown): string {
-  if (e instanceof Error) return e.message
-  if (typeof e === 'string') return e
-  // 对象异常兜底：序列化记录真实内容，避免吞成 [object Object]
-  try {
-    const json = JSON.stringify(e)
-    if (json !== undefined && json !== '{}') return `接口错误：${json.slice(0, 200)}`
-  } catch {
-    // 不可序列化对象继续兜底
-  }
-  return '操作失败'
-}
 
 /**
  * 阶段一：逐首搜索 + 金标准判定。
@@ -418,6 +405,22 @@ export async function executeSync(
   }
 }
 
+/** 存在同歌不同作者时的 choice-needed 报告（未建单） */
+export function choiceNeededReport(playlistName: string, plan: SyncPlan): SyncReport {
+  return {
+    status: 'choice-needed',
+    playlistName,
+    playlistId: '',
+    total: plan.total,
+    matched: plan.matched.length,
+    added: 0,
+    failed: plan.failed,
+    choices: plan.choices,
+    items: plan.items,
+    firstGenre: plan.firstGenre,
+  }
+}
+
 /**
  * 单向同步入口：先搜索判定，全自动则直接建单写入；
  * 存在同歌不同作者时返回 choice-needed，等待用户确认后调 executeSync 完成。
@@ -435,18 +438,7 @@ export async function syncPlaylist(
       playlistName,
       choices: plan.choices.length,
     })
-    return {
-      status: 'choice-needed',
-      playlistName,
-      playlistId: '',
-      total: plan.total,
-      matched: plan.matched.length,
-      added: 0,
-      failed: plan.failed,
-      choices: plan.choices,
-      items: plan.items,
-      firstGenre: plan.firstGenre,
-    }
+    return choiceNeededReport(playlistName, plan)
   }
 
   return executeSync(plan, [], playlistName, target, options)

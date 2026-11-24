@@ -1,14 +1,5 @@
 import type { SyncItemResult, SyncTaskRecord, SyncTaskStatus } from '@core/models/sync'
-
-/** 数据库访问接口：便于注入 fake 进行测试，主进程用 better-sqlite3 实现 */
-export interface SyncHistoryDb {
-  prepare(sql: string): {
-    run(...params: unknown[]): { changes: number }
-    get(...params: unknown[]): unknown
-    all(...params: unknown[]): unknown[]
-  }
-  exec(sql: string): unknown
-}
+import type { SqliteDb } from './sqlite'
 
 interface TaskRow {
   id: string
@@ -84,7 +75,7 @@ function rowToTask(row: TaskRow): SyncTaskRecord {
   }
 }
 
-export function createSyncHistoryStore(db: SyncHistoryDb) {
+export function createSyncHistoryStore(db: SqliteDb) {
   db.exec(`
 CREATE TABLE IF NOT EXISTS sync_tasks (
   id TEXT PRIMARY KEY,

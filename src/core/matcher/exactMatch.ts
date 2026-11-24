@@ -1,4 +1,4 @@
-import { artistParts, extractVersionTag, normalize } from './matchSong'
+import { artistExactMatch, extractVersionTag, normalize } from './matchSong'
 import type { MatchQuery } from '@core/models/match'
 import type { PlatformSong } from '@core/models/platform'
 
@@ -12,14 +12,6 @@ export type CandidateDisposition =
   | { kind: 'title-only'; candidates: PlatformSong[] }
   | { kind: 'variant' }
 
-/** 歌手串人名交集：feat./多人名顿号切分后任一人名归一化精确相等即视为同一歌手 */
-function artistMatch(queryArtist: string | undefined, candidateArtist: string): boolean {
-  if (!queryArtist) return false
-  const queryParts = artistParts(queryArtist)
-  const candidateParts = artistParts(candidateArtist)
-  return queryParts.some((p) => candidateParts.includes(p))
-}
-
 export function classifyCandidates(
   query: MatchQuery,
   candidates: PlatformSong[],
@@ -30,14 +22,14 @@ export function classifyCandidates(
   const titleMatches = candidates.filter((c) => normalize(c.title) === queryTitle)
 
   if (queryArtist) {
-    const exact = titleMatches.filter((c) => artistMatch(queryArtist, c.artist))
+    const exact = titleMatches.filter((c) => artistExactMatch(queryArtist, c.artist))
     if (exact.length > 0) {
       return { kind: 'exact', songId: pickBestVersion(exact, query) }
     }
     // 搜索反向验证：候选标题 == query 歌手 且 候选歌手 == query 歌名，
     // 说明字段顺序相反，平台搜索已给出正确收录，直接采纳。
     const reversed = candidates.filter(
-      (c) => normalize(c.title) === queryArtist && artistMatch(query.title, c.artist),
+      (c) => normalize(c.title) === queryArtist && artistExactMatch(query.title, c.artist),
     )
     if (reversed.length > 0) {
       return { kind: 'exact', songId: pickBestVersion(reversed, query) }

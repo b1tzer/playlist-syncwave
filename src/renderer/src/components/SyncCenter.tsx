@@ -1,10 +1,12 @@
 import { useState } from 'react'
 import type { PlatformMeta, PlatformSong } from '@core/models/platform'
 import { createRendererLogger } from '../logging/rendererLogger'
-import type { SyncItemResult, SyncTaskRecord } from '@core/models/sync'
+import type { SyncItemResult, SyncTaskRecord, SyncTaskStatus } from '@core/models/sync'
 import { useI18n } from '../i18n'
 import type { TranslationKey, TranslateParams } from '../i18n/translations'
+import { syncItemTitle } from '../sync/helpers'
 import SongList from './SongList'
+import ProgressBar from './ProgressBar'
 
 const log = createRendererLogger('renderer.sync-center')
 
@@ -25,57 +27,18 @@ interface SyncCenterProps {
   onSkipTask: (id: string) => void
 }
 
-function statusText(t: Translate, task: SyncTaskRecord): string {
-  switch (task.status) {
-    case 'running':
-      return t('syncCenter.statusRunning')
-    case 'done':
-      return t('syncCenter.statusDone')
-    case 'interrupted':
-      return t('syncCenter.statusInterrupted')
-    case 'stopped':
-      return t('syncCenter.statusStopped')
-    default:
-      return t('syncCenter.statusFailed')
-  }
-}
-
-function statusIcon(task: SyncTaskRecord): string {
-  switch (task.status) {
-    case 'running':
-      return 'progress_activity'
-    case 'done':
-      return 'check_circle'
-    case 'interrupted':
-      return 'pause_circle'
-    case 'stopped':
-      return 'stop_circle'
-    default:
-      return 'error_outline'
-  }
-}
-
-function statusColor(task: SyncTaskRecord): string {
-  switch (task.status) {
-    case 'running':
-      return 'text-tertiary'
-    case 'done':
-      return 'text-primary'
-    case 'interrupted':
-    case 'stopped':
-      return 'text-secondary'
-    default:
-      return 'text-error'
-  }
-}
-
-function itemTitle(item: SyncItemResult): string {
-  return `${item.query.title}${item.query.artist ? ` - ${item.query.artist}` : ''}`
+/** 任务状态元数据：图标 / 颜色 / 文案键 一处定义 */
+const STATUS_META: Record<SyncTaskStatus, { icon: string; color: string; labelKey: TranslationKey }> = {
+  running: { icon: 'progress_activity', color: 'text-tertiary', labelKey: 'syncCenter.statusRunning' },
+  done: { icon: 'check_circle', color: 'text-primary', labelKey: 'syncCenter.statusDone' },
+  interrupted: { icon: 'pause_circle', color: 'text-secondary', labelKey: 'syncCenter.statusInterrupted' },
+  stopped: { icon: 'stop_circle', color: 'text-secondary', labelKey: 'syncCenter.statusStopped' },
+  failed: { icon: 'error_outline', color: 'text-error', labelKey: 'syncCenter.statusFailed' },
 }
 
 /** 失败/跳过项的原因文案（稳定 reason 码翻译，平台原始错误透传） */
 function failedReasonText(t: Translate, item: SyncItemResult): string {
-  const title = itemTitle(item)
+  const title = syncItemTitle(item.query)
   switch (item.reason) {
     case 'no-match':
       return t('sync.failedNoMatch', { title })
@@ -104,6 +67,48 @@ function toSong(item: SyncItemResult): PlatformSong {
     album: item.query.album,
     durationMs: item.query.durationMs,
   }
+}
+
+/** 任务介入按钮组（跳过/停止），卡片头部与详情区共用 */
+function InterveneButtons({
+  onStop,
+  onSkip,
+  size = 'sm',
+}: {
+  onStop: () => void
+  onSkip: () => void
+  size?: 'sm' | 'md'
+}) {
+  const { t } = useI18n()
+  const md = size === 'md'
+  const buttonCls = md
+    ? 'flex items-center gap-1.5 rounded-lg border px-3 py-1.5 font-label-md text-label-md transition-colors'
+    : 'flex items-center gap-1 rounded-md border px-2 py-1 font-label-sm text-label-sm transition-colors'
+  const iconCls = md ? 'text-base' : 'text-sm'
+  return (
+    <>
+      <button
+        onClick={(e) => {
+          e.stopPropagation()
+          onSkip()
+        }}
+        className={`${buttonCls} border-secondary text-secondary hover:bg-secondary/10`}
+      >
+        <span className={`material-symbols-outlined ${iconCls}`}>skip_next</span>
+        {t('syncCenter.skipCurrent')}
+      </button>
+      <button
+        onClick={(e) => {
+          e.stopPropagation()
+          onStop()
+        }}
+        className={`${buttonCls} border-error text-error hover:bg-error/10`}
+      >
+        <span className={`material-symbols-outlined ${iconCls}`}>stop</span>
+        {t('syncCenter.stopTask')}
+      </button>
+    </>
+  )
 }
 
 /** 行内展开的详情清单：分组展示成功/待选择/失败，运行中任务可介入 */
@@ -218,26 +223,7 @@ function TaskDetailSection({
                 {t('syncCenter.stuckHint')}
               </p>
               <div className="mt-2 flex items-center gap-2">
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    onSkip()
-                  }}
-                  className="flex items-center gap-1.5 rounded-lg border border-secondary px-3 py-1.5 font-label-md text-label-md text-secondary transition-colors hover:bg-secondary/10"
-                >
-                  <span className="material-symbols-outlined text-base">skip_next</span>
-                  {t('syncCenter.skipCurrent')}
-                </button>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    onStop()
-                  }}
-                  className="flex items-center gap-1.5 rounded-lg border border-error px-3 py-1.5 font-label-md text-label-md text-error transition-colors hover:bg-error/10"
-                >
-                  <span className="material-symbols-outlined text-base">stop</span>
-                  {t('syncCenter.stopTask')}
-                </button>
+                <InterveneButtons size="md" onStop={onStop} onSkip={onSkip} />
               </div>
             </div>
           )}
@@ -383,6 +369,7 @@ export default function SyncCenter({
         {tasks.map((task) => {
           const expanded = expandedId === task.id
           const intervenable = intervenableIds.includes(task.id)
+          const statusMeta = STATUS_META[task.status]
           return (
             <div
               key={task.id}
@@ -395,15 +382,15 @@ export default function SyncCenter({
               <div className="flex items-center justify-between">
                 <div className="flex min-w-0 items-center gap-2">
                   <span
-                    className={`material-symbols-outlined text-base ${statusColor(task)} ${
+                    className={`material-symbols-outlined text-base ${statusMeta.color} ${
                       task.status === 'running' ? 'animate-spin' : ''
                     }`}
                   >
-                    {statusIcon(task)}
+                    {statusMeta.icon}
                   </span>
                   <p className="truncate font-body-md text-body-md font-medium">{task.name}</p>
                   <span className="rounded-full bg-surface-container-highest px-2 py-0.5 font-label-sm text-label-sm text-on-surface-variant">
-                    {statusText(t, task)}
+                    {t(statusMeta.labelKey)}
                   </span>
                   <span className="material-symbols-outlined text-sm text-outline">
                     {expanded ? 'expand_less' : 'expand_more'}
@@ -411,32 +398,10 @@ export default function SyncCenter({
                 </div>
                 <div className="flex items-center gap-2">
                   {intervenable && (
-                    <>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          log.info('sync.skip-current', '跳过当前歌曲', { taskId: task.id })
-                          onSkipTask(task.id)
-                        }}
-                        title={t('syncCenter.skipCurrent')}
-                        className="flex items-center gap-1 rounded-md border border-secondary px-2 py-1 font-label-sm text-label-sm text-secondary transition-colors hover:bg-secondary/10"
-                      >
-                        <span className="material-symbols-outlined text-sm">skip_next</span>
-                        {t('syncCenter.skipCurrent')}
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          log.info('sync.stop-task', '停止任务', { taskId: task.id })
-                          onStopTask(task.id)
-                        }}
-                        title={t('syncCenter.stopTask')}
-                        className="flex items-center gap-1 rounded-md border border-error px-2 py-1 font-label-sm text-label-sm text-error transition-colors hover:bg-error/10"
-                      >
-                        <span className="material-symbols-outlined text-sm">stop</span>
-                        {t('syncCenter.stopTask')}
-                      </button>
-                    </>
+                    <InterveneButtons
+                      onStop={() => onStopTask(task.id)}
+                      onSkip={() => onSkipTask(task.id)}
+                    />
                   )}
                   <span className="font-label-mono text-label-mono text-outline">
                     {task.createdAt}
@@ -494,11 +459,8 @@ export default function SyncCenter({
               </div>
 
               {task.status === 'running' && (
-                <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-surface-container-highest">
-                  <div
-                    className="h-full rounded-full bg-primary transition-all"
-                    style={{ width: `${Math.round(task.progress * 100)}%` }}
-                  />
+                <div className="mt-3">
+                  <ProgressBar ratio={task.progress} />
                 </div>
               )}
 

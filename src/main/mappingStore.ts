@@ -1,16 +1,7 @@
 import type { SyncChoice } from '@core/models/sync'
 import type { MatchQuery } from '@core/models/match'
 import type { PlatformSong } from '@core/models/platform'
-
-/** 映射表数据库接口 */
-export interface MappingDb {
-  prepare(sql: string): {
-    run(...params: unknown[]): unknown
-    get(...params: unknown[]): unknown
-    all(...params: unknown[]): unknown[]
-  }
-  exec(sql: string): unknown
-}
+import type { SqliteDb } from './sqlite'
 
 /** 跨平台歌曲映射记录（文本歌曲 → 某平台歌曲 ID） */
 export interface SongMapping {
@@ -56,7 +47,7 @@ function rowToMapping(row: MappingRow): SongMapping {
   }
 }
 
-export function createMappingStore(db: MappingDb) {
+export function createMappingStore(db: SqliteDb) {
   db.exec(`
 CREATE TABLE IF NOT EXISTS song_mappings (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

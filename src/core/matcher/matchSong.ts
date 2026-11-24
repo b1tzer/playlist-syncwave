@@ -7,13 +7,17 @@ const FULLWIDTH = /[\uFF01-\uFF5E]/g
 const PAREN_CONTENT = /\s*[(（【[].*?[)）】\]]\s*/g
 const HAS_PAREN = /[(（【[].*?[)）】\]]/
 
-/** 归一化：小写、去空白、繁转简、全角转半角、去括号内容。保留标点。 */
-export function normalize(text: string): string {
+/** 保留括号内容的原始键：小写、繁转简、全角转半角、去空白 */
+function rawKey(text: string): string {
   return t2s(text)
     .toLowerCase()
     .replace(FULLWIDTH, (ch) => String.fromCharCode(ch.charCodeAt(0) - 0xfee0))
-    .replace(PAREN_CONTENT, '')
     .replace(/\s+/gu, '')
+}
+
+/** 归一化：rawKey 基础上再去除括号内容。保留标点。 */
+export function normalize(text: string): string {
+  return rawKey(text).replace(PAREN_CONTENT, '')
 }
 
 /**
@@ -27,6 +31,17 @@ export function artistParts(artist: string): string[] {
     .split(FEAT_SPLIT)
     .map((p) => p.trim())
     .filter(Boolean)
+}
+
+/** 歌手串人名交集：任一人名归一化精确相等即视为同一歌手 */
+export function artistExactMatch(
+  queryArtist: string | undefined,
+  candidateArtist: string,
+): boolean {
+  if (!queryArtist) return false
+  const queryParts = artistParts(queryArtist)
+  const candidateParts = artistParts(candidateArtist)
+  return queryParts.some((p) => candidateParts.includes(p))
 }
 
 /** 版本标记词表：标题括号内出现即视为该版本；先匹配长词（remastered 先于 remaster） */
@@ -57,14 +72,6 @@ export function extractVersionTag(title: string): string | undefined {
     }
   }
   return undefined
-}
-
-/** 保留括号内容的原始键，用于区分「精确标题」与「括号变体」 */
-function rawKey(text: string): string {
-  return t2s(text)
-    .toLowerCase()
-    .replace(FULLWIDTH, (ch) => String.fromCharCode(ch.charCodeAt(0) - 0xfee0))
-    .replace(/\s+/gu, '')
 }
 
 function fuzzyScore(a: string, b: string): number {
@@ -113,8 +120,7 @@ export function findBestMatch(
     if (query.artist && candidateArtist) {
       const queryParts = artistParts(query.artist)
       const candidateParts = artistParts(c.artist)
-      const shared = queryParts.some((p) => candidateParts.includes(p))
-      if (shared) {
+      if (artistExactMatch(query.artist, c.artist)) {
         score += 0.15
         reasons.push('artist-exact')
       } else if (queryParts.some((p) => candidateParts.some((cp) => fuzzyScore(p, cp) > 0))) {

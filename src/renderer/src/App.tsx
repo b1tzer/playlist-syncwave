@@ -11,6 +11,7 @@ import ConfirmSyncDialog from './components/ConfirmSyncDialog'
 import { ToastHost, notify } from './components/toast'
 import { createRendererLogger } from './logging/rendererLogger'
 import { useI18n } from './i18n'
+import { failedDetailLines } from './sync/helpers'
 
 const log = createRendererLogger('renderer.app')
 
@@ -155,9 +156,7 @@ export default function App() {
           added: rep.added,
           failed: rep.failed.length,
           progress: 1,
-          failedDetail: rep.failed.map(
-            (f) => `${f.query.title}${f.query.artist ? ` - ${f.query.artist}` : ''}（${f.message}）`,
-          ),
+          failedDetail: failedDetailLines(rep.failed),
           detail: rep.items,
         })
         resetConfirmSession()
@@ -200,9 +199,7 @@ export default function App() {
         added: rep.added,
         failed: rep.failed.length,
         progress: 1,
-        failedDetail: rep.failed.map(
-          (f) => `${f.query.title}${f.query.artist ? ` - ${f.query.artist}` : ''}（${f.message}）`,
-        ),
+        failedDetail: failedDetailLines(rep.failed),
         detail: rep.items,
       })
     } catch (e) {

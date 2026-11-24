@@ -12,25 +12,18 @@ import type {
   PlatformSong,
 } from '@core/models/platform'
 import type { MatchQuery } from '@core/models/match'
-import type {
-  PendingConfirmSession,
-  SyncFailedItem,
-  SyncItemResult,
-  SyncTaskRecord,
-} from '@core/models/sync'
-import { normalize } from '@core/matcher/matchSong'
+import type { PendingConfirmSession, SyncTaskRecord } from '@core/models/sync'
 import { MANUAL_REFRESH_MIN_INTERVAL_MS } from '@core/cachePolicy'
 import { createRendererLogger } from '../logging/rendererLogger'
 import { useI18n } from '../i18n'
+import { useSyncRunner } from '../sync/useSyncRunner'
+import { songDupKey } from '../sync/helpers'
 import SongList from './SongList'
-import { PLATFORM_LOGOS } from './platformLogos'
+import PlatformLogo from './PlatformLogo'
+import ProgressBar from './ProgressBar'
 import { notify } from './toast'
 
 const log = createRendererLogger('renderer.playlist')
-
-/** 歌曲去重键：标题+歌手归一化（与匹配引擎同口径） */
-const songDupKey = (s: { title: string; artist?: string }): string =>
-  `${normalize(s.title)}|${normalize(s.artist ?? '')}`
 
 const MENU_ITEM =
   'flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 font-label-md text-label-md text-on-surface transition-colors hover:bg-surface-container-high'
@@ -75,7 +68,7 @@ export default function PlaylistSection({
   pendingConfirm,
   onPendingConfirmChange,
 }: PlaylistSectionProps) {
-  const { t, formatTime, formatDate } = useI18n()
+  const { t } = useI18n()
   const [active, setActive] = useState<string>('')
 
   // 平台列表动态变化时，校正当前选中的平台
@@ -102,9 +95,9 @@ export default function PlaylistSection({
   )
   const suppressClickRef = useRef(false)
 
-  // --- 跨平台歌单同步状态 ---
-  const [syncRunning, setSyncRunning] = useState(false)
-  const [syncProgress, setSyncProgress] = useState<{ ratio: number; stage: string } | null>(null)
+  // --- 跨平台歌单同步状态（gathering 为拉取源歌单歌曲阶段） ---
+  const [gathering, setGathering] = useState(false)
+  const { run, running: syncRunning, progress: syncProgress } = useSyncRunner()
 
   // --- 歌单管理操作状态 ---
   const [renaming, setRenaming] = useState(false)
@@ -458,25 +451,10 @@ export default function PlaylistSection({
 
   // --- 跨平台歌单同步 ---
 
-  /** 同步失败条目按稳定 reason 码翻译；平台原始错误直接透传。 */
-  const failedMessage = (f: SyncFailedItem): string => {
-    const title = `${f.query.title}${f.query.artist ? ` - ${f.query.artist}` : ''}`
-    switch (f.reason) {
-      case 'no-match':
-        return t('sync.failedNoMatch', { title })
-      case 'unresolved':
-        return t('sync.failedUnresolved', { title })
-      case 'rate-limited':
-        return t('sync.failedRateLimited')
-      default:
-        return f.message
-    }
-  }
-
-  /** 把所选歌单的歌曲同步到目标平台（完整流程：拉歌 → 建任务 → 进度/选择/结果） */
+  /** 把所选歌单的歌曲同步到目标平台（拉歌 → 建任务 → 进度/选择/结果，进度收敛由 useSyncRunner 完成） */
   const handleSyncTo = async (targetPlatform: string) => {
     const selected = playlists.filter((p) => selectedIds.has(p.id))
-    if (selected.length === 0 || syncRunning || pendingConfirm !== null) return
+    if (selected.length === 0 || gathering || syncRunning || pendingConfirm !== null) return
     const targetMeta = platforms.find((p) => p.id === targetPlatform)
     if (!targetMeta || accounts[targetPlatform] === null) {
       notify(
@@ -490,8 +468,7 @@ export default function PlaylistSection({
       targetPlatform,
       playlistIds: selected.map((p) => p.id),
     })
-    setSyncRunning(true)
-    setSyncProgress(null)
+    setGathering(true)
     setError('')
     try {
       // 拉取所选歌单歌曲并去重
@@ -511,171 +488,23 @@ export default function PlaylistSection({
         return
       }
 
-      const taskId = `task-${Date.now()}`
-      const createdAt = formatTime(new Date())
       const name =
         selected.length === 1
           ? selected[0].name
           : t('playlist.syncNameMultiple', { name: selected[0].name, count: selected.length })
-      const detailRef: SyncItemResult[] = []
-      const baseTask: SyncTaskRecord = {
-        id: taskId,
-        name,
+      await run({
         targetPlatform,
+        queries,
+        name,
         source: 'playlist-import',
-        status: 'running',
-        total: queries.length,
-        added: 0,
-        failed: 0,
-        createdAt,
-        progress: 0,
-        failedDetail: [],
-        detail: [],
-      }
-      onTaskUpdate(baseTask)
-
-      const offProgress = window.electronAPI.platforms.onSyncProgress((p) => {
-        if (p.taskId !== taskId) return
-        setSyncProgress(p)
-        onTaskUpdate({ ...baseTask, progress: p.ratio, detail: [...detailRef] })
+        onTaskUpdate,
+        onPendingConfirmChange,
       })
-      const offStep = window.electronAPI.platforms.onSyncStep((step) => {
-        if (step.taskId !== taskId) return
-        const idx = detailRef.findIndex((d) => d.index === step.item.index)
-        if (idx === -1) detailRef.push(step.item)
-        else detailRef[idx] = step.item
-        onTaskUpdate({ ...baseTask, progress: baseTask.progress, detail: [...detailRef] })
-      })
-
-      try {
-        const { taskId: syncTaskId, report: rep } = await window.electronAPI.platforms.syncPlaylist(
-          targetPlatform,
-          taskId,
-          queries,
-          name,
-          formatDate(new Date()),
-        )
-        const finalDetail = rep.items ?? [...detailRef]
-
-        if (rep.status === 'choice-needed') {
-          log.info('playlist.sync-choice-needed', '歌单同步需要手动选择', {
-            targetPlatform,
-            choices: rep.choices.length,
-          })
-          const runningTask: SyncTaskRecord = {
-            ...baseTask,
-            name: rep.playlistName,
-            failed: rep.failed.length,
-            progress: 1,
-            failedDetail: rep.failed.map(failedMessage),
-            detail: finalDetail,
-          }
-          onTaskUpdate(runningTask)
-          onPendingConfirmChange({
-            syncTaskId,
-            task: runningTask,
-            target: targetPlatform,
-            choices: rep.choices,
-          })
-          return
-        }
-
-        if (rep.status === 'stopped') {
-          log.info('playlist.sync-stopped', '歌单同步被用户停止', {
-            targetPlatform,
-            added: rep.added,
-          })
-          onTaskUpdate({
-            ...baseTask,
-            name: rep.playlistName,
-            status: 'stopped',
-            added: rep.added,
-            failed: rep.failed.length,
-            progress: 1,
-            failedDetail: rep.failed.map(failedMessage),
-            detail: finalDetail,
-          })
-          notify(
-            'warning',
-            t('toast.syncStoppedTitle'),
-            t('toast.syncStoppedDetail', { name: rep.playlistName }),
-          )
-          return
-        }
-
-        const ok = rep.playlistId !== ''
-        log.info('playlist.sync-done', '歌单同步结束', {
-          targetPlatform,
-          playlistId: rep.playlistId,
-          added: rep.added,
-          failed: rep.failed.length,
-        })
-        if (ok) {
-          if (rep.failed.length > 0) {
-            notify(
-              'warning',
-              t('toast.syncDoneTitle'),
-              t('toast.syncPartialDetail', {
-                added: rep.added,
-                total: rep.total,
-                name: rep.playlistName,
-                failed: rep.failed.length,
-              }),
-            )
-          } else {
-            notify(
-              'success',
-              t('toast.syncDoneTitle'),
-              t('toast.syncDoneDetail', {
-                added: rep.added,
-                total: rep.total,
-                name: rep.playlistName,
-              }),
-            )
-          }
-        } else {
-          notify(
-            'error',
-            t('toast.syncNoneTitle'),
-            t('toast.syncNoneDetail', { count: rep.failed.length || rep.total }),
-          )
-        }
-        onTaskUpdate({
-          ...baseTask,
-          name: rep.playlistName,
-          status: ok ? 'done' : 'failed',
-          added: rep.added,
-          failed: rep.failed.length,
-          progress: 1,
-          failedDetail: rep.failed.map(failedMessage),
-          detail: finalDetail,
-        })
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : t('sync.failedGeneric')
-        log.error('playlist.sync-failed', '歌单同步失败', e, {
-          sourcePlatform: active,
-          targetPlatform,
-        })
-        notify('error', t('toast.syncFailedTitle'), msg)
-        onTaskUpdate({
-          ...baseTask,
-          status: 'failed',
-          added: 0,
-          failed: queries.length,
-          progress: 1,
-          failedDetail: [msg],
-          detail: [...detailRef],
-        })
-      } finally {
-        offProgress()
-        offStep()
-      }
     } catch (e) {
       log.error('playlist.sync-gather-failed', '拉取歌单歌曲失败', e, { sourcePlatform: active })
       notify('error', t('playlist.fetchSongsFailed'))
     } finally {
-      setSyncRunning(false)
-      setSyncProgress(null)
+      setGathering(false)
     }
   }
 
@@ -704,11 +533,7 @@ export default function PlaylistSection({
                   : 'text-on-surface-variant hover:text-on-surface'
               }`}
             >
-              {PLATFORM_LOGOS[p.id] ? (
-                <img src={PLATFORM_LOGOS[p.id]} alt={p.name} className="h-5 w-5 object-contain" />
-              ) : (
-                <span className="material-symbols-outlined text-base">{p.icon}</span>
-              )}
+              <PlatformLogo platform={p.id} name={p.name} icon={p.icon} />
               {p.name}
             </button>
           ))}
@@ -823,23 +648,20 @@ export default function PlaylistSection({
               </ul>
             </div>
 
-            {syncRunning && (
+            {(gathering || syncRunning) && (
               <div className="mt-2 rounded-lg border border-outline-variant bg-surface-container-low p-2">
                 {syncProgress ? (
-                  <>
-                    <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface-container-highest">
-                      <div
-                        className="h-full rounded-full bg-primary transition-all"
-                        style={{ width: `${Math.round(syncProgress.ratio * 100)}%` }}
-                      />
-                    </div>
-                    <p className="mt-1 font-label-sm text-label-sm text-on-surface-variant">
-                      {syncProgress.stage === 'matching'
-                        ? t('textCreator.matching')
-                        : t('textCreator.adding')}{' '}
-                      {Math.round(syncProgress.ratio * 100)}%
-                    </p>
-                  </>
+                  <ProgressBar
+                    ratio={syncProgress.ratio}
+                    label={
+                      <>
+                        {syncProgress.stage === 'matching'
+                          ? t('textCreator.matching')
+                          : t('textCreator.adding')}{' '}
+                        {Math.round(syncProgress.ratio * 100)}%
+                      </>
+                    }
+                  />
                 ) : (
                   <p className="flex items-center gap-1.5 font-label-sm text-label-sm text-on-surface-variant">
                     <span className="material-symbols-outlined animate-spin text-sm">
@@ -1062,11 +884,7 @@ export default function PlaylistSection({
               }}
               className={MENU_ITEM}
             >
-              {PLATFORM_LOGOS[p.id] ? (
-                <img src={PLATFORM_LOGOS[p.id]} alt={p.name} className="h-4 w-4 object-contain" />
-              ) : (
-                <span className="material-symbols-outlined text-base">{p.icon}</span>
-              )}
+              <PlatformLogo platform={p.id} name={p.name} icon={p.icon} size="h-4 w-4" />
               {t('playlist.syncToPlatform', { platform: p.name })}
             </button>
           ))}

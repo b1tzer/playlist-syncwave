@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { createRendererLogger } from '../logging/rendererLogger'
 import { LOCALES, useI18n } from '../i18n'
+import ToggleSwitch from './ToggleSwitch'
 
 const log = createRendererLogger('renderer.settings')
 
@@ -90,66 +91,40 @@ export default function SettingsView() {
           title={t('settings.autoLaunch')}
           description={t('settings.autoLaunchDesc')}
         >
-          <button
-            role="switch"
-            aria-checked={autoLaunch}
-            onClick={() => {
-              setAutoLaunch((v) => {
-                const next = !v
-                window.electronAPI.settings
-                  .set('autoLaunch', next)
-                  .then(() => log.info('settings.auto-launch', '开机启动设置已保存', { enabled: next }))
-                  .catch((e) =>
-                    log.error('settings.auto-launch', '开机启动设置保存失败', e, {
-                      enabled: next,
-                    }),
-                  )
-                return next
-              })
+          <ToggleSwitch
+            checked={autoLaunch}
+            onChange={(next) => {
+              setAutoLaunch(next)
+              window.electronAPI.settings
+                .set('autoLaunch', next)
+                .then(() => log.info('settings.auto-launch', '开机启动设置已保存', { enabled: next }))
+                .catch((e) =>
+                  log.error('settings.auto-launch', '开机启动设置保存失败', e, {
+                    enabled: next,
+                  }),
+                )
             }}
-            className={`h-6 w-11 rounded-full p-0.5 transition-colors ${
-              autoLaunch ? 'bg-primary' : 'bg-surface-container-highest'
-            }`}
-          >
-            <span
-              className={`block h-5 w-5 rounded-full bg-on-surface transition-transform ${
-                autoLaunch ? 'translate-x-5' : ''
-              }`}
-            />
-          </button>
+          />
         </SettingRow>
         <SettingRow
           icon="shield_lock"
           title={t('settings.logReport')}
           description={t('settings.logReportDesc')}
         >
-          <button
-            role="switch"
-            aria-checked={reportEnabled}
-            onClick={() => {
-              setReportEnabled((v) => {
-                const next = !v
-                window.electronAPI.settings
-                  .set('reportEnabled', next)
-                  .then(() => log.info('settings.log-report', '日志上报设置已保存', { enabled: next }))
-                  .catch((e) =>
-                    log.error('settings.log-report', '日志上报设置保存失败', e, {
-                      enabled: next,
-                    }),
-                  )
-                return next
-              })
+          <ToggleSwitch
+            checked={reportEnabled}
+            onChange={(next) => {
+              setReportEnabled(next)
+              window.electronAPI.settings
+                .set('reportEnabled', next)
+                .then(() => log.info('settings.log-report', '日志上报设置已保存', { enabled: next }))
+                .catch((e) =>
+                  log.error('settings.log-report', '日志上报设置保存失败', e, {
+                    enabled: next,
+                  }),
+                )
             }}
-            className={`h-6 w-11 rounded-full p-0.5 transition-colors ${
-              reportEnabled ? 'bg-primary' : 'bg-surface-container-highest'
-            }`}
-          >
-            <span
-              className={`block h-5 w-5 rounded-full bg-on-surface transition-transform ${
-                reportEnabled ? 'translate-x-5' : ''
-              }`}
-            />
-          </button>
+          />
         </SettingRow>
         <SettingRow
           icon="info"

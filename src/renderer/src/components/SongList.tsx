@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react'
 import type { PlatformSong } from '@core/models/platform'
 import { useI18n } from '../i18n'
+import { formatDuration } from '../sync/helpers'
 
 interface SongListProps {
   songs: PlatformSong[]
@@ -16,14 +17,6 @@ interface SongListProps {
   renderAction?: (song: PlatformSong) => ReactNode
   /** 歌名下方第二行辅助信息（如失败原因），由调用方注入 */
   renderSubtitle?: (song: PlatformSong) => ReactNode
-}
-
-function formatDuration(durationMs?: number): string {
-  if (durationMs === undefined) return '--'
-  const totalSec = Math.round(durationMs / 1000)
-  const m = Math.floor(totalSec / 60)
-  const s = totalSec % 60
-  return `${m}:${String(s).padStart(2, '0')}`
 }
 
 function SongCover({ song }: { song: PlatformSong }) {

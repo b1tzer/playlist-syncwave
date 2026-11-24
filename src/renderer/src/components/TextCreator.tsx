@@ -1,25 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { parseText } from '@core/parser/parseText'
-import { normalize } from '@core/matcher/matchSong'
 import type { FailedLine } from '@core/models/parse'
-import type {
-  PendingConfirmSession,
-  SyncFailedItem,
-  SyncItemResult,
-  SyncReport,
-  SyncTaskRecord,
-} from '@core/models/sync'
+import type { PendingConfirmSession, SyncTaskRecord } from '@core/models/sync'
 import type { PlatformAccount, PlatformMeta } from '@core/models/platform'
 import { createRendererLogger } from '../logging/rendererLogger'
 import { useI18n } from '../i18n'
-import { PLATFORM_LOGOS } from './platformLogos'
-import { notify } from './toast'
+import { useSyncRunner } from '../sync/useSyncRunner'
+import { songDupKey, syncFailedText } from '../sync/helpers'
+import LineTag from './LineTag'
+import PlatformLogo from './PlatformLogo'
+import ProgressBar from './ProgressBar'
 
 const log = createRendererLogger('renderer.text-creator')
-
-/** 歌曲去重键：标题+歌手归一化（与匹配引擎同口径） */
-const songDupKey = (s: { title: string; artist?: string }): string =>
-  `${normalize(s.title)}|${normalize(s.artist ?? '')}`
 
 /** 输入区草稿持久化：刷新/重启后保留用户输入 */
 const STORAGE_LINES = 'textCreator.lines'
@@ -46,38 +38,6 @@ function loadDraft(): string {
   }
 }
 
-interface EditInputProps {
-  value: string
-  /** 与被替换文本等宽，避免布局重排引起页面跳动 */
-  width: number
-  onChange: (v: string) => void
-  onCommit: () => void
-  onCancel: () => void
-}
-
-/** 原位编辑框：继承 tag 字体与行高，零边框零内边距，宽度与原文一致 */
-function EditInput({ value, width, onChange, onCommit, onCancel }: EditInputProps) {
-  return (
-    <input
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      onBlur={onCommit}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') onCommit()
-        if (e.key === 'Escape') onCancel()
-      }}
-      ref={(el) => {
-        // 仅首次聚焦，且禁止滚动：聚焦不应引起页面跳动
-        if (el && document.activeElement !== el) {
-          el.focus({ preventScroll: true })
-        }
-      }}
-      style={{ width }}
-      className="m-0 min-w-8 max-w-56 border-0 bg-surface p-0 font-label-md text-label-md text-on-surface caret-primary outline-none [font-family:inherit]"
-    />
-  )
-}
-
 interface TextCreatorProps {
   platforms: PlatformMeta[]
   accounts: Record<string, PlatformAccount | null>
@@ -94,7 +54,7 @@ export default function TextCreator({
   pendingConfirm,
   onPendingConfirmChange,
 }: TextCreatorProps) {
-  const { t, formatTime, formatDate } = useI18n()
+  const { t } = useI18n()
   const [lines, setLines] = useState<string[]>(loadLines)
   const [draft, setDraft] = useState(loadDraft)
   const [editingIdx, setEditingIdx] = useState<number | null>(null)
@@ -105,10 +65,8 @@ export default function TextCreator({
   const cancelEditRef = useRef(false)
   const [playlistName, setPlaylistName] = useState('')
   const [target, setTarget] = useState('')
-  const [syncing, setSyncing] = useState(false)
-  const [progress, setProgress] = useState<{ ratio: number; stage: string } | null>(null)
-  const [report, setReport] = useState<SyncReport | null>(null)
-  const [syncError, setSyncError] = useState<string>('')
+
+  const { run, running, progress, report, error: syncError, reset: resetResult } = useSyncRunner()
 
   // 草稿持久化：任意变化即写回，刷新/重启后恢复
   useEffect(() => {
@@ -173,21 +131,6 @@ export default function TextCreator({
 
   const loggedIn = target !== '' && accounts[target] !== null
 
-  /** 同步失败条目按稳定 reason 码翻译；平台原始错误（search-failed）直接透传。 */
-  const failedMessage = (f: SyncFailedItem): string => {
-    const title = `${f.query.title}${f.query.artist ? ` - ${f.query.artist}` : ''}`
-    switch (f.reason) {
-      case 'no-match':
-        return t('sync.failedNoMatch', { title })
-      case 'unresolved':
-        return t('sync.failedUnresolved', { title })
-      case 'rate-limited':
-        return t('sync.failedRateLimited')
-      default:
-        return f.message
-    }
-  }
-
   const failedReason = (reason: FailedLine['reason']): string => {
     switch (reason) {
       case 'missing-title':
@@ -201,11 +144,8 @@ export default function TextCreator({
     }
   }
 
-  // 字段顺序歧义不再提供手动切换：同步阶段由平台搜索自动验证（正反候选搜索）裁决
-
   const handleSync = async () => {
     if (result.songs.length === 0) return
-    const autoNameDate = formatDate(new Date())
     // 留空则由主进程按「今日日期 + 第一首歌风格」自动命名
     const name = playlistName.trim()
     log.info('sync.start', '开始同步', {
@@ -213,13 +153,6 @@ export default function TextCreator({
       playlistName: name || '(自动命名)',
       total: result.songs.length,
     })
-    setSyncing(true)
-    setSyncError('')
-    setReport(null)
-    setProgress({ ratio: 0, stage: 'matching' })
-
-    const taskId = `task-${Date.now()}`
-    const createdAt = formatTime(new Date())
     // 创建时自动去重：保留首次出现的歌曲，重复项跳过
     const seen = new Set<string>()
     const queries = result.songs
@@ -234,165 +167,14 @@ export default function TextCreator({
         artist: s.artist,
         alternatives: s.candidates?.map((c) => ({ title: c.title, artist: c.artist })),
       }))
-
-    // 逐首明细实时累积（主进程 sync:step 广播），供同步中心详情清单展示
-    const detailRef: SyncItemResult[] = []
-    const baseTask: SyncTaskRecord = {
-      id: taskId,
-      name: name || autoNameDate,
+    await run({
       targetPlatform: target,
+      queries,
+      name,
       source: 'text-import',
-      status: 'running',
-      total: queries.length,
-      added: 0,
-      failed: 0,
-      createdAt,
-      progress: 0,
-      failedDetail: [],
-      detail: detailRef,
-    }
-
-    onTaskUpdate({ ...baseTask, detail: [] })
-
-    const offProgress = window.electronAPI.platforms.onSyncProgress((p) => {
-      if (p.taskId === taskId) {
-        setProgress(p)
-        onTaskUpdate({ ...baseTask, progress: p.ratio, detail: [...detailRef] })
-      }
+      onTaskUpdate,
+      onPendingConfirmChange,
     })
-    const offStep = window.electronAPI.platforms.onSyncStep((step) => {
-      if (step.taskId !== taskId) return
-      // 同 index 明细覆盖（失败项重试后可能转为成功）
-      const idx = detailRef.findIndex((d) => d.index === step.item.index)
-      if (idx === -1) detailRef.push(step.item)
-      else detailRef[idx] = step.item
-      onTaskUpdate({ ...baseTask, progress: baseTask.progress, detail: [...detailRef] })
-    })
-
-    try {
-      const { taskId: syncTaskId, report: rep } = await window.electronAPI.platforms.syncPlaylist(
-        target,
-        taskId,
-        queries,
-        name,
-        autoNameDate,
-      )
-      const finalDetail = rep.items ?? [...detailRef]
-
-      if (rep.status === 'choice-needed') {
-        log.info('sync.choice-needed', '同步需要手动选择', {
-          targetPlatform: target,
-          choices: rep.choices.length,
-        })
-        const runningTask: SyncTaskRecord = {
-          ...baseTask,
-          name: rep.playlistName,
-          failed: rep.failed.length,
-          progress: 1,
-          failedDetail: rep.failed.map(failedMessage),
-          detail: finalDetail,
-        }
-        onTaskUpdate(runningTask)
-        // 会话提升到 App 层：分步确认弹窗接管选择流程
-        onPendingConfirmChange({
-          syncTaskId,
-          task: runningTask,
-          target,
-          choices: rep.choices,
-        })
-        return
-      }
-
-      if (rep.status === 'stopped') {
-        log.info('sync.stopped', '同步被用户停止', {
-          targetPlatform: target,
-          added: rep.added,
-          failed: rep.failed.length,
-        })
-        onTaskUpdate({
-          ...baseTask,
-          name: rep.playlistName,
-          status: 'stopped',
-          added: rep.added,
-          failed: rep.failed.length,
-          progress: 1,
-          failedDetail: rep.failed.map(failedMessage),
-          detail: finalDetail,
-        })
-        notify('warning', t('toast.syncStoppedTitle'), t('toast.syncStoppedDetail', { name: rep.playlistName }))
-        return
-      }
-
-      setReport(rep)
-      const ok = rep.playlistId !== ''
-      log.info('sync.done', '同步结束', {
-        targetPlatform: target,
-        playlistId: rep.playlistId,
-        added: rep.added,
-        failed: rep.failed.length,
-      })
-      // 右上角通知：给用户明确的执行结果
-      if (ok) {
-        if (rep.failed.length > 0) {
-          notify(
-            'warning',
-            t('toast.syncDoneTitle'),
-            t('toast.syncPartialDetail', {
-              added: rep.added,
-              total: rep.total,
-              name: rep.playlistName,
-              failed: rep.failed.length,
-            }),
-          )
-        } else {
-          notify(
-            'success',
-            t('toast.syncDoneTitle'),
-            t('toast.syncDoneDetail', {
-              added: rep.added,
-              total: rep.total,
-              name: rep.playlistName,
-            }),
-          )
-        }
-      } else {
-        // 一首都没匹配上：歌单未创建，明确告知并提示检查输入
-        notify(
-          'error',
-          t('toast.syncNoneTitle'),
-          t('toast.syncNoneDetail', { count: rep.failed.length || rep.total }),
-        )
-      }
-      onTaskUpdate({
-        ...baseTask,
-        name: rep.playlistName,
-        status: ok ? 'done' : 'failed',
-        added: rep.added,
-        failed: rep.failed.length,
-        progress: 1,
-        failedDetail: rep.failed.map(failedMessage),
-        detail: finalDetail,
-      })
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : t('sync.failedGeneric')
-      log.error('sync.failed', '同步失败', e, { targetPlatform: target })
-      setSyncError(msg)
-      notify('error', t('toast.syncFailedTitle'), msg)
-      onTaskUpdate({
-        ...baseTask,
-        status: 'failed',
-        added: 0,
-        failed: queries.length,
-        progress: 1,
-        failedDetail: [msg],
-        detail: [...detailRef],
-      })
-    } finally {
-      offProgress()
-      offStep()
-      setSyncing(false)
-      setProgress(null)
-    }
   }
 
   const commitDraft = () => {
@@ -421,6 +203,11 @@ export default function TextCreator({
     } else {
       setLines((prev) => prev.map((l, i) => (i === idx ? editingText : l)))
     }
+    setEditingIdx(null)
+  }
+
+  const cancelEdit = () => {
+    cancelEditRef.current = true
     setEditingIdx(null)
   }
 
@@ -457,11 +244,7 @@ export default function TextCreator({
                       : 'flex items-center gap-1.5 rounded-lg border border-outline-variant px-2.5 py-1 font-label-sm text-label-sm text-on-surface-variant opacity-40 transition-colors hover:opacity-80'
                   }
                 >
-                  {PLATFORM_LOGOS[p.id] ? (
-                    <img src={PLATFORM_LOGOS[p.id]} alt={p.name} className="h-5 w-5 object-contain" />
-                  ) : (
-                    <span className="material-symbols-outlined text-base">{p.icon}</span>
-                  )}
+                  <PlatformLogo platform={p.id} name={p.name} icon={p.icon} />
                   {p.name}
                 </button>
               )
@@ -484,253 +267,100 @@ export default function TextCreator({
                 const song = result.songs[songIdx]
                 const dup = dupFlags[songIdx] ?? false
                 return (
-                  <span
+                  <LineTag
                     key={`s-${idx}`}
-                    title={dup ? t('textCreator.duplicateHint') : raw}
-                    className={
-                      dup
-                        ? 'group inline-flex max-w-full items-center gap-1 rounded-lg border border-outline-variant bg-surface-container-high/60 px-2.5 py-1.5 font-label-md text-label-md text-on-surface-variant'
-                        : 'group inline-flex max-w-full items-center gap-1 rounded-lg border border-primary/40 bg-primary/10 px-2.5 py-1.5 font-label-md text-label-md text-on-surface'
-                    }
-                  >
-                    {dup && (
-                      <span
-                        title={t('textCreator.duplicateHint')}
-                        className="flex items-center rounded bg-outline-variant/60 p-0.5 text-on-surface-variant"
-                      >
-                        <span className="material-symbols-outlined text-xs">content_copy</span>
-                      </span>
-                    )}
-                    <span
-                      className={
-                        dup
-                          ? 'material-symbols-outlined text-sm text-outline'
-                          : 'material-symbols-outlined text-sm text-primary'
-                      }
-                    >
-                      music_note
-                    </span>
-                    {isEditing ? (
-                      <EditInput
-                        value={editingText}
-                        width={editingWidth}
-                        onChange={setEditingText}
-                        onCommit={() => commitEdit(idx)}
-                        onCancel={() => {
-                          cancelEditRef.current = true
-                          setEditingIdx(null)
-                        }}
-                      />
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={(e) => startEdit(idx, e.currentTarget.offsetWidth)}
-                        title={`${raw}（${t('textCreator.editHint')}）`}
-                        className={
-                          dup
-                            ? 'max-w-56 cursor-text truncate transition-colors hover:text-on-surface hover:underline'
-                            : 'max-w-56 cursor-text truncate transition-colors hover:text-primary hover:underline'
-                        }
-                      >
-                        {song.title}
-                        {song.artist ? (
-                          <span className={dup ? 'text-outline' : 'text-on-surface-variant'}>
-                            {' '}
-                            · {song.artist}
-                          </span>
-                        ) : null}
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        removeLine(idx)
-                      }}
-                      className="material-symbols-outlined text-sm text-outline transition-colors hover:text-error"
-                    >
-                      close
-                    </button>
-                  </span>
+                    kind="song"
+                    text={song.title}
+                    subtitle={song.artist}
+                    dup={dup}
+                    raw={raw}
+                    tooltip={dup ? t('textCreator.duplicateHint') : raw}
+                    editing={isEditing}
+                    editingText={editingText}
+                    editingWidth={editingWidth}
+                    onEditingChange={setEditingText}
+                    onStartEdit={(w) => startEdit(idx, w)}
+                    onCommitEdit={() => commitEdit(idx)}
+                    onCancelEdit={cancelEdit}
+                    onRemove={() => removeLine(idx)}
+                  />
                 )
               }
 
               const failed = result.failedLines.find((f) => f.lineNumber === lineNo)
               if (failed) {
                 return (
-                  <span
+                  <LineTag
                     key={`f-${idx}`}
-                    title={t('textCreator.failedLine', {
+                    kind="failed"
+                    text={failed.raw || t('textCreator.emptyLine')}
+                    tooltip={t('textCreator.failedLine', {
                       line: lineNo,
                       raw: failed.raw || t('textCreator.emptyLine'),
                       reason: failedReason(failed.reason),
                     })}
-                    className="group inline-flex max-w-full items-center gap-1 rounded-lg border border-error/50 bg-error/10 px-2.5 py-1.5 font-label-md text-label-md text-error"
-                  >
-                    <span className="material-symbols-outlined text-sm">error_outline</span>
-                    {isEditing ? (
-                      <EditInput
-                        value={editingText}
-                        width={editingWidth}
-                        onChange={setEditingText}
-                        onCommit={() => commitEdit(idx)}
-                        onCancel={() => {
-                          cancelEditRef.current = true
-                          setEditingIdx(null)
-                        }}
-                      />
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={(e) => startEdit(idx, e.currentTarget.offsetWidth)}
-                        className="max-w-56 cursor-text truncate transition-colors hover:underline"
-                      >
-                        {failed.raw || t('textCreator.emptyLine')}
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        removeLine(idx)
-                      }}
-                      className="material-symbols-outlined text-sm text-outline transition-colors hover:text-error"
-                    >
-                      close
-                    </button>
-                  </span>
+                    editing={isEditing}
+                    editingText={editingText}
+                    editingWidth={editingWidth}
+                    onEditingChange={setEditingText}
+                    onStartEdit={(w) => startEdit(idx, w)}
+                    onCommitEdit={() => commitEdit(idx)}
+                    onCancelEdit={cancelEdit}
+                    onRemove={() => removeLine(idx)}
+                  />
                 )
               }
 
               const ignored = result.ignoredLines.find((f) => f.lineNumber === lineNo)
               if (ignored) {
                 return (
-                  <span
+                  <LineTag
                     key={`i-${idx}`}
-                    className="group inline-flex max-w-full items-center gap-1 rounded-lg border border-outline-variant bg-surface-container-high/40 px-2.5 py-1.5 font-label-md text-label-md text-outline"
-                  >
-                    <span className="material-symbols-outlined text-sm">filter_alt_off</span>
-                    {isEditing ? (
-                      <EditInput
-                        value={editingText}
-                        width={editingWidth}
-                        onChange={setEditingText}
-                        onCommit={() => commitEdit(idx)}
-                        onCancel={() => {
-                          cancelEditRef.current = true
-                          setEditingIdx(null)
-                        }}
-                      />
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={(e) => startEdit(idx, e.currentTarget.offsetWidth)}
-                        title={t('textCreator.ignoredLine')}
-                        className="max-w-56 cursor-text truncate line-through transition-colors hover:text-on-surface"
-                      >
-                        {raw || t('textCreator.emptyLine')}
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        removeLine(idx)
-                      }}
-                      className="material-symbols-outlined text-sm text-outline transition-colors hover:text-error"
-                    >
-                      close
-                    </button>
-                  </span>
+                    kind="ignored"
+                    text={raw || t('textCreator.emptyLine')}
+                    editing={isEditing}
+                    editingText={editingText}
+                    editingWidth={editingWidth}
+                    onEditingChange={setEditingText}
+                    onStartEdit={(w) => startEdit(idx, w)}
+                    onCommitEdit={() => commitEdit(idx)}
+                    onCancelEdit={cancelEdit}
+                    onRemove={() => removeLine(idx)}
+                  />
                 )
               }
               if (raw.trim() === '') return null
 
               return (
-                <span
+                <LineTag
                   key={`r-${idx}`}
-                  className="group inline-flex max-w-full items-center gap-1 rounded-lg border border-outline-variant bg-surface-container-high px-2.5 py-1.5 font-label-md text-label-md text-on-surface-variant"
-                >
-                  {isEditing ? (
-                    <EditInput
-                      value={editingText}
-                      width={editingWidth}
-                      onChange={setEditingText}
-                      onCommit={() => commitEdit(idx)}
-                      onCancel={() => {
-                        cancelEditRef.current = true
-                        setEditingIdx(null)
-                      }}
-                    />
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={(e) => startEdit(idx, e.currentTarget.offsetWidth)}
-                      className="max-w-56 cursor-text truncate transition-colors hover:text-on-surface hover:underline"
-                    >
-                      {raw}
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      removeLine(idx)
-                    }}
-                    className="material-symbols-outlined text-sm text-outline transition-colors hover:text-error"
-                  >
-                    close
-                  </button>
-                </span>
+                  kind="raw"
+                  text={raw}
+                  editing={isEditing}
+                  editingText={editingText}
+                  editingWidth={editingWidth}
+                  onEditingChange={setEditingText}
+                  onStartEdit={(w) => startEdit(idx, w)}
+                  onCommitEdit={() => commitEdit(idx)}
+                  onCancelEdit={cancelEdit}
+                  onRemove={() => removeLine(idx)}
+                />
               )
             })}
 
             {extraSongs.map(({ song, index }) => {
               const dup = dupFlags[index] ?? false
               return (
-                <span
+                <LineTag
                   key={`x-${index}`}
-                  title={dup ? t('textCreator.duplicateHint') : undefined}
-                  className={
-                    dup
-                      ? 'group inline-flex max-w-full items-center gap-1 rounded-lg border border-outline-variant bg-surface-container-high/60 px-2.5 py-1.5 font-label-md text-label-md text-on-surface-variant'
-                      : 'group inline-flex max-w-full items-center gap-1 rounded-lg border border-primary/40 bg-primary/10 px-2.5 py-1.5 font-label-md text-label-md text-on-surface'
-                  }
-                >
-                  {dup && (
-                    <span
-                      title={t('textCreator.duplicateHint')}
-                      className="flex items-center rounded bg-outline-variant/60 p-0.5 text-on-surface-variant"
-                    >
-                      <span className="material-symbols-outlined text-xs">content_copy</span>
-                    </span>
-                  )}
-                  <span
-                    className={
-                      dup
-                        ? 'material-symbols-outlined text-sm text-outline'
-                        : 'material-symbols-outlined text-sm text-primary'
-                    }
-                  >
-                    music_note
-                  </span>
-                  <span className="max-w-56 truncate">
-                    {song.title}
-                    {song.artist ? (
-                      <span className={dup ? 'text-outline' : 'text-on-surface-variant'}>
-                        {' '}
-                        · {song.artist}
-                      </span>
-                    ) : null}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setRemovedExtra((prev) => new Set(prev).add(index))}
-                    className="material-symbols-outlined text-sm text-outline transition-colors hover:text-error"
-                  >
-                    close
-                  </button>
-                </span>
+                  kind="song"
+                  text={song.title}
+                  subtitle={song.artist}
+                  dup={dup}
+                  editable={false}
+                  tooltip={dup ? t('textCreator.duplicateHint') : undefined}
+                  onRemove={() => setRemovedExtra((prev) => new Set(prev).add(index))}
+                />
               )
             })}
 
@@ -775,10 +405,9 @@ export default function TextCreator({
                   setDraft('')
                   setEditingIdx(null)
                   setRemovedExtra(new Set())
-                  setReport(null)
-                  setSyncError('')
+                  resetResult()
                 }}
-                disabled={syncing}
+                disabled={running}
                 className="flex shrink-0 items-center gap-1.5 rounded-lg border border-outline-variant px-3 py-1.5 font-label-md text-label-md text-on-surface-variant transition-colors hover:bg-surface-container-high hover:text-on-surface disabled:opacity-40"
               >
                 <span className="material-symbols-outlined text-base">delete_sweep</span>
@@ -795,33 +424,32 @@ export default function TextCreator({
               )}
             </div>
             <button
-              onClick={handleSync}
-              disabled={syncing || pendingConfirm !== null || !loggedIn || result.songs.length === 0}
+              onClick={() => void handleSync()}
+              disabled={running || pendingConfirm !== null || !loggedIn || result.songs.length === 0}
               className="flex shrink-0 items-center justify-center gap-1.5 rounded-lg bg-primary px-4 py-2 font-label-md text-label-md font-medium text-on-primary transition-colors hover:bg-primary/85 disabled:opacity-40"
             >
               <span className="material-symbols-outlined text-base">
-                {syncing ? 'progress_activity' : 'rocket_launch'}
+                {running ? 'progress_activity' : 'rocket_launch'}
               </span>
-              {syncing ? t('textCreator.syncing') : t('textCreator.create')}
+              {running ? t('textCreator.syncing') : t('textCreator.create')}
             </button>
           </div>
         </div>
 
         {/* 进度与结果（输入块下方） */}
-        {syncing && progress && (
+        {running && progress && (
           <div className="mt-3">
-            <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface-container-highest">
-              <div
-                className="h-full rounded-full bg-primary transition-all"
-                style={{ width: `${Math.round(progress.ratio * 100)}%` }}
-              />
-            </div>
-            <p className="mt-1 font-label-sm text-label-sm text-on-surface-variant">
-              {progress.stage === 'matching'
-                ? t('textCreator.matching')
-                : t('textCreator.adding')}{' '}
-              {Math.round(progress.ratio * 100)}%
-            </p>
+            <ProgressBar
+              ratio={progress.ratio}
+              label={
+                <>
+                  {progress.stage === 'matching'
+                    ? t('textCreator.matching')
+                    : t('textCreator.adding')}{' '}
+                  {Math.round(progress.ratio * 100)}%
+                </>
+              }
+            />
           </div>
         )}
 
@@ -849,7 +477,7 @@ export default function TextCreator({
             {report.failed.length > 0 && (
               <ul className="max-h-24 space-y-1 overflow-y-auto text-error">
                 {report.failed.map((f, i) => (
-                  <li key={i}>· {failedMessage(f)}</li>
+                  <li key={i}>· {syncFailedText(t, f)}</li>
                 ))}
               </ul>
             )}

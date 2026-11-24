@@ -1,12 +1,4 @@
-/** 设置项数据库接口（与 syncHistoryStore 相同的抽象） */
-export interface SettingsDb {
-  prepare(sql: string): {
-    run(...params: unknown[]): unknown
-    get(...params: unknown[]): unknown
-    all(...params: unknown[]): unknown[]
-  }
-  exec(sql: string): unknown
-}
+import type { SqliteDb } from './sqlite'
 
 export type SettingsValue = string | number | boolean
 
@@ -28,7 +20,7 @@ function encode(value: SettingsValue): string {
   return String(value)
 }
 
-export function createSettingsStore(db: SettingsDb) {
+export function createSettingsStore(db: SqliteDb) {
   db.exec(`
 CREATE TABLE IF NOT EXISTS app_settings (
   key TEXT PRIMARY KEY,

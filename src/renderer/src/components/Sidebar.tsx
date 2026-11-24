@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import type { PlatformAccount } from '@core/models/platform'
 import { createRendererLogger } from '../logging/rendererLogger'
 import { useI18n } from '../i18n'
@@ -24,7 +25,15 @@ interface SidebarProps {
 
 export default function Sidebar({ view, onNavigate, runningTasks, accounts }: SidebarProps) {
   const { t } = useI18n()
+  const [version, setVersion] = useState('')
   const loggedInCount = Object.values(accounts).filter((a) => a !== null).length
+
+  useEffect(() => {
+    window.electronAPI
+      .getVersion()
+      .then(setVersion)
+      .catch(() => log.debug('nav.version', '查询应用版本失败'))
+  }, [])
 
   return (
     <aside className="flex w-60 shrink-0 flex-col border-r border-outline-variant bg-surface-container-lowest px-3 py-4">
@@ -32,9 +41,13 @@ export default function Sidebar({ view, onNavigate, runningTasks, accounts }: Si
         <span className="material-symbols-outlined text-lg text-primary">graphic_eq</span>
         <div>
           <p className="font-label-md text-label-md font-semibold leading-tight text-on-surface">
-            SyncWave
+            {t('app.title')}
           </p>
-          <p className="font-label-sm text-label-sm text-on-surface-variant">v1.4</p>
+          {version && (
+            <p className="font-label-sm text-label-sm text-on-surface-variant">
+              {t('sidebar.version', { version })}
+            </p>
+          )}
         </div>
       </div>
 
@@ -77,7 +90,7 @@ export default function Sidebar({ view, onNavigate, runningTasks, accounts }: Si
         <div className="rounded-lg border border-outline-variant bg-surface-container-low p-3">
           <div className="flex items-center gap-2">
             <span className="material-symbols-outlined text-base text-tertiary">headphones</span>
-            <p className="font-label-sm text-label-sm text-on-surface">Audiophile Pro Node</p>
+            <p className="font-label-sm text-label-sm text-on-surface">{t('sidebar.statusTitle')}</p>
           </div>
           <div className="mt-2 flex items-center gap-2 font-label-mono text-label-mono text-outline">
             <span className="material-symbols-outlined text-sm">dark_mode</span>
@@ -90,7 +103,7 @@ export default function Sidebar({ view, onNavigate, runningTasks, accounts }: Si
           </div>
           <div className="mt-1 flex items-center gap-2 font-label-mono text-label-mono text-outline">
             <span className="material-symbols-outlined text-sm">terminal</span>
-            <span>Node: Localhost:9210</span>
+            <span>{t('sidebar.engine')}</span>
           </div>
         </div>
       </div>

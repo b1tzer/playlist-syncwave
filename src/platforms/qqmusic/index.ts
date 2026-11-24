@@ -12,26 +12,9 @@ import { createLogger } from '@core/logging'
 import type { PlatformModule } from '../meta'
 import type { HttpHandler } from '../httpHandler'
 import { BasePlatformAdapter, type LoginStatusRaw, type QrCheckRaw } from '../base'
+import { artistNames, asArray, asObject, pickString, type JsonObject } from '../json'
 
 const log = createLogger({ module: 'platform.qqmusic' })
-
-type JsonObject = Record<string, unknown>
-
-function asObject(v: unknown): JsonObject {
-  return typeof v === 'object' && v !== null ? (v as JsonObject) : {}
-}
-
-function pickString(...values: unknown[]): string | undefined {
-  for (const v of values) {
-    if (typeof v === 'string' && v.length > 0) return v
-    if (typeof v === 'number') return String(v)
-  }
-  return undefined
-}
-
-function asArray(v: unknown): unknown[] {
-  return Array.isArray(v) ? v : []
-}
 
 /**
  * 提取歌曲封面：
@@ -142,7 +125,12 @@ export class QqMusicAdapter extends BasePlatformAdapter {
     // 轮询接口的 session token 在 set-cookie 头返回，单独处理
     const url = new URL(`/login/qr/check?key=${encodeURIComponent(key)}`, 'http://local')
     const res = await this.handle(new Request(url, { method: 'GET' }), this.env)
-    const body = asObject(JSON.parse((await res.text()) || '{}') as JsonObject)
+    let body: JsonObject = {}
+    try {
+      body = asObject(JSON.parse((await res.text()) || '{}') as JsonObject)
+    } catch {
+      // 非 JSON 响应按空处理
+    }
     return {
       code: body.code as number | undefined,
       cookie: extractSessionToken(res.headers.get('set-cookie')),
@@ -187,14 +175,10 @@ export class QqMusicAdapter extends BasePlatformAdapter {
     const songs = asArray(res.songs)
     return songs.map((s) => {
       const item = asObject(s)
-      const singers = asArray(item.singer ?? item.singers)
       return {
         id: pickString(item.songid, item.id, item.songmid) ?? '',
         title: pickString(item.songname, item.name, item.title) ?? '未知歌曲',
-        artist: singers
-          .map((x) => pickString(asObject(x).name))
-          .filter((n): n is string => Boolean(n))
-          .join(' / '),
+        artist: artistNames(asArray(item.singer ?? item.singers)),
         album: pickString(item.albumname, asObject(item.album).name),
         coverUrl: coverOf(item, asObject(item.album)),
         durationMs:
@@ -227,15 +211,11 @@ export class QqMusicAdapter extends BasePlatformAdapter {
     const items = asArray(res.items)
     return items.map((s) => {
       const item = asObject(s)
-      const singers = asArray(item.singer)
       const album = asObject(item.album)
       return {
         id: pickString(item.id, item.mid) ?? '',
         title: pickString(item.name, item.title) ?? '未知歌曲',
-        artist: singers
-          .map((x) => pickString(asObject(x).name))
-          .filter((n): n is string => Boolean(n))
-          .join(' / '),
+        artist: artistNames(asArray(item.singer)),
         album: pickString(album.name),
         coverUrl: coverOf(item, album),
         durationMs:

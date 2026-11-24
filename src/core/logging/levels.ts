@@ -7,8 +7,6 @@ export const LOG_LEVELS: Record<LogLevel, number> = {
   error: 40,
 }
 
-export const ALL_LEVELS: LogLevel[] = ['debug', 'info', 'warn', 'error']
-
 export function isLogLevel(value: unknown): value is LogLevel {
   return typeof value === 'string' && value in LOG_LEVELS
 }

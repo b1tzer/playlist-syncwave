@@ -2,6 +2,7 @@ import { useState, type ReactNode } from 'react'
 import type { PendingConfirmSession, SyncReport } from '@core/models/sync'
 import { createRendererLogger } from '../logging/rendererLogger'
 import { useI18n } from '../i18n'
+import { failedDetailLines, formatDuration } from '../sync/helpers'
 
 const log = createRendererLogger('renderer.confirm-dialog')
 
@@ -42,11 +43,6 @@ interface ConfirmSyncDialogProps {
   confirming: boolean
   confirmError: string
   confirmResult: SyncReport | null
-}
-
-function formatDuration(ms: number): string {
-  const totalSec = Math.floor(ms / 1000)
-  return `${Math.floor(totalSec / 60)}:${String(totalSec % 60).padStart(2, '0')}`
 }
 
 /** 文本与目标一致处（忽略大小写的子串）高亮 */
@@ -207,11 +203,8 @@ export default function ConfirmSyncDialog({
             </p>
             {confirmResult.failed.length > 0 && (
               <ul className="mt-2 max-h-40 space-y-1 overflow-y-auto font-label-sm text-label-sm text-error">
-                {confirmResult.failed.map((f, i) => (
-                  <li key={i}>
-                    · {f.query.title}
-                    {f.query.artist ? ` - ${f.query.artist}` : ''}（{f.message}）
-                  </li>
+                {failedDetailLines(confirmResult.failed).map((line, i) => (
+                  <li key={i}>· {line}</li>
                 ))}
               </ul>
             )}
