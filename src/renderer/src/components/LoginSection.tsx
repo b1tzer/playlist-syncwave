@@ -3,6 +3,7 @@ import type { PlatformAccount, PlatformMeta, QrLoginTicket } from '@core/models/
 import { createRendererLogger } from '../logging/rendererLogger'
 import { useI18n } from '../i18n'
 import type { TranslationKey } from '../i18n/translations'
+import PlatformLogo from './PlatformLogo'
 
 const log = createRendererLogger('renderer.login')
 
@@ -149,10 +150,14 @@ export default function LoginSection({ platforms, accounts, onAccountChange }: L
             >
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-surface-container-highest">
-                    <span className="material-symbols-outlined text-xl text-tertiary">
-                      {p.icon}
-                    </span>
+                  <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-surface-container-highest text-tertiary">
+                    <PlatformLogo
+                      platform={p.id}
+                      name={p.name}
+                      icon={p.icon}
+                      size="h-6 w-6"
+                      iconSize="text-xl"
+                    />
                   </span>
                   <div>
                     <div className="flex items-center gap-2">

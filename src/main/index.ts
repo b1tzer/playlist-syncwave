@@ -285,7 +285,7 @@ ipcMain.handle(
 /** 缓存全量切片出 offset/limit 一页，供渲染层滚动分页使用 */
 function slicePage<T>(data: T[], offset: number, limit: number) {
   const from = Math.max(0, Math.floor(Number(offset) || 0))
-  const size = Math.min(200, Math.max(1, Math.floor(Number(limit) || 50)))
+  const size = Math.min(200, Math.max(1, Math.floor(Number(limit) || 200)))
   return { items: data.slice(from, from + size), total: data.length }
 }
 

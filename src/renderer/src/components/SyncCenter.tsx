@@ -12,7 +12,7 @@ import LoadMoreSentinel from './LoadMoreSentinel'
 const log = createRendererLogger('renderer.sync-center')
 
 /** 任务列表滚动分页：首屏渲染条数 */
-const TASK_PAGE_SIZE = 30
+const TASK_PAGE_SIZE = 200
 
 type Translate = (key: TranslationKey, params?: TranslateParams) => string
 

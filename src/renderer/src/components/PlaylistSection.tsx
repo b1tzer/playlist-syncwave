@@ -27,9 +27,9 @@ import { notify } from './toast'
 const log = createRendererLogger('renderer.playlist')
 
 /** 歌单列表滚动分页大小 */
-const PLAYLIST_PAGE_SIZE = 100
+const PLAYLIST_PAGE_SIZE = 200
 /** 歌曲列表滚动分页大小 */
-const SONG_PAGE_SIZE = 50
+const SONG_PAGE_SIZE = 200
 
 const MENU_ITEM =
   'flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 font-label-md text-label-md text-on-surface transition-colors hover:bg-surface-container-high'
@@ -879,9 +879,6 @@ export default function PlaylistSection({
                     {t('playlist.selectHint')}
                   </span>
                 )}
-                <span className="shrink-0 font-label-mono text-label-mono text-outline">
-                  {platforms.find((p) => p.id === active)?.name ?? active}
-                </span>
               </div>
               {activeId && canManage && (
                 <div className="flex shrink-0 items-center gap-2">
