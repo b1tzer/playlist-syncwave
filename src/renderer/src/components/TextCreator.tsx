@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { parseText } from '@core/parser/parseText'
-import type { FailedLine, ParseResult } from '@core/models/parse'
+import { normalize } from '@core/matcher/matchSong'
+import type { FailedLine } from '@core/models/parse'
 import type { PendingConfirmSession, SyncFailedItem, SyncReport, SyncTaskRecord } from '@core/models/sync'
 import type { PlatformAccount, PlatformMeta } from '@core/models/platform'
 import { createRendererLogger } from '../logging/rendererLogger'
@@ -8,6 +9,10 @@ import { useI18n } from '../i18n'
 import type { TranslationKey } from '../i18n/translations'
 
 const log = createRendererLogger('renderer.text-creator')
+
+/** 歌曲去重键：标题+歌手归一化（与匹配引擎同口径） */
+const songDupKey = (s: { title: string; artist?: string }): string =>
+  `${normalize(s.title)}|${normalize(s.artist ?? '')}`
 
 const EXAMPLE = `晴天 - 周杰伦
 稻香——周杰伦
@@ -66,8 +71,13 @@ export default function TextCreator({
   onPendingConfirmChange,
 }: TextCreatorProps) {
   const { t, formatTime, formatDate } = useI18n()
-  const [text, setText] = useState('')
-  const [result, setResult] = useState<ParseResult | null>(null)
+  const [lines, setLines] = useState<string[]>([])
+  const [draft, setDraft] = useState('')
+  const [editingIdx, setEditingIdx] = useState<number | null>(null)
+  const [editingText, setEditingText] = useState('')
+  const [removedExtra, setRemovedExtra] = useState<Set<number>>(new Set())
+  const draftRef = useRef<HTMLInputElement>(null)
+  const cancelEditRef = useRef(false)
   const [playlistName, setPlaylistName] = useState('')
   const [target, setTarget] = useState('')
   const [syncing, setSyncing] = useState(false)
@@ -76,10 +86,36 @@ export default function TextCreator({
   const [syncError, setSyncError] = useState<string>('')
   const [showFormats, setShowFormats] = useState(false)
 
-  // 输入即解析：无需手动点击「解析歌曲」，输入内容直接进入创建流程
-  useEffect(() => {
-    setResult(parseText(text))
-  }, [text])
+  // 输入即解析：行集合为唯一数据源，逐行转换为标签
+  const result = useMemo(() => parseText(lines.join('\n')), [lines])
+
+  // 行号（1-based）→ songs 下标（结构化格式行号可能重复，只取第一个）
+  const songIdxByLine = useMemo(() => {
+    const map = new Map<number, number>()
+    result.songs.forEach((s, i) => {
+      if (!map.has(s.lineNumber)) map.set(s.lineNumber, i)
+    })
+    return map
+  }, [result])
+
+  // 无对应行可挂载的歌曲（结构化格式行号错位）追加渲染在标签流之后
+  const extraSongs = useMemo(() => {
+    const used = new Set(songIdxByLine.values())
+    return result.songs
+      .map((s, i) => ({ song: s, index: i }))
+      .filter(({ index }) => !used.has(index) && !removedExtra.has(index))
+  }, [result, songIdxByLine, removedExtra])
+
+  // 每首歌是否重复（首次出现为 false，后续重复项标记灰调）
+  const dupFlags = useMemo(() => {
+    const seen = new Set<string>()
+    return result.songs.map((s) => {
+      const key = songDupKey(s)
+      const dup = seen.has(key)
+      seen.add(key)
+      return dup
+    })
+  }, [result])
 
   /** 可作为同步目标的平台（声明 write 能力） */
   const targetPlatforms = useMemo(
@@ -124,23 +160,18 @@ export default function TextCreator({
     }
   }
 
-  const applyCandidate = (index: number, title: string, artist?: string) => {
-    log.debug('parse.apply-candidate', '点选候选修正字段顺序', { index, title, artist })
-    setResult((prev) => {
-      if (!prev) return prev
-      return {
-        ...prev,
-        songs: prev.songs.map((s, i) =>
-          i === index
-            ? { ...s, title, artist, confidence: Math.max(s.confidence, 0.7) }
-            : s,
-        ),
-      }
-    })
+  /** 点选候选：把该行原文改写为「歌名 - 歌手」，重新解析即消除歧义 */
+  const applyCandidate = (lineNumber: number, title: string, artist?: string) => {
+    log.debug('parse.apply-candidate', '点选候选修正字段顺序', { lineNumber, title, artist })
+    setLines((prev) =>
+      prev.map((line, idx) =>
+        idx === lineNumber - 1 ? `${title}${artist ? ` - ${artist}` : ''}` : line,
+      ),
+    )
   }
 
   const handleSync = async () => {
-    if (!result || result.songs.length === 0) return
+    if (result.songs.length === 0) return
     const autoNameDate = formatDate(new Date())
     // 留空则由主进程按「今日日期 + 第一首歌风格」自动命名
     const name = playlistName.trim()
@@ -155,11 +186,20 @@ export default function TextCreator({
     setProgress({ ratio: 0, stage: 'matching' })
 
     const taskId = `task-${Date.now()}`
-    const queries = result.songs.map((s) => ({
-      title: s.title,
-      artist: s.artist,
-      alternatives: s.candidates?.map((c) => ({ title: c.title, artist: c.artist })),
-    }))
+    // 创建时自动去重：保留首次出现的歌曲，重复项跳过
+    const seen = new Set<string>()
+    const queries = result.songs
+      .filter((s) => {
+        const key = songDupKey(s)
+        if (seen.has(key)) return false
+        seen.add(key)
+        return true
+      })
+      .map((s) => ({
+        title: s.title,
+        artist: s.artist,
+        alternatives: s.candidates?.map((c) => ({ title: c.title, artist: c.artist })),
+      }))
 
     onTaskUpdate({
       id: taskId,
@@ -272,7 +312,33 @@ export default function TextCreator({
     }
   }
 
-  const failedCount = result?.failedLines.length ?? 0
+  const commitDraft = () => {
+    const rows = draft.split(/\r?\n/)
+    setDraft('')
+    if (rows.some((r) => r.trim() !== '')) {
+      setLines((prev) => [...prev, ...rows])
+    }
+  }
+
+  const removeLine = (idx: number) => {
+    setLines((prev) => prev.filter((_, i) => i !== idx))
+    setEditingIdx((cur) => (cur === idx ? null : cur))
+  }
+
+  const startEdit = (idx: number) => {
+    cancelEditRef.current = false
+    setEditingIdx(idx)
+    setEditingText(lines[idx])
+  }
+
+  const commitEdit = (idx: number) => {
+    if (cancelEditRef.current) {
+      cancelEditRef.current = false
+    } else {
+      setLines((prev) => prev.map((l, i) => (i === idx ? editingText : l)))
+    }
+    setEditingIdx(null)
+  }
 
   return (
     <div>
@@ -289,7 +355,9 @@ export default function TextCreator({
           <button
             onClick={() => {
               log.info('parse.load-example', '载入示例数据')
-              setText(EXAMPLE)
+              setLines(EXAMPLE.split('\n'))
+              setDraft('')
+              setEditingIdx(null)
             }}
             className="flex items-center gap-1.5 rounded-lg border border-outline-variant px-3 py-2 font-label-md text-label-md text-on-surface-variant transition-colors hover:bg-surface-container-high hover:text-on-surface"
           >
@@ -336,18 +404,274 @@ export default function TextCreator({
 
       <div className="mt-4 flex gap-4">
         <div className="min-w-0 flex-1">
-          <textarea
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            placeholder={`${t('textCreator.textareaPlaceholder')}\n${EXAMPLE}`}
-            rows={12}
-            className="w-full resize-y rounded-lg border border-outline-variant bg-surface-container-low p-4 font-mono text-body-md text-on-surface outline-none placeholder:text-outline focus:border-primary"
-          />
+          <div
+            onClick={() => {
+              if (editingIdx === null) draftRef.current?.focus()
+            }}
+            className="flex min-h-52 w-full cursor-text flex-wrap content-start items-center gap-1.5 rounded-lg border border-outline-variant bg-surface-container-low p-3 font-body-md text-body-md text-on-surface transition-colors focus-within:border-primary"
+          >
+            {lines.map((raw, idx) => {
+              const lineNo = idx + 1
+
+              if (editingIdx === idx) {
+                return (
+                  <input
+                    key={`edit-${idx}`}
+                    ref={(el) => el?.focus()}
+                    value={editingText}
+                    onChange={(e) => setEditingText(e.target.value)}
+                    onBlur={() => commitEdit(idx)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') commitEdit(idx)
+                      if (e.key === 'Escape') {
+                        cancelEditRef.current = true
+                        setEditingIdx(null)
+                      }
+                    }}
+                    className="w-56 rounded-lg border border-primary bg-surface px-2 py-1.5 font-mono outline-none"
+                  />
+                )
+              }
+
+              const songIdx = songIdxByLine.get(lineNo)
+              if (songIdx !== undefined) {
+                const song = result.songs[songIdx]
+                const ambiguous = song.candidates && song.candidates.length > 1
+                const dup = dupFlags[songIdx] ?? false
+                return (
+                  <span
+                    key={`s-${idx}`}
+                    title={dup ? t('textCreator.duplicateHint') : raw}
+                    className={
+                      dup
+                        ? 'group inline-flex max-w-full items-center gap-1 rounded-lg border border-outline-variant bg-surface-container-high/60 px-2.5 py-1.5 font-label-md text-label-md text-on-surface-variant'
+                        : 'group inline-flex max-w-full items-center gap-1 rounded-lg border border-primary/40 bg-primary/10 px-2.5 py-1.5 font-label-md text-label-md text-on-surface'
+                    }
+                  >
+                    {dup && (
+                      <span
+                        title={t('textCreator.duplicateHint')}
+                        className="flex items-center rounded bg-outline-variant/60 p-0.5 text-on-surface-variant"
+                      >
+                        <span className="material-symbols-outlined text-xs">content_copy</span>
+                      </span>
+                    )}
+                    <span
+                      className={
+                        dup
+                          ? 'material-symbols-outlined text-sm text-outline'
+                          : 'material-symbols-outlined text-sm text-primary'
+                      }
+                    >
+                      music_note
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => startEdit(idx)}
+                      title={raw}
+                      className={
+                        dup
+                          ? 'max-w-56 truncate transition-colors hover:text-on-surface'
+                          : 'max-w-56 truncate transition-colors hover:text-primary'
+                      }
+                    >
+                      {song.title}
+                      {song.artist ? (
+                        <span className={dup ? 'text-outline' : 'text-on-surface-variant'}>
+                          {' '}
+                          · {song.artist}
+                        </span>
+                      ) : null}
+                    </button>
+                    {ambiguous && (
+                      <span className="flex items-center gap-0.5">
+                        {song.candidates!.map((c) => {
+                          const active = c.title === song.title
+                          return (
+                            <button
+                              key={c.title}
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                applyCandidate(lineNo, c.title, c.artist)
+                              }}
+                              title={t('textCreator.pickCandidate')}
+                              className={
+                                active
+                                  ? 'rounded bg-primary px-1.5 py-0.5 font-label-sm text-label-sm text-on-primary'
+                                  : 'rounded bg-surface-container-high px-1.5 py-0.5 font-label-sm text-label-sm text-on-surface-variant transition-colors hover:text-on-surface'
+                              }
+                            >
+                              {c.title}
+                            </button>
+                          )
+                        })}
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        removeLine(idx)
+                      }}
+                      className="material-symbols-outlined text-sm text-outline transition-colors hover:text-error"
+                    >
+                      close
+                    </button>
+                  </span>
+                )
+              }
+
+              const failed = result.failedLines.find((f) => f.lineNumber === lineNo)
+              if (failed) {
+                return (
+                  <span
+                    key={`f-${idx}`}
+                    title={t('textCreator.failedLine', {
+                      line: lineNo,
+                      raw: failed.raw || t('textCreator.emptyLine'),
+                      reason: failedReason(failed.reason),
+                    })}
+                    className="group inline-flex max-w-full items-center gap-1 rounded-lg border border-error/50 bg-error/10 px-2.5 py-1.5 font-label-md text-label-md text-error"
+                  >
+                    <span className="material-symbols-outlined text-sm">error_outline</span>
+                    <button
+                      type="button"
+                      onClick={() => startEdit(idx)}
+                      className="max-w-56 truncate transition-colors hover:underline"
+                    >
+                      {failed.raw || t('textCreator.emptyLine')}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        removeLine(idx)
+                      }}
+                      className="material-symbols-outlined text-sm text-outline transition-colors hover:text-error"
+                    >
+                      close
+                    </button>
+                  </span>
+                )
+              }
+
+              if (result.ignoredLines.some((f) => f.lineNumber === lineNo)) return null
+              if (raw.trim() === '') return null
+
+              return (
+                <span
+                  key={`r-${idx}`}
+                  className="group inline-flex max-w-full items-center gap-1 rounded-lg border border-outline-variant bg-surface-container-high px-2.5 py-1.5 font-label-md text-label-md text-on-surface-variant"
+                >
+                  <button
+                    type="button"
+                    onClick={() => startEdit(idx)}
+                    className="max-w-56 truncate transition-colors hover:text-on-surface"
+                  >
+                    {raw}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      removeLine(idx)
+                    }}
+                    className="material-symbols-outlined text-sm text-outline transition-colors hover:text-error"
+                  >
+                    close
+                  </button>
+                </span>
+              )
+            })}
+
+            {extraSongs.map(({ song, index }) => {
+              const dup = dupFlags[index] ?? false
+              return (
+                <span
+                  key={`x-${index}`}
+                  title={dup ? t('textCreator.duplicateHint') : undefined}
+                  className={
+                    dup
+                      ? 'group inline-flex max-w-full items-center gap-1 rounded-lg border border-outline-variant bg-surface-container-high/60 px-2.5 py-1.5 font-label-md text-label-md text-on-surface-variant'
+                      : 'group inline-flex max-w-full items-center gap-1 rounded-lg border border-primary/40 bg-primary/10 px-2.5 py-1.5 font-label-md text-label-md text-on-surface'
+                  }
+                >
+                  {dup && (
+                    <span
+                      title={t('textCreator.duplicateHint')}
+                      className="flex items-center rounded bg-outline-variant/60 p-0.5 text-on-surface-variant"
+                    >
+                      <span className="material-symbols-outlined text-xs">content_copy</span>
+                    </span>
+                  )}
+                  <span
+                    className={
+                      dup
+                        ? 'material-symbols-outlined text-sm text-outline'
+                        : 'material-symbols-outlined text-sm text-primary'
+                    }
+                  >
+                    music_note
+                  </span>
+                  <span className="max-w-56 truncate">
+                    {song.title}
+                    {song.artist ? (
+                      <span className={dup ? 'text-outline' : 'text-on-surface-variant'}>
+                        {' '}
+                        · {song.artist}
+                      </span>
+                    ) : null}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setRemovedExtra((prev) => new Set(prev).add(index))}
+                    className="material-symbols-outlined text-sm text-outline transition-colors hover:text-error"
+                  >
+                    close
+                  </button>
+                </span>
+              )
+            })}
+
+            <input
+              ref={draftRef}
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onPaste={(e) => {
+                // 单行 input 会把粘贴的换行符净化为空格，需在净化前按行拆分提交
+                const text = e.clipboardData.getData('text')
+                if (!/[\r\n]/.test(text)) return
+                e.preventDefault()
+                const parts = text.split(/\r\n|\r|\n/)
+                const last = parts.pop() ?? ''
+                if (parts.length > 0) {
+                  parts[0] = draft + parts[0]
+                  setLines((prev) => [...prev, ...parts])
+                }
+                setDraft(last)
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault()
+                  commitDraft()
+                }
+                if (e.key === 'Backspace' && draft === '' && lines.length > 0 && editingIdx === null) {
+                  removeLine(lines.length - 1)
+                }
+              }}
+              placeholder={lines.length === 0 ? t('textCreator.tagPlaceholder') : ''}
+              className="min-w-48 flex-1 bg-transparent px-1 py-1.5 font-mono text-body-md text-on-surface outline-none placeholder:text-outline"
+            />
+          </div>
           <div className="mt-2 flex items-center gap-2">
             <button
               onClick={() => {
                 log.info('parse.clear', '清空输入')
-                setText('')
+                setLines([])
+                setDraft('')
+                setEditingIdx(null)
+                setRemovedExtra(new Set())
                 setReport(null)
                 setSyncError('')
               }}
@@ -357,10 +681,6 @@ export default function TextCreator({
               <span className="material-symbols-outlined text-base">delete_sweep</span>
               {t('textCreator.clear')}
             </button>
-            <span className="ml-auto font-label-sm text-label-sm text-on-surface-variant">
-              <span className="material-symbols-outlined align-bottom text-sm">auto_awesome</span>{' '}
-              {t('textCreator.autoHint')}
-            </span>
           </div>
         </div>
 
@@ -387,7 +707,7 @@ export default function TextCreator({
               />
               <button
                 onClick={handleSync}
-                disabled={syncing || pendingConfirm !== null || !result || result.songs.length === 0}
+                disabled={syncing || pendingConfirm !== null || result.songs.length === 0}
                 className="mt-1 flex w-full items-center justify-center gap-1.5 rounded-lg bg-primary px-4 py-2 font-label-md text-label-md font-medium text-on-primary transition-colors hover:bg-primary/85 disabled:opacity-40"
               >
                 <span className="material-symbols-outlined text-base">
@@ -457,102 +777,6 @@ export default function TextCreator({
           )}
         </div>
       </div>
-
-      {result && (
-        <div className="mt-4 rounded-lg border border-outline-variant bg-surface-container-low">
-          <div className="flex items-center justify-between border-b border-outline-variant px-4 py-2">
-            <p className="font-label-md text-label-md text-on-surface">
-              {t('textCreator.recognizedPrefix')}{' '}
-              <span className="font-medium text-primary">{result.songs.length}</span>{' '}
-              {t('textCreator.recognizedSuffix')}
-              {failedCount > 0 && (
-                <span className="ml-2 text-tertiary">
-                  {t('textCreator.linesFailed', { count: failedCount })}
-                </span>
-              )}
-              {result.detectedOrder && (
-                <span className="ml-2 rounded-full bg-surface-container-highest px-2 py-0.5 text-label-sm text-on-surface-variant">
-                  {t('textCreator.autoDetected')}
-                  {result.detectedOrder === 'title-first'
-                    ? t('textCreator.titleArtist')
-                    : t('textCreator.artistTitle')}
-                </span>
-              )}
-            </p>
-            <span className="font-label-mono text-label-mono text-outline">
-              {result.format === 'share' ? 'SHARE TEXT' : 'PARSE PREVIEW'}
-            </span>
-          </div>
-
-          {result.songs.length > 0 && (
-            <ul className="max-h-96 divide-y divide-outline-variant overflow-y-auto">
-              {result.songs.map((s, i) => {
-                const ambiguous = s.candidates && s.candidates.length > 1
-                return (
-                  <li
-                    key={`${s.lineNumber}-${i}`}
-                    className={`flex items-center gap-3 px-4 py-1.5 font-body-md text-body-md ${
-                      ambiguous ? 'bg-tertiary/10' : ''
-                    }`}
-                  >
-                    <span className="w-6 text-right font-label-mono text-label-mono text-outline">
-                      {i + 1}
-                    </span>
-                    <span className="truncate">{s.title}</span>
-                    {s.artist ? (
-                      <span className="truncate text-on-surface-variant">- {s.artist}</span>
-                    ) : (
-                      <span className="text-tertiary">{t('textCreator.noArtist')}</span>
-                    )}
-                    {ambiguous && (
-                      <div className="ml-auto flex shrink-0 items-center gap-1">
-                        {s.candidates!.map((c) => {
-                          const active = c.title === s.title
-                          return (
-                            <button
-                              key={c.title}
-                              onClick={() => applyCandidate(i, c.title, c.artist)}
-                              title={t('textCreator.pickCandidate')}
-                              className={
-                                active
-                                  ? 'rounded-lg border border-primary bg-primary px-2 py-0.5 font-label-sm text-label-sm text-on-primary'
-                                  : 'rounded-lg border border-outline-variant bg-surface-container-low px-2 py-0.5 font-label-sm text-label-sm text-on-surface transition-colors hover:border-primary'
-                              }
-                            >
-                              {c.title}
-                              {c.artist ? ` · ${c.artist}` : ''}
-                            </button>
-                          )
-                        })}
-                      </div>
-                    )}
-                  </li>
-                )
-              })}
-            </ul>
-          )}
-
-          {failedCount > 0 && (
-            <ul className="space-y-1 border-t border-outline-variant px-4 py-2">
-              {result.failedLines.map((f) => (
-                <li key={f.lineNumber} className="font-label-sm text-label-sm text-error">
-                  {t('textCreator.failedLine', {
-                    line: f.lineNumber,
-                    raw: f.raw || t('textCreator.emptyLine'),
-                    reason: failedReason(f.reason),
-                  })}
-                </li>
-              ))}
-            </ul>
-          )}
-
-          {result.ignoredLines.length > 0 && (
-            <p className="border-t border-outline-variant px-4 py-2 font-label-sm text-label-sm text-on-surface-variant">
-              {t('textCreator.ignoredLines', { count: result.ignoredLines.length })}
-            </p>
-          )}
-        </div>
-      )}
     </div>
   )
 }

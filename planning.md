@@ -248,6 +248,24 @@ tests/
 - **文档**：新增 `docs/platform-api-fields.md`——两个平台全部上游接口的返回参数字段清单（含歌曲条目字段、genre 获取结论与待实测项）。
 - **待办**：手工验收（粘贴文本即时出预览、留空歌单名后建单名为「日期 + 风格」；上游不返回风格时仅日期）。
 
+### 文本输入框 TAG 化 ✅
+- **需求**：输入即把每行文本转换为标签，删除输入块下方的独立识别预览面板。
+- **实现**：`TextCreator` 输入区改为标签编辑器——行集合 `lines` 为唯一数据源（`useMemo` 实时解析）；每行渲染为歌曲标签（主色、歧义行内嵌候选切换）、失败行标签（红色、悬停显示原因）或中性原文标签，被忽略行与空行不显示；末尾常驻输入行，回车/粘贴自动拆行提交，退格删除末标签；点击标签就地编辑（Enter 提交 / Esc 取消 / blur 提交）；每个标签带 X 删除；结构化格式（json/csv/m3u/lrc）行号错位的歌曲追加渲染为标签（可删除）。候选点选改为改写该行原文为「歌名 - 歌手」。
+- **i18n**：新增 `textCreator.tagPlaceholder`；删除预览面板相关 9 键（recognizedPrefix/recognizedSuffix/linesFailed/autoDetected/titleArtist/artistTitle/noArtist/ignoredLines/textareaPlaceholder）。
+- **验证**：196 项测试全绿、typecheck、lint 通过。
+- **待办**：手工验收标签编辑交互（粘贴多行、回车、点选候选、删除、Esc 取消）。
+
+### 粘贴修复与重复识别 ✅
+- **粘贴修复**：单行 `<input>` 会把粘贴的换行符净化为空格（HTML 值净化），改用 `onPaste` 在净化前从剪贴板取原文按行拆分提交（`onChange` 检测换行永远不触发，已移除）。
+- **重复识别**：`songDupKey`（标题+歌手 `normalize` 归一化，与匹配引擎同口径）标记重复歌曲；重复 TAG 前缀「重」徽章 + 灰调样式（类似禁用），仍可点击编辑/删除/切换候选，不修改用户输入；创建时 `queries` 过滤重复（保留首次出现），任务 total 为去重后数量。i18n 新增 `duplicateBadge`/`duplicateHint`。
+- **待办**：手工验收粘贴多行清单、重复歌曲灰调标记与创建去重。
+
+### 桌面布局重构（mac 应用标准）✅
+- **问题**：内容区 `mx-auto max-w-5xl` 居中限宽，窗口放大后内容聚在中间。
+- **改动**：移除 main 容器的 `max-w-5xl` 限制，内容铺满窗口（侧边栏 w-60 固定 + 内容区 flex-1 自适应）；LoginSection 去掉 `max-w-3xl` 并改宽屏双列网格（`xl:grid-cols-2`）；SettingsView 去掉 `max-w-2xl`；PlaylistSection（w-64 + flex-1）与 TextCreator（flex-1 + w-72 侧栏）本身自适应，随容器铺满。
+- **顺带清理**：删除上轮遗漏的同类装饰标签——SyncCenter「Hub Engine v2.4 / DAEMON ONLINE」、LoginSection「AUTHENTICATION VAULT / SQLite AES-256…」、SettingsView「PREFERENCES LOCAL ONLY」。
+- **待办**：手工验收窗口缩放各页面铺满效果。
+
 | 风险 | 缓解 |
 |---|---|
 | 平台 API 变更/风控 | 适配器接口解耦；限速 + 指数退避；文件导入作为降级通道 |

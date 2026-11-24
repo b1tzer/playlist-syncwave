@@ -127,13 +127,6 @@ export default function LoginSection({ platforms, accounts, onAccountChange }: L
     <div>
       <div className="flex items-start justify-between">
         <div>
-          <div className="flex items-center gap-2 font-label-mono text-label-mono text-primary">
-            <span className="material-symbols-outlined text-sm">vault</span>
-            <span>AUTHENTICATION VAULT</span>
-            <span className="rounded-full bg-primary-container/15 px-2 py-0.5 text-primary">
-              SQLite AES-256 Local Encrypted
-            </span>
-          </div>
           <h1 className="mt-1 font-headline-lg text-headline-lg font-semibold">
             {t('login.title')}
           </h1>
@@ -149,7 +142,7 @@ export default function LoginSection({ platforms, accounts, onAccountChange }: L
         </div>
       </div>
 
-      <div className="mt-6 grid max-w-3xl grid-cols-1 gap-3">
+      <div className="mt-6 grid grid-cols-1 gap-3 xl:grid-cols-2">
         {platforms.map((p) => {
           const account = accounts[p.id] ?? null
           return (

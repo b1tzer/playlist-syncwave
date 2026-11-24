@@ -252,7 +252,7 @@ export default function App() {
         </header>
 
         <main className="flex-1 overflow-y-auto">
-          <div className="mx-auto max-w-5xl px-6 py-6">
+          <div className="px-6 py-6">
             {view === 'create' && (
               <TextCreator
                 platforms={platforms}

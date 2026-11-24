@@ -47,10 +47,6 @@ export default function SettingsView() {
 
   return (
     <div>
-      <div className="flex items-center gap-2 font-label-mono text-label-mono text-primary">
-        <span className="material-symbols-outlined text-sm">settings_suggest</span>
-        <span>PREFERENCES LOCAL ONLY</span>
-      </div>
       <h1 className="mt-1 font-headline-lg text-headline-lg font-semibold">
         {t('settings.title')}
       </h1>
@@ -58,7 +54,7 @@ export default function SettingsView() {
         {t('settings.subtitle')}
       </p>
 
-      <div className="mt-6 flex max-w-2xl flex-col gap-3">
+      <div className="mt-6 flex flex-col gap-3">
         <SettingRow
           icon="dark_mode"
           title={t('settings.theme')}

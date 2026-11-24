@@ -43,13 +43,6 @@ export default function SyncCenter({
     <div>
       <div className="flex items-start justify-between">
         <div>
-          <div className="flex items-center gap-2 font-label-mono text-label-mono text-primary">
-            <span className="material-symbols-outlined text-sm">hub</span>
-            <span>Hub Engine v2.4</span>
-            <span className="rounded-full bg-primary-container/15 px-2 py-0.5 text-primary">
-              DAEMON ONLINE
-            </span>
-          </div>
           <h1 className="mt-1 font-headline-lg text-headline-lg font-semibold">
             {t('syncCenter.title')}
           </h1>
