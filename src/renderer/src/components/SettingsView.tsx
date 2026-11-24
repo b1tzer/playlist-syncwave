@@ -33,6 +33,9 @@ export default function SettingsView() {
   const [autoLaunch, setAutoLaunch] = useState(false)
   const [reportEnabled, setReportEnabled] = useState(false)
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null)
+  const [syncThreshold, setSyncThreshold] = useState(0.6)
+  const [syncRetries, setSyncRetries] = useState(2)
+  const [syncInterval, setSyncInterval] = useState(500)
 
   // 自动更新状态流转
   useEffect(() => {
@@ -60,6 +63,9 @@ export default function SettingsView() {
       .getAll()
       .then((all) => {
         setReportEnabled(all.reportEnabled === true)
+        if (typeof all.syncThreshold === 'number') setSyncThreshold(all.syncThreshold)
+        if (typeof all.syncRetries === 'number') setSyncRetries(all.syncRetries)
+        if (typeof all.syncSearchInterval === 'number') setSyncInterval(all.syncSearchInterval)
         log.debug('settings.restored', '设置已恢复', { keys: Object.keys(all) })
       })
       .catch((e) => {
@@ -152,6 +158,78 @@ export default function SettingsView() {
                 )
             }}
           />
+        </SettingRow>
+        <SettingRow
+          icon="tune"
+          title={t('settings.syncThreshold')}
+          description={t('settings.syncThresholdDesc')}
+        >
+          <div className="flex items-center gap-2">
+            <input
+              type="range"
+              min={0.4}
+              max={0.9}
+              step={0.05}
+              value={syncThreshold}
+              onChange={(e) => {
+                const v = Number(e.target.value)
+                setSyncThreshold(v)
+                window.electronAPI.settings.set('syncThreshold', v).catch(() => {})
+              }}
+              className="w-40 accent-primary"
+            />
+            <span className="w-10 text-right font-label-mono text-label-mono text-on-surface">
+              {syncThreshold.toFixed(2)}
+            </span>
+          </div>
+        </SettingRow>
+        <SettingRow
+          icon="replay"
+          title={t('settings.syncRetries')}
+          description={t('settings.syncRetriesDesc')}
+        >
+          <div className="flex items-center gap-2">
+            <input
+              type="range"
+              min={0}
+              max={5}
+              step={1}
+              value={syncRetries}
+              onChange={(e) => {
+                const v = Number(e.target.value)
+                setSyncRetries(v)
+                window.electronAPI.settings.set('syncRetries', v).catch(() => {})
+              }}
+              className="w-40 accent-primary"
+            />
+            <span className="w-10 text-right font-label-mono text-label-mono text-on-surface">
+              {syncRetries}
+            </span>
+          </div>
+        </SettingRow>
+        <SettingRow
+          icon="speed"
+          title={t('settings.syncInterval')}
+          description={t('settings.syncIntervalDesc')}
+        >
+          <div className="flex items-center gap-2">
+            <input
+              type="range"
+              min={300}
+              max={3000}
+              step={100}
+              value={syncInterval}
+              onChange={(e) => {
+                const v = Number(e.target.value)
+                setSyncInterval(v)
+                window.electronAPI.settings.set('syncSearchInterval', v).catch(() => {})
+              }}
+              className="w-40 accent-primary"
+            />
+            <span className="w-16 text-right font-label-mono text-label-mono text-on-surface">
+              {t('settings.syncIntervalUnit', { value: syncInterval })}
+            </span>
+          </div>
         </SettingRow>
         <SettingRow
           icon="system_update"

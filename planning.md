@@ -404,7 +404,7 @@ tests/
 - **B8 本地歌单库 ✅**：SQLite 新表 `local_playlists`/`local_playlist_songs`（`localPlaylistStore` 事务化整单替换/追加/按位删除重排）+ `localPlaylistService` 校验 + 7 项 `local-playlist:*` IPC；「我的歌单」页新增「本地」标签（`LocalPlaylistPanel`：列表/详情/新建/重命名/两步删除/删歌/平台搜索添加/同步到目标平台走现有 syncPlaylist 流程）；快速创建页新增「保存到本地」按钮（去重后写入，无需登录）。`SqliteDb` 增加可选 `transaction` 接口 + `withTransaction`（fake db 退化直执行）。typecheck、lint、271 项测试（+7）、build 通过。
 - **B9 文件导入 ✅**：主进程 `app:open-text-file`（dialog 文件选择，m3u/m3u8/csv/txt/lrc/json，5MB 上限，去 BOM），快速创建页「导入文件」按钮把内容按行追加进标签流，复用现有全自动解析管线。typecheck、lint、271 项测试通过。
 - **B10 歌单导出 ✅**：core 新增 `export/toM3u.ts`/`toCsv.ts` 纯函数（+4 测试）；主进程 `app:save-text-file`（保存对话框 + 文件名清洗 + 20MB 上限）；本地歌单与平台歌单详情头部均新增导出按钮（m3u/csv 下拉）。typecheck、lint、275 项测试、build 通过。
-- **B11 匹配/同步设置项（待实施）**：阈值、重试次数、限速等参数可配置化。
+- **B11 匹配/同步设置项 ✅**：`settingsService.syncTuning()` 从设置读取阈值（0.4-0.9）/重试次数（0-5）/搜索间隔（300-3000ms）并 clamp 兜底，主进程 `planSync`/`executeSync`（含 confirm-sync）三处传入；设置页新增三个滑块行（实时保存）。typecheck、lint、275 项测试通过。
 - **B12 代理设置（待实施）**：HTTP 代理配置应用到平台请求。
 - **B13 CSP 与 sandbox 加固（待实施）**：渲染层 CSP、评估 sandbox 开启。
 - **B14 SQLite 版本化迁移（待实施）**：schema 版本表 + 迁移框架，替代散落 ALTER TABLE。

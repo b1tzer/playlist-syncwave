@@ -25,7 +25,7 @@ import {
 import type { MatchQuery } from '@core/models/match'
 import { logCenter } from './logging/logCenter'
 import { upsertSyncTask, listSyncTasks, removeSyncTask, clearSyncTasks } from './syncHistoryService'
-import { getSetting, setSetting, getAllSettings } from './settingsService'
+import { getSetting, setSetting, getAllSettings, syncTuning } from './settingsService'
 import {
   saveAutoMapping,
   saveConfirmedMapping,
@@ -690,7 +690,10 @@ ipcMain.handle(
         const controlOptions = beginRunningSync(event, taskId, notify)
 
         try {
-          const plan = await planSync(payload.queries, target, controlOptions)
+          const plan = await planSync(payload.queries, target, {
+            ...syncTuning(),
+            ...controlOptions,
+          })
 
           // 歌单名留空时自动命名：今日日期 + 第一首歌风格
           const autoName = [payload.autoNameDate, plan.firstGenre].filter(Boolean).join(' ')
@@ -718,6 +721,7 @@ ipcMain.handle(
 
           const report = await executeSync(plan, [], finalName, target, {
             batchSize: payload.batchSize,
+            ...syncTuning(),
             ...controlOptions,
           })
           // 目标平台新建了歌单：失效其列表缓存，下次访问拉取最新
@@ -997,6 +1001,7 @@ ipcMain.handle(
         try {
           const report = await executeSync(pending.plan, selections, pending.playlistName, pending.target, {
             batchSize: pending.batchSize,
+            ...syncTuning(),
             ...controlOptions,
           })
           if (report.playlistId !== '') {
