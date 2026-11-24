@@ -23,6 +23,7 @@
     "@yakult-green-tea/qq-music-api": "^3.3.8",
     "better-sqlite3": "^13.2.0",
     "electron-updater": "^6.8.11",
+    "kugoumusicapi": "github:MakcRe/KuGouMusicApi#786fe07514b99158d19b24f7f5cea11977a1db67",
     "NeteaseCloudMusicApi": "^4.34.1",
     "opencc-js": "^1.4.2",
     "react": "^19.3.1",
