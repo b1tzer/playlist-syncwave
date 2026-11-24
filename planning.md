@@ -369,6 +369,12 @@ tests/
 - **验证命令**：`npm run test` + `npm run typecheck` + `npm run lint`
 - **实际结果**：241 项测试全绿（其中 netease/qqmusic 各 1 项歌单映射断言按新契约更新，计划内需求演进）、typecheck、ESLint（改动文件）全部通过。实现要点：`PlatformPlaylist` 新增 `webUrl`/`appUrl`（netease: music.163.com/orpheus://；qqmusic: y.qq.com/qqmusic://）；主进程 `app:open-external`（scheme 白名单 http/https/orpheus/qqmusic）；PlaylistSection 平台标签统一品牌 logo、歌单行封面+复选框选择、行右键自定义菜单（单选：重命名/同步到各平台/应用打开/浏览器打开；多选：同步到各平台），同步走完整 syncPlaylist 流程（progress/choice-needed/stopped/toast），任务 source=playlist-import；SyncCenter 来源显示「歌单导入」。i18n 中英补齐 12 键。
 
+### 修复记录 — 右键菜单全量缺陷修复 ✅
+- **问题**（审查发现）：① 无可用操作时弹出空壳菜单（目标平台未登录时多选右键必现）；② 定位用硬编码尺寸（232/320）钳制，菜单高度动态变化时底部溢出或位置错位；③ 滚动/resize 不关闭，菜单悬空；④ 菜单内右键弹出系统菜单；⑤ 无 menuitem 角色、无键盘导航、无焦点管理；⑥ shadow-black/40 在浅色主题下过重；⑦ 长文案溢出（英文平台名）。
+- **方案**：抽通用组件 `renderer/src/components/ContextMenu.tsx`（条目由调用方构建：`{type:'item'|'divider', label, icon/iconNode, danger, disabled, onSelect}`）——useLayoutEffect 实测尺寸做视口翻转定位（绘制前修正无闪烁）、scroll（capture，scroll 不冒泡必须 capture）/resize/blur/mousedown 关闭、键盘上下键循环+Home/End+禁用项跳过+Escape、打开聚焦首项关闭还原焦点、role=menu/menuitem+aria-label、菜单内 contextmenu preventDefault、`max-h-[80vh] overflow-y-auto` 防超高、label truncate 防溢出、阴影走 `--sw-menu-shadow` 主题变量。
+- PlaylistSection：`handleRowContextMenu` 同步构建条目（未选中右键 → 单选语义正确、多选保留、空条目不弹），移除旧 menu 渲染块与关闭监听、MENU_ITEM 常量。i18n 新增 `playlist.menuLabel` 中英。
+- **验证**：typecheck、lint、278 项测试、build 通过；dev 启动无报错。待手工验收（空菜单不弹、窗口边缘翻转、键盘上下键、滚动关闭、浅色阴影）。
+
 ### 修复记录 — 歌单选择交互改为拖拽框选 ✅
 - **需求**：去掉歌单行复选框；单击按住拖拽框选多个（锚点行到当前行范围）；Cmd/Ctrl + 单击切换单行选择。
 - **实现**：行 mousedown 记录锚点，全局 mousemove 超 5px 阈值进入框选（先选中锚点行），行 mouseenter 按「锚点→当前行」重算范围；拖拽结束抑制同源 click 防止误打开歌单；行 onClick 区分 Cmd/Ctrl 切换与普通打开；列表 `select-none` 防拖拽时选中文字；右键、清除选择、选中计数等原有行为不变。

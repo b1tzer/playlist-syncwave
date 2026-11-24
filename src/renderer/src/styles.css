@@ -36,6 +36,7 @@
   --sw-error-container: #ffdad6;
   --sw-on-error: #ffffff;
   --sw-on-error-container: #410002;
+  --sw-menu-shadow: rgb(0 0 0 / 0.12);
 }
 
 .dark {
@@ -72,6 +73,7 @@
   --sw-error-container: #93000a;
   --sw-on-error: #690005;
   --sw-on-error-container: #ffdad6;
+  --sw-menu-shadow: rgb(0 0 0 / 0.45);
 }
 
 @theme {

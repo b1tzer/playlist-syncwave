@@ -25,6 +25,7 @@ import PlatformLogo from './PlatformLogo'
 import LocalPlaylistPanel from './LocalPlaylistPanel'
 import ProgressBar from './ProgressBar'
 import LoadMoreSentinel from './LoadMoreSentinel'
+import ContextMenu, { type ContextMenuEntry } from './ContextMenu'
 import { notify } from './toast'
 
 const log = createRendererLogger('renderer.playlist')
@@ -33,9 +34,6 @@ const log = createRendererLogger('renderer.playlist')
 const PLAYLIST_PAGE_SIZE = 200
 /** 歌曲列表滚动分页大小 */
 const SONG_PAGE_SIZE = 200
-
-const MENU_ITEM =
-  'flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 font-label-md text-label-md text-on-surface transition-colors hover:bg-surface-container-high'
 
 interface PlaylistSectionProps {
   platforms: PlatformMeta[]
@@ -151,7 +149,11 @@ export default function PlaylistSection({
 
   // --- 歌单选择与右键菜单 ---
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
-  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
+  const [menu, setMenu] = useState<{
+    x: number
+    y: number
+    entries: ContextMenuEntry[]
+  } | null>(null)
   // 拖拽框选：mousedown 记录锚点，移动超阈值后进入框选，行 mouseenter 扩展范围
   const dragRef = useRef<{ anchorId: string; startX: number; startY: number; moved: boolean } | null>(
     null,
@@ -291,23 +293,6 @@ export default function PlaylistSection({
     void fetchPlaylists()
   }, [fetchPlaylists])
 
-  // 右键菜单：点击外部或 Esc 关闭
-  useEffect(() => {
-    if (!menu) return
-    const close = () => setMenu(null)
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setMenu(null)
-    }
-    window.addEventListener('mousedown', close)
-    window.addEventListener('keydown', onKey)
-    window.addEventListener('blur', close)
-    return () => {
-      window.removeEventListener('mousedown', close)
-      window.removeEventListener('keydown', onKey)
-      window.removeEventListener('blur', close)
-    }
-  }, [menu])
-
   // 拖拽框选：全局监听移动/抬起，移动超阈值即进入框选
   useEffect(() => {
     const onMove = (e: MouseEvent) => {
@@ -426,17 +411,66 @@ export default function PlaylistSection({
 
   const clearSelection = () => setSelectedIds(new Set())
 
-  /** 右键行：未选中则单选该行，随后在鼠标位置弹出菜单 */
+  /** 右键行：未选中则单选该行，构建菜单条目后在鼠标位置弹出（无可选操作则不弹） */
   const handleRowContextMenu = (e: ReactMouseEvent, playlist: PlatformPlaylist) => {
     e.preventDefault()
     log.debug('playlist.context-menu', '打开歌单右键菜单', { playlistId: playlist.id })
-    if (!selectedIds.has(playlist.id)) {
+    const alreadySelected = selectedIds.has(playlist.id)
+    if (!alreadySelected) {
       setSelectedIds(new Set([playlist.id]))
     }
-    setMenu({
-      x: Math.min(e.clientX, window.innerWidth - 232),
-      y: Math.min(e.clientY, window.innerHeight - 320),
-    })
+    // 右键后该行是否单选：未选中将单选；已选中时保持当前选择规模
+    const single = !alreadySelected || selectedIds.size === 1 ? playlist : null
+
+    const entries: ContextMenuEntry[] = []
+    const pushDivider = () => {
+      const last = entries[entries.length - 1]
+      if (last && last.type === 'item') {
+        entries.push({ type: 'divider', id: `divider-${entries.length}` })
+      }
+    }
+    if (single && canManage) {
+      entries.push({
+        type: 'item',
+        id: 'rename',
+        label: t('playlist.rename'),
+        icon: 'edit',
+        onSelect: handleMenuRename,
+      })
+    }
+    if (single && canManage && syncTargets.length > 0) pushDivider()
+    for (const p of syncTargets) {
+      entries.push({
+        type: 'item',
+        id: `sync-${p.id}`,
+        label: t('playlist.syncToPlatform', { platform: p.name }),
+        iconNode: <PlatformLogo platform={p.id} name={p.name} icon={p.icon} size="h-4 w-4" />,
+        onSelect: () => void handleSyncTo(p.id),
+      })
+    }
+    if (syncTargets.length > 0 && (single?.appUrl ?? single?.webUrl)) pushDivider()
+    if (single?.appUrl) {
+      entries.push({
+        type: 'item',
+        id: 'open-app',
+        label: t('playlist.openInApp', { platform: sourceName }),
+        icon: 'open_in_new',
+        onSelect: () => void handleOpenUrl(single.appUrl as string),
+      })
+    }
+    if (single?.webUrl) {
+      entries.push({
+        type: 'item',
+        id: 'open-web',
+        label: t('playlist.openInBrowser'),
+        icon: 'public',
+        onSelect: () => void handleOpenUrl(single.webUrl as string),
+      })
+    }
+    // 清理尾部分隔线；无任何可操作项时不弹菜单
+    while (entries.length > 0 && entries[entries.length - 1].type === 'divider') entries.pop()
+    if (!entries.some((entry) => entry.type === 'item')) return
+    setMenu({ x: e.clientX, y: e.clientY, entries })
   }
 
   /** 右键重命名：目标歌单未激活时先激活，再进入头部内联编辑 */
@@ -1075,72 +1109,14 @@ export default function PlaylistSection({
       )}
 
       {menu && (
-        <div
-          role="menu"
-          onMouseDown={(e) => e.stopPropagation()}
-          style={{ left: menu.x, top: menu.y }}
-          className="fixed z-50 w-56 rounded-lg border border-outline-variant bg-surface-container p-1 shadow-lg shadow-black/40"
-        >
-          {singlePlaylist && canManage && (
-            <button
-              type="button"
-              onClick={() => {
-                setMenu(null)
-                handleMenuRename()
-              }}
-              className={MENU_ITEM}
-            >
-              <span className="material-symbols-outlined text-base">edit</span>
-              {t('playlist.rename')}
-            </button>
-          )}
-          {singlePlaylist && canManage && syncTargets.length > 0 && (
-            <div className="my-1 h-px bg-outline-variant" />
-          )}
-          {syncTargets.map((p) => (
-            <button
-              key={p.id}
-              type="button"
-              onClick={() => {
-                setMenu(null)
-                void handleSyncTo(p.id)
-              }}
-              className={MENU_ITEM}
-            >
-              <PlatformLogo platform={p.id} name={p.name} icon={p.icon} size="h-4 w-4" />
-              {t('playlist.syncToPlatform', { platform: p.name })}
-            </button>
-          ))}
-          {(singlePlaylist?.appUrl ?? singlePlaylist?.webUrl) && (
-            <div className="my-1 h-px bg-outline-variant" />
-          )}
-          {singlePlaylist?.appUrl && (
-            <button
-              type="button"
-              onClick={() => {
-                setMenu(null)
-                void handleOpenUrl(singlePlaylist.appUrl as string)
-              }}
-              className={MENU_ITEM}
-            >
-              <span className="material-symbols-outlined text-base">open_in_new</span>
-              {t('playlist.openInApp', { platform: sourceName })}
-            </button>
-          )}
-          {singlePlaylist?.webUrl && (
-            <button
-              type="button"
-              onClick={() => {
-                setMenu(null)
-                void handleOpenUrl(singlePlaylist.webUrl as string)
-              }}
-              className={MENU_ITEM}
-            >
-              <span className="material-symbols-outlined text-base">public</span>
-              {t('playlist.openInBrowser')}
-            </button>
-          )}
-        </div>
+        <ContextMenu
+          open
+          x={menu.x}
+          y={menu.y}
+          ariaLabel={t('playlist.menuLabel')}
+          entries={menu.entries}
+          onClose={() => setMenu(null)}
+        />
       )}
     </div>
   )
