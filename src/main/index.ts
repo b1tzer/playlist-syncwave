@@ -34,6 +34,7 @@ import {
 import { startKeepAliveScheduler, stopKeepAliveScheduler } from './keepAliveService'
 import { loadWindowState, trackWindowState } from './windowState'
 import { buildApplicationMenu } from './menu'
+import { setupAutoUpdater, checkForUpdates, quitAndInstall } from './updater'
 import { createPlaylistCacheService } from './playlistCacheService'
 import { getDatabase } from './appDatabase'
 import type { SyncTaskRecord, SyncChoice } from '@core/models/sync'
@@ -152,6 +153,20 @@ ipcMain.handle('app:get-version', () => {
   ipcLog.debug('app.get-version', '查询应用版本')
   return app.getVersion()
 })
+
+// --- 自动更新（仅打包环境可用）---
+
+ipcMain.handle('update:check', () =>
+  ipcLog.time('update.check', async () => {
+    await checkForUpdates()
+  }),
+)
+
+ipcMain.handle('update:quit-and-install', () =>
+  ipcLog.time('update.quit-and-install', async () => {
+    quitAndInstall()
+  }),
+)
 
 // --- 开机启动：打包环境对接系统登录项，开发环境仅持久化偏好 ---
 
@@ -858,6 +873,7 @@ ipcMain.handle(
 
 app.whenReady().then(() => {
   buildApplicationMenu()
+  setupAutoUpdater()
   createWindow()
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { createRendererLogger } from '../logging/rendererLogger'
 import { LOCALES, useI18n } from '../i18n'
 import ToggleSwitch from './ToggleSwitch'
+import type { UpdateStatus } from '../../../preload/index'
 
 const log = createRendererLogger('renderer.settings')
 
@@ -31,6 +32,27 @@ export default function SettingsView() {
   const { t, locale, setLocale } = useI18n()
   const [autoLaunch, setAutoLaunch] = useState(false)
   const [reportEnabled, setReportEnabled] = useState(false)
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null)
+
+  // 自动更新状态流转
+  useEffect(() => {
+    const offStatus = window.electronAPI.updater.onStatus((status) => {
+      log.debug('settings.update-status', '更新状态变化', { state: status.state })
+      setUpdateStatus(status)
+    })
+    // 菜单「检查更新」：触发手动检查
+    const offCheck = window.electronAPI.updater.onCheckRequested(() => {
+      log.info('settings.update-check', '菜单触发检查更新')
+      setUpdateStatus({ state: 'checking' })
+      window.electronAPI.updater
+        .check()
+        .catch(() => setUpdateStatus({ state: 'error', message: t('settings.updateDevMode') }))
+    })
+    return () => {
+      offStatus()
+      offCheck()
+    }
+  }, [t])
 
   // 从 SQLite 恢复设置；开机启动读取系统登录项真实状态
   useEffect(() => {
@@ -130,6 +152,51 @@ export default function SettingsView() {
                 )
             }}
           />
+        </SettingRow>
+        <SettingRow
+          icon="system_update"
+          title={t('settings.update')}
+          description={t('settings.updateDesc')}
+        >
+          <div className="flex items-center gap-3">
+            {updateStatus?.state === 'downloaded' ? (
+              <button
+                onClick={() => {
+                  log.info('settings.update-install', '重启并安装新版本')
+                  window.electronAPI.updater.quitAndInstall().catch(() => {})
+                }}
+                className="rounded-lg bg-primary px-3 py-1.5 font-label-md text-label-md font-medium text-on-primary transition-colors hover:brightness-110"
+              >
+                {t('settings.updateRestart')}
+              </button>
+            ) : (
+              <button
+                onClick={() => {
+                  log.info('settings.update-check', '手动检查更新')
+                  setUpdateStatus({ state: 'checking' })
+                  window.electronAPI.updater
+                    .check()
+                    .catch(() =>
+                      setUpdateStatus({ state: 'error', message: t('settings.updateDevMode') }),
+                    )
+                }}
+                className="rounded-lg border border-outline-variant px-3 py-1.5 font-label-md text-label-md text-on-surface transition-colors hover:bg-surface-container-high"
+              >
+                {t('settings.updateCheck')}
+              </button>
+            )}
+            <span className="font-label-sm text-label-sm text-on-surface-variant">
+              {updateStatus?.state === 'checking' && t('settings.updateChecking')}
+              {updateStatus?.state === 'not-available' && t('settings.updateLatest')}
+              {updateStatus?.state === 'available' &&
+                t('settings.updateAvailable', { version: updateStatus.version })}
+              {updateStatus?.state === 'downloading' &&
+                t('settings.updateDownloading', { percent: updateStatus.percent })}
+              {updateStatus?.state === 'downloaded' &&
+                t('settings.updateDownloaded')}
+              {updateStatus?.state === 'error' && t('settings.updateFailed')}
+            </span>
+          </div>
         </SettingRow>
         <SettingRow
           icon="info"

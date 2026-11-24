@@ -9,7 +9,16 @@ type Lang = 'zh-CN' | 'en-US'
 
 const LABELS: Record<
   Lang,
-  { nav: string; create: string; playlists: string; sync: string; accounts: string; settings: string; quit: string }
+  {
+    nav: string
+    create: string
+    playlists: string
+    sync: string
+    accounts: string
+    settings: string
+    quit: string
+    updateCheck: string
+  }
 > = {
   'zh-CN': {
     nav: '视图',
@@ -19,6 +28,7 @@ const LABELS: Record<
     accounts: '账号',
     settings: '设置',
     quit: '退出',
+    updateCheck: '检查更新',
   },
   'en-US': {
     nav: 'View',
@@ -28,6 +38,7 @@ const LABELS: Record<
     accounts: 'Accounts',
     settings: 'Settings',
     quit: 'Quit',
+    updateCheck: 'Check for Updates',
   },
 }
 
@@ -59,12 +70,27 @@ export function buildApplicationMenu(): void {
     ],
   }
 
+  const helpMenu: MenuItemConstructorOptions = {
+    role: 'help',
+    submenu: [
+      {
+        label: labels.updateCheck,
+        click: () => {
+          const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
+          win?.webContents.send('app:navigate', 'settings')
+          win?.webContents.send('update:check-requested')
+        },
+      },
+    ],
+  }
+
   const template: MenuItemConstructorOptions[] = [
     ...(isMac ? ([{ role: 'appMenu' }] as MenuItemConstructorOptions[]) : []),
     navMenu,
     { role: 'editMenu' },
     { role: 'viewMenu' },
     { role: 'windowMenu' },
+    helpMenu,
   ]
 
   Menu.setApplicationMenu(Menu.buildFromTemplate(template))

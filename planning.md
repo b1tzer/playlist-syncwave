@@ -399,7 +399,7 @@ tests/
 - **B3 窗口状态记忆 ✅**：`main/windowState.ts` 持久化窗口 bounds/maximized 到 userData，resize/move 防抖 500ms 保存、close 立即保存；恢复时校验与可见显示器相交（显示器变化后自动回退居中）。typecheck、lint 通过。
 - **B4 应用菜单与快捷键 ✅**：`main/menu.ts` 构建标准菜单（mac 含 appMenu/editMenu/viewMenu/windowMenu，Edit 菜单恢复剪贴板快捷键）；导航菜单 CmdOrCtrl+N（快速创建）/CmdOrCtrl+2..5（歌单/同步/账号/设置），经 `app:navigate` 广播到渲染层切换视图；菜单文案按 settings.language 中英生成，语言变更时重建。typecheck、lint、264 项测试通过。
 - **B5 开机启动真实现 ✅**：新增 `app:get-auto-launch`/`app:set-auto-launch` IPC，打包环境对接 `app.setLoginItemSettings`（win 补 `setAppUserModelId`），开发环境仅持久化偏好；SettingsView 开关改读系统登录项真实状态。typecheck、lint、264 项测试通过。
-- **B6 自动更新（待实施）**：electron-updater + 检查更新入口 + 发布配置。
+- **B6 自动更新 ✅**：接入 `electron-updater`（generic provider，`SYNCWAVE_UPDATE_URL` 环境变量配置发布源）；打包环境启动 10s 后静默检查、自动下载、退出时安装；`main/updater.ts` 状态广播（checking/available/not-available/downloading/downloaded/error）+ `update:check`/`update:quit-and-install` IPC；设置页「自动更新」行（检查按钮/进度/重启安装）+ 帮助菜单「检查更新」入口；开发模式明确拒绝并提示。typecheck、lint、264 项测试、build 通过。
 - **B7 系统通知（待实施）**：同步完成/账号过期系统通知。
 - **B8 本地歌单库（待实施）**：本地暂存歌单（未匹配歌曲草稿、登录前编辑）。
 - **B9 文件导入（待实施）**：m3u/csv/txt 文件选择导入（复用 parser）。

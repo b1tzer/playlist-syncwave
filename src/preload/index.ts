@@ -18,6 +18,15 @@ export interface SyncProgress {
   stage: 'matching' | 'adding'
 }
 
+/** 自动更新状态（与主进程 updater.UpdateStatus 同构） */
+export type UpdateStatus =
+  | { state: 'checking' }
+  | { state: 'available'; version: string }
+  | { state: 'not-available'; version: string }
+  | { state: 'downloading'; percent: number }
+  | { state: 'downloaded'; version: string }
+  | { state: 'error'; message: string }
+
 export interface SyncStep {
   taskId: string
   item: SyncItemResult
@@ -57,6 +66,23 @@ const api = {
   getAutoLaunch: (): Promise<boolean> => ipcRenderer.invoke('app:get-auto-launch'),
   setAutoLaunch: (enabled: boolean): Promise<void> =>
     ipcRenderer.invoke('app:set-auto-launch', enabled),
+
+  /** 自动更新：状态流转（与主进程 updater.UpdateStatus 保持同构） */
+  updater: {
+    check: (): Promise<void> => ipcRenderer.invoke('update:check'),
+    quitAndInstall: (): Promise<void> => ipcRenderer.invoke('update:quit-and-install'),
+    onStatus: (callback: (status: UpdateStatus) => void): (() => void) => {
+      const listener = (_event: unknown, status: UpdateStatus) => callback(status)
+      ipcRenderer.on('update:status', listener)
+      return () => ipcRenderer.removeListener('update:status', listener)
+    },
+    /** 菜单「检查更新」触发（导航到设置页后由设置页响应） */
+    onCheckRequested: (callback: () => void): (() => void) => {
+      const listener = () => callback()
+      ipcRenderer.on('update:check-requested', listener)
+      return () => ipcRenderer.removeListener('update:check-requested', listener)
+    },
+  },
 
   platforms: {
     list: (): Promise<PlatformMeta[]> => ipcRenderer.invoke('platform:list'),
