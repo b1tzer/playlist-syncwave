@@ -68,8 +68,8 @@ function PlaylistCover({ playlist }: { playlist: PlatformPlaylist }) {
 }
 
 /** 超长文本：默认省略号截断，悬浮时自动来回滚动展示全文。
- *  单层结构：文字直接作为 flex item 的文本节点，省略号生效且无
- *  inline-block 基线空隙（旧双层结构导致行内垂直偏移与 hover 微跳）。 */
+ *  外层是 flex 裁剪容器（overflow-hidden 挡住滚动文字，不溢出到封面/数字），
+ *  内层 block 做省略号与 translateX 动画；flex 布局避免 inline-block 基线空隙。 */
 function MarqueeText({ text, className }: { text: string; className?: string }) {
   const ref = useRef<HTMLSpanElement>(null)
   const [shift, setShift] = useState(0)
@@ -95,22 +95,26 @@ function MarqueeText({ text, className }: { text: string; className?: string }) 
 
   return (
     <span
-      ref={ref}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
-      className={`${className ?? ''} whitespace-nowrap ${
-        scrolling ? 'marquee-x' : 'overflow-hidden text-ellipsis'
-      }`}
-      style={
-        scrolling
-          ? {
-              ['--marquee-shift' as string]: `-${shift}px`,
-              animationDuration: `${duration}s`,
-            }
-          : undefined
-      }
+      className={`flex min-w-0 items-center overflow-hidden ${className ?? ''}`}
     >
-      {text}
+      <span
+        ref={ref}
+        className={`max-w-full whitespace-nowrap ${
+          scrolling ? 'marquee-x' : 'overflow-hidden text-ellipsis'
+        }`}
+        style={
+          scrolling
+            ? {
+                ['--marquee-shift' as string]: `-${shift}px`,
+                animationDuration: `${duration}s`,
+              }
+            : undefined
+        }
+      >
+        {text}
+      </span>
     </span>
   )
 }

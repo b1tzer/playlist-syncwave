@@ -381,6 +381,11 @@ tests/
 - **排查范围**：全仓仅有 MarqueeText 一处 inline-block+nowrap 模式；fixed 元素共 4 处（toast/LoginSection 弹窗/ConfirmSyncDialog/ContextMenu），除 ContextMenu 已 Portal 外其余均在无 transform 祖先下（LoginSection 弹窗随 view-enter 修复恢复正常）。构建产物确认 to 帧无 translate 残留。
 - **验证**：typecheck、lint、278 项测试、build 通过；dev 启动无报错。待手工验收（滚动列表后右键菜单贴鼠标、歌单行文字垂直居中、hover 无位移）。
 
+### 修复记录 — marquee 滚动文字溢出到相邻元素 ✅
+- **问题**：上一版单层化后文字滚动时无裁剪容器，translateX 动画文字直接绘制到封面/歌单数字上。
+- **修复**：MarqueeText 回到「外层裁剪 + 内层动画」结构，但外层改 flex 布局（`flex min-w-0 items-center overflow-hidden`，滚动文字被裁剪在文本区边界内，不溢出到相邻元素），内层 `max-w-full` block 元素负责省略号（非 hover）与 translateX 动画（hover），flex 布局避免 inline-block 基线空隙（保留上一版的对齐修复）。
+- **验证**：typecheck、lint、278 项测试、build 通过。待手工验收（hover 长歌单名：文字在自身区域滚动，不盖封面与数字）。
+
 ### 修复记录 — 歌单选择交互改为拖拽框选 ✅
 - **需求**：去掉歌单行复选框；单击按住拖拽框选多个（锚点行到当前行范围）；Cmd/Ctrl + 单击切换单行选择。
 - **实现**：行 mousedown 记录锚点，全局 mousemove 超 5px 阈值进入框选（先选中锚点行），行 mouseenter 按「锚点→当前行」重算范围；拖拽结束抑制同源 click 防止误打开歌单；行 onClick 区分 Cmd/Ctrl 切换与普通打开；列表 `select-none` 防拖拽时选中文字；右键、清除选择、选中计数等原有行为不变。
