@@ -304,6 +304,52 @@ describe('syncPlaylist — 金标准两阶段（T6.4）', () => {
     expect(target.addSongs).toHaveBeenCalledWith('pl-x', ['1', '3'])
   })
 
+  it('executeSync：写入顺序与文本清单一致（matched 与 choice 交错）', async () => {
+    const target = makeTarget({
+      稻香: [song('1', '稻香', '周杰伦')],
+      勇气: [song('2', '勇气', '棉子'), song('3', '勇气', '金志文')],
+      晴天: [song('4', '晴天', '周杰伦')],
+    })
+    // 文本顺序：稻香（自动）→ 勇气（手动选）→ 晴天（自动）
+    const plan = await planSync(
+      [
+        { title: '稻香', artist: '周杰伦' },
+        { title: '勇气', artist: '梁静茹' },
+        { title: '晴天', artist: '周杰伦' },
+      ],
+      target,
+      { searchIntervalMs: 0 },
+    )
+    expect(plan.matched).toHaveLength(2)
+    expect(plan.choices).toHaveLength(1)
+    const final = await executeSync(plan, [{ choiceIndex: 0, songId: '3' }], 'x', target, {
+      searchIntervalMs: 0,
+    })
+    expect(final.status).toBe('done')
+    expect(final.added).toBe(3)
+    // 必须按文本顺序写入，而不是「全部自动匹配在前、手动选择在后」
+    expect(target.addSongs).toHaveBeenCalledTimes(1)
+    expect(target.addSongs).toHaveBeenCalledWith('pl-x', ['1', '3', '4'])
+  })
+
+  it('executeSync：超过批量大小时分批写入，跨批次仍保持文本顺序', async () => {
+    const target = makeTarget({})
+    target.searchSongs = vi.fn(async (keyword: string) => {
+      const m = keyword.match(/s(\d+)/)
+      const n = m ? Number(m[1]) : 0
+      return [song(String(n), keyword, '某人')]
+    })
+    const queries = Array.from({ length: 5 }, (_, i) => ({ title: `s${i + 1}`, artist: '某人' }))
+    const plan = await planSync(queries, target, { searchIntervalMs: 0 })
+    const final = await executeSync(plan, [], 'x', target, { searchIntervalMs: 0, batchSize: 2 })
+    expect(final.status).toBe('done')
+    expect(final.added).toBe(5)
+    expect(target.addSongs).toHaveBeenCalledTimes(3)
+    expect(target.addSongs).toHaveBeenNthCalledWith(1, 'pl-x', ['1', '2'])
+    expect(target.addSongs).toHaveBeenNthCalledWith(2, 'pl-x', ['3', '4'])
+    expect(target.addSongs).toHaveBeenNthCalledWith(3, 'pl-x', ['5'])
+  })
+
   it('executeSync：未选择的 choice 计为 unresolved 失败', async () => {
     const target = makeTarget({
       晴天: [song('1', '晴天', '周杰伦')],

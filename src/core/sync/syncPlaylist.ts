@@ -265,7 +265,6 @@ export async function executeSync(
 ): Promise<SyncReport> {
   const batchSize = options.batchSize ?? 500
   const failed: SyncFailedItem[] = [...plan.failed]
-  const pending: Array<{ query: MatchQuery; songId: string }> = [...plan.matched]
   const items: SyncItemResult[] = plan.items.map((item) => ({ ...item }))
 
   log.info('execute.start', '开始执行同步', {
@@ -304,8 +303,17 @@ export async function executeSync(
       item.status = 'matched'
       item.songId = candidate.id
     }
-    pending.push({ query: choice.query, songId: candidate.id })
   }
+
+  // 写入顺序必须与文本清单一致：自动匹配与手动确认合并后，按原始输入 index 重排。
+  // （先 matched 再 choices 的拼接会把需要手动选择的歌挪到末尾，打乱用户文本顺序）
+  const pending: Array<{ query: MatchQuery; songId: string }> = items
+    .filter(
+      (it): it is SyncItemResult & { songId: string } =>
+        it.status === 'matched' && typeof it.songId === 'string' && it.songId !== '',
+    )
+    .sort((a, b) => a.index - b.index)
+    .map((it) => ({ query: it.query, songId: it.songId }))
 
   const baseReport = {
     playlistName,
