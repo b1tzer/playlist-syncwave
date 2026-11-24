@@ -93,6 +93,12 @@ export default function App() {
     setAccounts((prev) => ({ ...prev, [platform]: account }))
   }
 
+  /**
+   * 已连接账号的平台：未配置的平台只出现在「账号管理」页，
+   * 完成连接后才在其他页面供用户选择。
+   */
+  const configuredPlatforms = platforms.filter((p) => accounts[p.id] !== null)
+
   const handleTaskUpdate = (t: SyncTaskRecord) => {
     setTasks((prev) => {
       const idx = prev.findIndex((x) => x.id === t.id)
@@ -333,7 +339,7 @@ export default function App() {
           >
             {view === 'create' && (
               <TextCreator
-                platforms={platforms}
+                platforms={configuredPlatforms}
                 accounts={accounts}
                 onTaskUpdate={handleTaskUpdate}
                 pendingConfirm={pendingConfirm}
@@ -342,7 +348,7 @@ export default function App() {
             )}
             {view === 'playlists' && (
               <PlaylistSection
-                platforms={platforms}
+                platforms={configuredPlatforms}
                 accounts={accounts}
                 searchQuery={search}
                 onTaskUpdate={handleTaskUpdate}

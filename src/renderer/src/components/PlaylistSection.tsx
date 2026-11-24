@@ -784,9 +784,11 @@ export default function PlaylistSection({
             {t('playlist.loginFirst')}
           </p>
           <p className="mt-1 font-label-sm text-label-sm text-outline">
-            {t('playlist.loginHint', {
-              platform: platforms.find((p) => p.id === active)?.name ?? active,
-            })}
+            {platforms.length === 0
+              ? t('playlist.noPlatformHint')
+              : t('playlist.loginHint', {
+                  platform: platforms.find((p) => p.id === active)?.name ?? active,
+                })}
           </p>
         </div>
       ) : (

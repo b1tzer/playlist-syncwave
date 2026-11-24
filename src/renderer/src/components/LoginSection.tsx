@@ -4,6 +4,7 @@ import { createRendererLogger } from '../logging/rendererLogger'
 import { useI18n } from '../i18n'
 import type { TranslationKey } from '../i18n/translations'
 import PlatformLogo from './PlatformLogo'
+import { notify } from './toast'
 
 const log = createRendererLogger('renderer.login')
 
@@ -57,6 +58,10 @@ export default function LoginSection({ platforms, accounts, onAccountChange }: L
   const qrChannels = qrMeta?.loginChannels ?? []
 
   const startLogin = async (platform: string, channel?: string) => {
+    // 网页登录平台（如 Apple Music 无扫码接口）：主进程打开登录窗口，无二维码弹窗
+    if (platforms.find((p) => p.id === platform)?.loginType === 'web') {
+      return startWebLogin(platform)
+    }
     const channels = platforms.find((p) => p.id === platform)?.loginChannels ?? []
     const activeChannel = channels.length > 0 ? (channel ?? qrChannel ?? channels[0]?.id) : undefined
     log.info('login.qr.start', '发起扫码登录', {
@@ -101,6 +106,30 @@ export default function LoginSection({ platforms, accounts, onAccountChange }: L
       log.error('login.qr.create-failed', '获取二维码失败', e, { platform })
       setError(e instanceof Error ? e.message : t('login.failed'))
       setQrFor(null)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  /** 网页登录：主进程打开登录窗口，用户登录完成后返回账号；取消返回 null */
+  const startWebLogin = async (platform: string) => {
+    const name = platforms.find((p) => p.id === platform)?.name ?? platform
+    log.info('login.web.start', '发起网页登录', { platform })
+    setError('')
+    setLoading(true)
+    try {
+      const account = await window.electronAPI.platforms.beginWebLogin(platform)
+      if (account) {
+        log.info('login.web.success', '网页登录成功', { platform })
+        onAccountChange(platform, account)
+        notify('success', t('login.success'), t('login.webSuccessDetail', { platform: name }))
+      } else {
+        log.info('login.web.cancelled', '网页登录已取消', { platform })
+      }
+    } catch (e) {
+      log.error('login.web.failed', '网页登录失败', e, { platform })
+      const msg = e instanceof Error ? e.message : t('login.failed')
+      notify('error', t('login.failed'), msg)
     } finally {
       setLoading(false)
     }
@@ -199,8 +228,16 @@ export default function LoginSection({ platforms, accounts, onAccountChange }: L
                     disabled={loading}
                     className="flex items-center gap-1.5 rounded-lg bg-primary px-4 py-2 font-label-md text-label-md font-medium text-on-primary transition-colors hover:bg-primary/85 disabled:opacity-50"
                   >
-                    <span className="material-symbols-outlined text-base">qr_code_scanner</span>
-                    {loading && qrFor === p.id ? t('login.gettingQr') : t('login.scanLogin')}
+                    <span className="material-symbols-outlined text-base">
+                      {p.loginType === 'web' ? 'open_in_new' : 'qr_code_scanner'}
+                    </span>
+                    {p.loginType === 'web'
+                      ? loading
+                        ? t('login.webWaiting')
+                        : t('login.webLogin')
+                      : loading && qrFor === p.id
+                        ? t('login.gettingQr')
+                        : t('login.scanLogin')}
                   </button>
                 )}
               </div>

@@ -46,6 +46,7 @@ import {
   removeLocalPlaylistSongs,
 } from './localPlaylistService'
 import { loadWindowState, trackWindowState } from './windowState'
+import { beginWebLogin } from './webLoginService'
 import { buildApplicationMenu } from './menu'
 import { setupAutoUpdater, checkForUpdates, quitAndInstall, setAutoUpdateEnabled } from './updater'
 import { notifySyncResult, notifySyncStopped } from './notifications'
@@ -365,6 +366,48 @@ ipcMain.handle('platform:create-qr', (_event, platform: string, channel?: string
       return adapter.createQrLogin(channel)
     },
     { platform, channel: channel ?? 'default' },
+  ),
+)
+
+/**
+ * 网页登录（无扫码接口的平台，如 Apple Music）：
+ * 主进程打开登录窗口 → 用户登录 → 提取会话 cookie → 交给适配器补全凭证 → 保存并返回账号。
+ * 用户关闭窗口或超时返回 null。
+ */
+ipcMain.handle('platform:begin-web-login', (_event, platform: string) =>
+  ipcLog.time(
+    'platform.begin-web-login',
+    async () => {
+      const services = getPlatform(platform)
+      const webLogin = services.meta.webLogin
+      if (services.meta.loginType !== 'web' || !webLogin) {
+        throw new Error('该平台不支持网页登录')
+      }
+      const sessionValue = await beginWebLogin(
+        webLogin.url,
+        webLogin.cookieName,
+        webLogin.cookieUrl,
+        services.meta.name,
+      )
+      if (!sessionValue) {
+        ipcLog.info('platform.begin-web-login', '网页登录取消', { platform })
+        return null
+      }
+      const adapter = await resolveAdapter(platform)
+      const credential = adapter.webLoginSetup
+        ? await adapter.webLoginSetup(sessionValue)
+        : sessionValue
+      // 校验登录态后再落库，避免存下无效凭证
+      const account = await adapter.getLoginStatus(credential)
+      if (!account) {
+        ipcLog.warn('platform.begin-web-login', '登录未生效', { platform })
+        throw new Error('登录未生效，请重试')
+      }
+      services.saveCredential(credential)
+      ipcLog.info('platform.begin-web-login', '网页登录成功，凭证已保存', { platform })
+      return account
+    },
+    { platform },
   ),
 )
 

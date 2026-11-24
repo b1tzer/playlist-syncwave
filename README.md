@@ -17,6 +17,9 @@
 |---|---|---|
 | 网易云音乐 | 源 + 目标 | 二维码扫码 |
 | QQ 音乐 | 源 + 目标 | 二维码扫码（QQ音乐 App / 微信 / 手机 QQ 三通道） |
+| Apple Music | 源 + 目标 | 网页登录（社区路径：网页前端 developer token + 登录 cookie） |
+
+> Apple Music 说明：官方 API 支持创建/追加曲目/改名/删除歌单，但不提供「移除歌曲」端点（该操作不可用）；凭证由应用内登录窗口自动提取，无需开发者账号。
 
 同步仅操作用户自己账号下的歌单元数据，不绕过平台版权限制。
 
@@ -56,7 +59,7 @@ npm run dist:linux  # Linux：AppImage
 - **桌面框架**：Electron + electron-vite
 - **前端**：React + TypeScript（strict）+ Tailwind CSS + Zustand
 - **数据**：better-sqlite3（WAL 模式，版本化 schema 迁移）
-- **平台接入**：NeteaseCloudMusicApi（网易云）、@yakult-green-tea/qq-music-api（QQ 音乐 Node 模式）
+- **平台接入**：NeteaseCloudMusicApi（网易云）、@yakult-green-tea/qq-music-api（QQ 音乐 Node 模式）、Apple Music Web API（社区路径，适配器自实现）
 - **测试**：Vitest
 - **打包分发**：electron-builder + electron-updater
 

@@ -51,6 +51,13 @@ export interface PlatformAdapter {
 
   /** 从歌单移除歌曲 */
   removeSongsFromPlaylist(cookie: string, playlistId: string, songIds: string[]): Promise<void>
+
+  /**
+   * 网页登录完成回调（可选）：主进程从登录窗口 cookie 提取会话值后调用，
+   * 平台据此补全其余凭证（如 Apple Music 抓取 developer token）并返回完整凭证串。
+   * 未实现时主进程直接以会话值作为凭证保存。
+   */
+  webLoginSetup?(sessionValue: string): Promise<string>
 }
 
 function unsupported(platform: string, method: string): Error {

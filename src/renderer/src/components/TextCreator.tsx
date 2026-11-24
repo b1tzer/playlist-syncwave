@@ -118,10 +118,10 @@ export default function TextCreator({
     })
   }, [result])
 
-  /** 可作为同步目标的平台（声明 write 能力） */
+  /** 可作为同步目标的平台（声明 write 能力且已连接账号；未配置平台仅在账号管理页出现） */
   const targetPlatforms = useMemo(
-    () => platforms.filter((p) => p.capabilities.write),
-    [platforms],
+    () => platforms.filter((p) => p.capabilities.write && accounts[p.id] !== null),
+    [platforms, accounts],
   )
 
   // 目标平台列表动态变化时，校正当前选择
@@ -482,8 +482,9 @@ export default function TextCreator({
                 <span className="flex min-w-0 items-center gap-1 truncate font-label-sm text-label-sm text-on-surface-variant">
                   <span className="material-symbols-outlined text-sm">switch_account</span>
                   <span className="truncate">
-                    {t('textCreator.loginFirst')}{' '}
-                    {targetPlatforms.find((p) => p.id === target)?.name ?? ''}
+                    {targetPlatforms.length === 0
+                      ? t('textCreator.noTarget')
+                      : `${t('textCreator.loginFirst')} ${targetPlatforms.find((p) => p.id === target)?.name ?? ''}`}
                   </span>
                 </span>
               )}

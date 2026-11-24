@@ -105,6 +105,9 @@ const api = {
       ipcRenderer.invoke('platform:create-qr', platform, channel),
     checkQr: (platform: string, key: string): Promise<QrLoginResult> =>
       ipcRenderer.invoke('platform:check-qr', platform, key),
+    /** 网页登录：主进程打开登录窗口，成功后返回账号；用户取消返回 null */
+    beginWebLogin: (platform: string): Promise<PlatformAccount | null> =>
+      ipcRenderer.invoke('platform:begin-web-login', platform),
     loginStatus: (platform: string): Promise<PlatformAccount | null> =>
       ipcRenderer.invoke('platform:login-status', platform),
     logout: (platform: string): Promise<void> => ipcRenderer.invoke('platform:logout', platform),

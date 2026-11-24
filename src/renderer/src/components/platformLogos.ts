@@ -3,6 +3,7 @@ import qqmusic from '@renderer/assets/music_logos/qqmusic.png'
 import kugou from '@renderer/assets/music_logos/kugou.png'
 import kuwo from '@renderer/assets/music_logos/kuwo.png'
 import migu from '@renderer/assets/music_logos/migu.png'
+import applemusic from '@renderer/assets/music_logos/applemusic.svg'
 
 /** 平台 id → 品牌 logo 资源（未收录的平台回退 material-symbols 图标） */
 export const PLATFORM_LOGOS: Record<string, string> = {
@@ -11,4 +12,5 @@ export const PLATFORM_LOGOS: Record<string, string> = {
   kugou,
   kuwo,
   migu,
+  applemusic,
 }

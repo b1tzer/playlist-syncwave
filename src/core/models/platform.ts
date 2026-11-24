@@ -57,6 +57,19 @@ export interface LoginChannel {
   label: string
 }
 
+/** 登录方式：扫码（默认）或网页授权（如 Apple Music 无扫码接口） */
+export type PlatformLoginType = 'qr' | 'web'
+
+/** 网页登录配置：主进程据此打开登录窗口并从 cookie 提取会话凭证 */
+export interface WebLoginConfig {
+  /** 登录页 URL（应用内打开，用户在此完成登录） */
+  url: string
+  /** 登录成功后写入的会话 cookie 名（如 Apple Music 的 media-user-token） */
+  cookieName: string
+  /** cookie 归属的根 URL（用于查询 cookie） */
+  cookieUrl: string
+}
+
 /** 平台元数据：注册时随模块注册，渲染层据此动态渲染 */
 export interface PlatformMeta {
   /** 平台唯一 id，与 PlatformAdapter.platform 一致 */
@@ -70,4 +83,8 @@ export interface PlatformMeta {
   capabilities: PlatformCapabilities
   /** 扫码登录渠道列表；undefined 表示单一默认渠道 */
   loginChannels?: LoginChannel[]
+  /** 登录方式；undefined 视为扫码登录 */
+  loginType?: PlatformLoginType
+  /** 网页登录配置；loginType 为 web 时必填 */
+  webLogin?: WebLoginConfig
 }
