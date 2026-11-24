@@ -47,6 +47,20 @@ for (const stream of [process.stdout, process.stderr]) {
 
 const isDev = process.env.NODE_ENV === 'development'
 
+// --- 单实例锁：二次启动聚焦已有窗口，避免多进程并发写同一 SQLite ---
+const gotSingleInstanceLock = app.requestSingleInstanceLock()
+if (!gotSingleInstanceLock) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    const win = BrowserWindow.getAllWindows()[0]
+    if (win) {
+      if (win.isMinimized()) win.restore()
+      win.focus()
+    }
+  })
+}
+
 // 歌单缓存服务：TTL 自动刷新 + 单飞去重 + 手动刷新限流（内存态，随进程生命周期）
 const playlistCache = createPlaylistCacheService(getDatabase().playlistCache)
 const playlistCacheStore = getDatabase().playlistCache

@@ -395,7 +395,7 @@ tests/
 > 目标：补齐合格桌面 App 应具备的基础能力，按差距分析顺序逐项实施。
 
 - **B1 打包分发 ✅**：electron-builder 配置（`electron-builder.yml`：appId/productName/图标/mac dmg+zip/win nsis/linux AppImage/asarUnpack native 模块）+ `dist` 脚本 + `build/icon.svg`→`icon.png`（1024）。验证：`npm run build` + `npx electron-builder --mac --dir` 产出 SyncWave.app，better-sqlite3 正确解包。签名未配置（发布前用 CSC_LINK/CSC_KEY_PASSWORD）。
-- **B2 单实例锁（待实施）**：`requestSingleInstanceLock`，二次启动聚焦已有窗口，防 SQLite 并发写。
+- **B2 单实例锁 ✅**：`requestSingleInstanceLock` 失败即退出；二次启动聚焦/还原已有窗口，防 SQLite 并发写。typecheck 通过。
 - **B3 窗口状态记忆（待实施）**：窗口位置/尺寸持久化，重启恢复。
 - **B4 应用菜单与快捷键（待实施）**：macOS 标准菜单（含 Edit 菜单保证剪贴板快捷键）+ 应用内快捷键。
 - **B5 开机启动真实现（待实施）**：`app.setLoginItemSettings` 对接设置开关。
