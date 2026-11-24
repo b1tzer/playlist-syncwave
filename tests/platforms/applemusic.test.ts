@@ -63,7 +63,7 @@ const STOREFRONT = { data: [{ id: 'cn', type: 'storefronts' }] }
 const PLAYLIST = {
   id: 'p.ABC123',
   type: 'library-playlists',
-  attributes: { name: '我的歌单', trackCount: 12, artwork: { url: 'https://x/{w}x{h}bb.jpg' } },
+  attributes: { name: '我的歌单', artwork: { url: 'https://x/{w}x{h}bb.jpg' } },
 }
 
 const TRACK = {
@@ -126,18 +126,35 @@ describe('AppleMusicAdapter — 社区路径 HTTP 映射', () => {
     })
     const adapter = new AppleMusicAdapter(handler, {})
     const playlists = await adapter.getUserPlaylists(cred(), 'cn')
-    expect(playlists).toEqual([
-      {
-        id: 'p.ABC123',
-        name: '我的歌单',
-        songCount: 12,
-        coverUrl: 'https://x/300x300bb.jpg',
-        webUrl: 'https://music.apple.com/library/playlist/p.ABC123',
-      },
-    ])
+    expect(playlists).toHaveLength(1)
+    expect(playlists[0]).toMatchObject({
+      id: 'p.ABC123',
+      name: '我的歌单',
+      coverUrl: 'https://x/300x300bb.jpg',
+      webUrl: 'https://music.apple.com/library/playlist/p.ABC123',
+    })
+    // 官方列表接口 attributes 无 trackCount 字段：不虚构 0，缺省为 undefined
+    expect(playlists[0].songCount).toBeUndefined()
     expect(calls).toHaveLength(2)
     // 第二次请求直接使用响应 next（/v1 前缀已带）
     expect(calls[1].url.pathname).toBe('/v1/me/library/playlists')
+  })
+
+  it('歌单列表：attributes 提供 trackCount 时透出（防御未来字段补充）', async () => {
+    const { handler } = makeHandler(() =>
+      json({
+        data: [
+          {
+            id: 'p.COUNTED',
+            type: 'library-playlists',
+            attributes: { name: '计数歌单', trackCount: 42 },
+          },
+        ],
+      }),
+    )
+    const adapter = new AppleMusicAdapter(handler, {})
+    const playlists = await adapter.getUserPlaylists(cred(), 'cn')
+    expect(playlists[0].songCount).toBe(42)
   })
 
   it('歌单歌曲：优先用 playParams.catalogId 作为歌曲 id', async () => {
@@ -246,11 +263,11 @@ describe('AppleMusicAdapter — 社区路径 HTTP 映射', () => {
     expect(calls).toHaveLength(1)
   })
 
-  it('移除歌曲：官方 API 无端点，保持不支持', async () => {
+  it('移除歌曲：官方 API 无端点，抛出用户可读的友好提示', async () => {
     const { handler } = makeHandler(() => empty(204))
     const adapter = new AppleMusicAdapter(handler, {})
     await expect(adapter.removeSongsFromPlaylist(cred(), 'p.ABC123', ['1'])).rejects.toThrow(
-      '平台 applemusic 不支持操作：removeSongsFromPlaylist',
+      'Apple Music暂不支持',
     )
   })
 

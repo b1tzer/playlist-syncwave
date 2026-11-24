@@ -4,7 +4,8 @@ import type { SqliteDb } from './sqlite'
 interface PlaylistRow {
   id: string
   name: string
-  song_count: number
+  /** 平台未提供歌曲数时为 NULL（如 Apple Music 资料库歌单） */
+  song_count: number | null
   cover_url: string | null
   web_url: string | null
   app_url: string | null
@@ -28,7 +29,7 @@ CREATE TABLE IF NOT EXISTS playlist_cache (
   platform TEXT NOT NULL,
   id TEXT NOT NULL,
   name TEXT NOT NULL,
-  song_count INTEGER NOT NULL DEFAULT 0,
+  song_count INTEGER,
   cover_url TEXT,
   web_url TEXT,
   app_url TEXT,
@@ -67,7 +68,7 @@ CREATE TABLE IF NOT EXISTS playlist_song_meta (
         list: rows.map((r) => ({
           id: r.id,
           name: r.name,
-          songCount: r.song_count,
+          songCount: r.song_count ?? undefined,
           coverUrl: r.cover_url ?? undefined,
           webUrl: r.web_url ?? undefined,
           appUrl: r.app_url ?? undefined,
@@ -89,7 +90,8 @@ CREATE TABLE IF NOT EXISTS playlist_song_meta (
           platform,
           p.id,
           p.name,
-          p.songCount,
+          // 平台未提供歌曲数时存 NULL（better-sqlite3 不绑定 undefined）
+          p.songCount ?? null,
           p.coverUrl ?? null,
           p.webUrl ?? null,
           p.appUrl ?? null,

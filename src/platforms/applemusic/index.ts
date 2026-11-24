@@ -357,7 +357,9 @@ export class AppleMusicAdapter extends BasePlatformAdapter {
       return {
         id,
         name: pickString(attrs.name) ?? '未命名歌单',
-        songCount: Number(attrs.trackCount) || 0,
+        // 官方列表接口不提供资料库歌单的歌曲数（attributes 无 trackCount 字段），
+        // 不虚构 0：缺省让 UI 留空（若 Apple 未来补充字段则自动透出）
+        songCount: typeof attrs.trackCount === 'number' ? attrs.trackCount : undefined,
         coverUrl: artworkUrl(attrs.artwork),
         webUrl: `https://music.apple.com/library/playlist/${id}`,
       }
@@ -496,7 +498,14 @@ export class AppleMusicAdapter extends BasePlatformAdapter {
     )
   }
 
-  // 移除歌曲：官方 API 未提供端点，保持基类默认「不支持」
+  // 移除歌曲：官方 API 未提供端点，覆写抛出用户可读的友好提示
+  protected override async doRemoveSongs(
+    _credential: string,
+    _playlistId: string,
+    _songIds: string[],
+  ): Promise<void> {
+    throw new Error('Apple Music暂不支持')
+  }
 }
 
 function mapSong(item: JsonObject): PlatformSong {
@@ -522,7 +531,13 @@ const appleMusicModule: PlatformModule = {
     name: 'Apple Music',
     apiLabel: 'Apple Music Web API (Community)',
     icon: 'library_music',
-    capabilities: { read: true, write: true },
+    capabilities: {
+      read: true,
+      write: true,
+      unsupportedOperations: {
+        removeSongs: { reason: 'Apple Music暂不支持' },
+      },
+    },
     loginType: 'web',
     webLogin: {
       url: WEB_INDEX_URL,

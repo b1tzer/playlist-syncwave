@@ -15,7 +15,8 @@ export interface PlatformPlaylist {
   /** 平台歌单 ID */
   id: string
   name: string
-  songCount: number
+  /** 歌曲数：平台列表接口未提供时缺省（如 Apple Music 资料库歌单无此字段），UI 留空 */
+  songCount?: number
   coverUrl?: string
   /** 浏览器打开的歌单分享链接（平台适配器填充） */
   webUrl?: string
@@ -45,10 +46,23 @@ export interface QrLoginResult {
 
 // --- 平台插件元数据：由各平台模块自带，主进程/渲染层动态消费，不硬编码 ---
 
+/** 平台可声明支持与否的写操作（与 PlatformAdapter 方法一一对应） */
+export type PlatformOperation =
+  | 'createPlaylist'
+  | 'addSongs'
+  | 'renamePlaylist'
+  | 'deletePlaylist'
+  | 'removeSongs'
+
 /** 平台能力声明：决定平台可作为同步来源（read）还是目标（write） */
 export interface PlatformCapabilities {
   read: boolean
   write: boolean
+  /**
+   * 不支持的操作及原因说明（渲染层据此置灰按钮，悬浮显示原因）。
+   * 缺省表示 write 能力覆盖的操作全部支持。
+   */
+  unsupportedOperations?: Partial<Record<PlatformOperation, { reason: string }>>
 }
 
 /** 扫码登录渠道（如 QQ音乐的 qqmusic/wechat/qq）；无渠道的平台省略 */

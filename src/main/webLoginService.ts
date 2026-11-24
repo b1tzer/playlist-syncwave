@@ -30,12 +30,31 @@ export async function beginWebLogin(
   const partition = 'persist:web-login'
   const ses = session.fromPartition(partition)
 
+  // 清理上次登录残留的会话 cookie：分区跨登录共享，
+  // 不清除的话旧登录态会让页面直接判定已登录，用户无法切换账号。
+  // 按实际种下的 domain 逐个删除，覆盖父域 cookie（如 .apple.com）。
+  try {
+    const existing = await ses.cookies.get({ name: cookieName })
+    for (const c of existing) {
+      const domain = (c.domain ?? '').replace(/^\./, '')
+      if (!domain) continue
+      await ses.cookies.remove(`https://${domain}`, cookieName).catch(() => undefined)
+    }
+  } catch (e) {
+    log.debug('login.web.clear-cookie-failed', '清理旧会话 cookie 失败', {
+      message: e instanceof Error ? e.message : String(e),
+    })
+  }
+
   const win = new BrowserWindow({
     width: 860,
     height: 700,
     title,
     autoHideMenuBar: true,
     webPreferences: {
+      // 关键：窗口必须与 cookie 轮询使用同一 session，否则登录 cookie 写进 defaultSession，
+      // 轮询在 persist:web-login 里永远查不到，登录流程卡死
+      partition,
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
@@ -58,10 +77,18 @@ export async function beginWebLogin(
 
     const checkCookie = async () => {
       try {
-        const cookies = await ses.cookies.get({ url: cookieUrl, name: cookieName })
-        if (cookies.length > 0 && cookies[0]?.value) {
-          log.info('login.web.success', '提取到会话 cookie', { cookieName })
-          settle(cookies[0].value)
+        // 先按 url 精确查；未命中时按 name 全量兜底（cookie 可能种在父域如 .apple.com）
+        let cookies = await ses.cookies.get({ url: cookieUrl, name: cookieName })
+        if (cookies.length === 0) {
+          cookies = await ses.cookies.get({ name: cookieName })
+        }
+        const hit = cookies.find((c) => c.value) ?? cookies[0]
+        if (hit?.value) {
+          log.info('login.web.success', '提取到会话 cookie', {
+            cookieName,
+            domain: hit.domain,
+          })
+          settle(hit.value)
         }
       } catch (e) {
         log.debug('login.web.poll-failed', 'cookie 查询失败，继续等待', {
@@ -72,6 +99,7 @@ export async function beginWebLogin(
 
     win.on('closed', () => settle(null))
     win.webContents.on('did-finish-load', () => void checkCookie())
+    win.webContents.on('did-navigate', () => void checkCookie())
     win.webContents.setWindowOpenHandler(() => {
       // 登录页可能弹出新窗口（如条款页面）：外部浏览器打开，避免脱离会话
       return { action: 'deny' }

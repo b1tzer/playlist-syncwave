@@ -31,6 +31,15 @@ const MIGRATIONS: Migration[] = [
       addColumnIfMissing(db, 'sync_tasks', 'detail', "detail TEXT NOT NULL DEFAULT '[]'")
     },
   },
+  {
+    version: 2,
+    name: 'playlist_cache 重建：song_count 允许 NULL（平台未提供歌曲数时留空，如 Apple Music）',
+    up: (db) => {
+      // 旧表 song_count NOT NULL 且缓存的 Apple Music 歌曲数为虚构 0：
+      // 缓存表可整体丢弃（迁移在 Store 建表之前运行，DROP 后按新 DDL 重建）
+      db.exec('DROP TABLE IF EXISTS playlist_cache')
+    },
+  },
 ]
 
 /** 应用所有未执行的迁移（按版本序，每个迁移独立事务并记录版本） */

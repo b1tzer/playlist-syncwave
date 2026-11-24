@@ -12,6 +12,7 @@ import { songDupKey } from '../sync/helpers'
 import SongList from './SongList'
 import PlatformLogo from './PlatformLogo'
 import { notify } from './toast'
+import { operationAllowed } from '../utils/platformCapabilities'
 
 const log = createRendererLogger('renderer.local-playlist')
 
@@ -260,7 +261,13 @@ export default function LocalPlaylistPanel({
     })
   }
 
-  const syncTargets = platforms.filter((p) => p.capabilities.write && accounts[p.id] !== null)
+  /** 同步目标：已登录 + 具备建单/加曲能力（能力清单由平台适配器声明） */
+  const syncTargets = platforms.filter(
+    (p) =>
+      accounts[p.id] !== null &&
+      operationAllowed(p, 'createPlaylist') &&
+      operationAllowed(p, 'addSongs'),
+  )
 
   return (
     <div className="mt-6 flex min-h-0 flex-1 gap-4">

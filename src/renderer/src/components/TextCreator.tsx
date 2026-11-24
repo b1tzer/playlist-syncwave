@@ -11,6 +11,7 @@ import LineTag from './LineTag'
 import PlatformLogo from './PlatformLogo'
 import ProgressBar from './ProgressBar'
 import { notify } from './toast'
+import { operationAllowed } from '../utils/platformCapabilities'
 
 const log = createRendererLogger('renderer.text-creator')
 
@@ -118,9 +119,15 @@ export default function TextCreator({
     })
   }, [result])
 
-  /** 可作为同步目标的平台（声明 write 能力且已连接账号；未配置平台仅在账号管理页出现） */
+  /** 可作为同步目标的平台（已连接账号 + 具备建单/加曲能力；能力清单由平台适配器声明） */
   const targetPlatforms = useMemo(
-    () => platforms.filter((p) => p.capabilities.write && accounts[p.id] !== null),
+    () =>
+      platforms.filter(
+        (p) =>
+          accounts[p.id] !== null &&
+          operationAllowed(p, 'createPlaylist') &&
+          operationAllowed(p, 'addSongs'),
+      ),
     [platforms, accounts],
   )
 

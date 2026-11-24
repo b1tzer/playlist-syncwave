@@ -27,6 +27,8 @@ import ProgressBar from './ProgressBar'
 import LoadMoreSentinel from './LoadMoreSentinel'
 import ContextMenu, { type ContextMenuEntry } from './ContextMenu'
 import { notify } from './toast'
+import { ipcErrorMessage } from '../utils/ipcError'
+import { operationAllowed, operationReason } from '../utils/platformCapabilities'
 
 const log = createRendererLogger('renderer.playlist')
 
@@ -181,8 +183,15 @@ export default function PlaylistSection({
   const loggedIn = active !== '' && active !== 'local' && accounts[active] !== null
   const keyword = searchQuery.trim().toLowerCase()
 
+  const activeMeta = platforms.find((p) => p.id === active)
   /** 当前平台是否声明写能力（歌单管理操作仅写平台可用） */
-  const canManage = platforms.find((p) => p.id === active)?.capabilities.write === true
+  const canManage = activeMeta?.capabilities.write === true
+  /** 操作级能力：不支持的操作置灰，悬浮显示原因（能力清单由平台适配器声明） */
+  const canRename = operationAllowed(activeMeta, 'renamePlaylist')
+  const canDelete = operationAllowed(activeMeta, 'deletePlaylist')
+  const canAddSongs = operationAllowed(activeMeta, 'addSongs')
+  const canRemoveSong = operationAllowed(activeMeta, 'removeSongs')
+  const removeSongReason = operationReason(activeMeta, 'removeSongs')
   const activePlaylist = playlists.find((p) => p.id === activeId)
 
   const visiblePlaylists = keyword
@@ -212,9 +221,13 @@ export default function PlaylistSection({
     setSelectedIds(selectRange(drag.anchorId, id))
   }
   const sourceName = platforms.find((p) => p.id === active)?.name ?? active
-  /** 右键可同步到的目标平台：写能力 + 已登录 + 非源平台 */
+  /** 右键可同步到的目标平台：已登录 + 非源平台 + 具备建单/加曲能力 */
   const syncTargets = platforms.filter(
-    (p) => p.capabilities.write && p.id !== active && accounts[p.id] !== null,
+    (p) =>
+      p.id !== active &&
+      accounts[p.id] !== null &&
+      operationAllowed(p, 'createPlaylist') &&
+      operationAllowed(p, 'addSongs'),
   )
 
   const fetchPlaylists = useCallback(
@@ -457,7 +470,7 @@ export default function PlaylistSection({
         entries.push({ type: 'divider', id: `divider-${entries.length}` })
       }
     }
-    if (single && canManage) {
+    if (single && canRename) {
       entries.push({
         type: 'item',
         id: 'rename',
@@ -466,7 +479,7 @@ export default function PlaylistSection({
         onSelect: handleMenuRename,
       })
     }
-    if (single && canManage && syncTargets.length > 0) pushDivider()
+    if (single && canRename && syncTargets.length > 0) pushDivider()
     for (const p of syncTargets) {
       entries.push({
         type: 'item',
@@ -503,7 +516,7 @@ export default function PlaylistSection({
 
   /** 右键重命名：目标歌单未激活时先激活，再进入头部内联编辑 */
   const handleMenuRename = () => {
-    if (!singlePlaylist || !canManage) return
+    if (!singlePlaylist || !canRename) return
     void openPlaylist(singlePlaylist.id)
     setRenameDraft(singlePlaylist.name)
     setRenaming(true)
@@ -613,7 +626,8 @@ export default function PlaylistSection({
         playlistId: activeId,
         songId,
       })
-      setError(e instanceof Error ? e.message : t('playlist.fetchFailed'))
+      // 行内操作失败用全局 toast 提示（歌单头部错误条位置偏远，操作上下文割裂）
+      notify('error', t('playlist.removeSongFailed'), ipcErrorMessage(e))
     } finally {
       setRemovingIds((prev) => {
         const next = new Set(prev)
@@ -886,7 +900,8 @@ export default function PlaylistSection({
                         className="min-w-0 flex-1 font-body-md text-body-md"
                       />
                       <span className="font-label-mono text-label-mono text-outline">
-                        {p.songCount}
+                        {/* 平台未提供歌曲数（如 Apple Music 资料库歌单）时留空 */}
+                        {p.songCount ?? ''}
                       </span>
                     </div>
                   </li>
@@ -966,7 +981,7 @@ export default function PlaylistSection({
                         text={activePlaylist?.name ?? ''}
                         className="min-w-0 font-label-sm text-label-sm text-on-surface-variant"
                       />
-                      {canManage && (
+                      {canRename && (
                         <button
                           onClick={startRename}
                           title={t('playlist.rename')}
@@ -1009,7 +1024,7 @@ export default function PlaylistSection({
                   )}
                 </div>
               )}
-              {activeId && canManage && (
+              {activeId && canDelete && (
                 <div className="flex shrink-0 items-center gap-2">
                   <button
                     onClick={() => (confirmDelete ? void handleDelete() : setConfirmDelete(true))}
@@ -1037,7 +1052,7 @@ export default function PlaylistSection({
                 {t('common.loading')}
               </p>
             )}
-            {!loading && activeId && canManage && (
+            {!loading && activeId && canAddSongs && (
               <div className="shrink-0 border-b border-outline-variant px-4 py-2">
                 <div className="flex items-center gap-2">
                   <span className="flex items-center gap-1 font-label-sm text-label-sm text-on-surface-variant">
@@ -1110,18 +1125,29 @@ export default function PlaylistSection({
                 }
                 renderAction={(s) =>
                   canManage ? (
-                    <button
-                      onClick={() => void handleRemoveSong(s.id)}
-                      disabled={removingIds.has(s.id)}
-                      title={t('playlist.removeSong')}
-                      className="flex shrink-0 items-center rounded-md p-1 text-on-surface-variant opacity-0 transition-all hover:bg-error/10 hover:text-error group-hover:opacity-100 disabled:opacity-50"
+                    // disabled 按钮不响应鼠标事件，原生 title 不显示：
+                    // 提示挂在外层 span（非禁用元素）上，按钮自身置灰
+                    <span
+                      title={
+                        canRemoveSong
+                          ? t('playlist.removeSong')
+                          : (removeSongReason ?? t('playlist.removeSong'))
+                      }
+                      className="flex shrink-0 items-center"
                     >
-                      <span
-                        className={`material-symbols-outlined text-base ${removingIds.has(s.id) ? 'animate-spin' : ''}`}
+                      <button
+                        onClick={() => void handleRemoveSong(s.id)}
+                        disabled={!canRemoveSong || removingIds.has(s.id)}
+                        aria-disabled={!canRemoveSong}
+                        className="flex items-center rounded-md p-1 text-on-surface-variant opacity-0 transition-all group-hover:opacity-100 hover:bg-error/10 hover:text-error disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-on-surface-variant"
                       >
-                        {removingIds.has(s.id) ? 'progress_activity' : 'playlist_remove'}
-                      </span>
-                    </button>
+                        <span
+                          className={`material-symbols-outlined text-base ${removingIds.has(s.id) ? 'animate-spin' : ''}`}
+                        >
+                          {removingIds.has(s.id) ? 'progress_activity' : 'playlist_remove'}
+                        </span>
+                      </button>
+                    </span>
                   ) : null
                 }
               />

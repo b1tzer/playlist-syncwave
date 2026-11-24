@@ -40,9 +40,11 @@ describe('runMigrations — 版本化迁移', () => {
 
   it('幂等：重复执行不报错且版本不重复', () => {
     runMigrations(db)
+    const first = db.prepare('SELECT COUNT(*) AS c FROM schema_migrations').get() as { c: number }
+    expect(first.c).toBeGreaterThanOrEqual(1)
     runMigrations(db)
-    const rows = db.prepare('SELECT COUNT(*) AS c FROM schema_migrations').get() as { c: number }
-    expect(rows.c).toBe(1)
+    const second = db.prepare('SELECT COUNT(*) AS c FROM schema_migrations').get() as { c: number }
+    expect(second.c).toBe(first.c)
   })
 
   it('新库（列已存在）执行迁移不破坏数据', () => {

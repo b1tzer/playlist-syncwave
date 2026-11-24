@@ -42,6 +42,13 @@ describe('playlistCacheStore — 歌单缓存存储', () => {
     expect(store.listSongs('netease', '1')).toBeNull()
   })
 
+  it('平台未提供歌曲数：songCount 缺省时存 NULL，读回为 undefined', () => {
+    store.savePlaylists('applemusic', [{ id: 'p.1', name: '歌单' }], 1000)
+    const cached = store.listPlaylists('applemusic')
+    expect(cached?.list).toHaveLength(1)
+    expect(cached?.list[0].songCount).toBeUndefined()
+  })
+
   it('歌曲保存后可读回（含可选字段与顺序）', () => {
     store.saveSongs(
       'netease',
