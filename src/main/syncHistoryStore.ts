@@ -93,13 +93,6 @@ CREATE TABLE IF NOT EXISTS sync_tasks (
 )
 `)
 
-  // 旧库升级：T9 之前无 detail 列，ALTER TABLE 补齐（列已存在时静默跳过）
-  try {
-    db.exec(`ALTER TABLE sync_tasks ADD COLUMN detail TEXT NOT NULL DEFAULT '[]'`)
-  } catch {
-    // 列已存在
-  }
-
   return {
     /** 新增或更新一条任务记录 */
     upsertTask(task: SyncTaskRecord): void {

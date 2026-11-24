@@ -7,6 +7,7 @@ import { createSettingsStore, type SettingsStore } from './settingsStore'
 import { createMappingStore, type MappingStore } from './mappingStore'
 import { createPlaylistCacheStore, type PlaylistCacheStore } from './playlistCacheStore'
 import { createLocalPlaylistStore, type LocalPlaylistStore } from './localPlaylistStore'
+import { runMigrations } from './migrations'
 import type { SqliteDb } from './sqlite'
 
 /** 应用 SQLite 数据库：统一打开连接，初始化全部业务表 */
@@ -62,6 +63,8 @@ export function getDatabase(): AppDatabase {
     const dbPath = join(app.getPath('userData'), 'app.db')
     const db = new Database(dbPath) as SqliteDb
     db.pragma?.('journal_mode = WAL')
+    // 版本化 schema 迁移先行（存量库结构演进，幂等）
+    runMigrations(db)
     instance = {
       syncHistory: createSyncHistoryStore(db),
       settings: createSettingsStore(db),

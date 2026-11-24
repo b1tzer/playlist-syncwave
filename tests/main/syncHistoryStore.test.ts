@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import Database from 'better-sqlite3'
 import { createSyncHistoryStore } from '../../src/main/syncHistoryStore'
+import { runMigrations } from '../../src/main/migrations'
 import type { SyncItemResult, SyncTaskRecord } from '@core/models/sync'
 
 function makeItem(overrides: Partial<SyncItemResult> = {}): SyncItemResult {
@@ -131,7 +132,7 @@ describe('syncHistoryStore — SQLite 持久化', () => {
     expect(store.listTasks()[0].detail).toEqual(detail)
   })
 
-  it('旧库（无 detail 列）升级：ALTER TABLE 补齐后可正常读写（T9）', () => {
+  it('旧库（无 detail 列）升级：迁移框架补齐后可正常读写（T9）', () => {
     // 模拟 T9 之前的旧表结构
     db.exec(`
       DROP TABLE sync_tasks;
@@ -151,6 +152,8 @@ describe('syncHistoryStore — SQLite 持久化', () => {
       INSERT INTO sync_tasks VALUES
         ('old-1', '旧任务', 'netease', '文本导入', 'done', 5, 5, 0, '2026-11-01T00:00:00.000Z', 1, '[]');
     `)
+    // 升级路径：版本化迁移在 store 创建前执行（与 appDatabase 启动顺序一致）
+    runMigrations(db)
     const upgraded = createSyncHistoryStore(db)
     const tasks = upgraded.listTasks()
     expect(tasks).toHaveLength(1)
