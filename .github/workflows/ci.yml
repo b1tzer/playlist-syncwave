@@ -1,15 +1,14 @@
-# 校验流水线:push / PR 触发
+# 校验流水线:每次 push(任意分支)/ PR 触发
 # check 通过后,main 分支推送自动同步代码到 Gitee
 name: ci
 
 on:
   push:
-    branches: [main]
   pull_request:
 
 jobs:
   check:
-    name: check · lint / typecheck / test
+    name: check · lint / typecheck / test / build / package
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -19,6 +18,16 @@ jobs:
           node-version: 22
           cache: npm
 
+      # 缓存 Electron 二进制与 electron-builder 下载物,加速打包预检查
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/electron
+            ~/.cache/electron-builder
+          key: electron-cache-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            electron-cache-${{ runner.os }}-
+
       - run: npm ci
 
       - run: npm run lint
@@ -26,6 +35,13 @@ jobs:
       - run: npm run typecheck
 
       - run: npm test
+
+      - run: npm run build
+
+      # 打包预检查:只产 unpacked 目录(跳过归档/签名/发布),
+      # 覆盖 electron-builder.yml 合法性、better-sqlite3 rebuild、文件收集与图标资源
+      - name: package precheck
+        run: npx electron-builder --linux dir --publish never
 
   sync-gitee:
     name: sync to gitee
