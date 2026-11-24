@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 
 /** 菜单条目：item 或分隔线（divider 仅作视觉分组，不参与键盘导航） */
 export type ContextMenuEntry =
@@ -119,7 +120,8 @@ export default function ContextMenu({ open, x, y, ariaLabel, entries, onClose }:
   }
 
   let itemIndex = -1
-  return (
+  // Portal 挂载到 body：避开任何 transform/overflow 祖先，fixed 定位始终相对视口
+  return createPortal(
     <div
       ref={ref}
       role="menu"
@@ -163,6 +165,7 @@ export default function ContextMenu({ open, x, y, ariaLabel, entries, onClose }:
           </button>
         )
       })}
-    </div>
+    </div>,
+    document.body,
   )
 }

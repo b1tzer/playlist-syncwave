@@ -67,15 +67,17 @@ function PlaylistCover({ playlist }: { playlist: PlatformPlaylist }) {
   )
 }
 
-/** 超长文本：默认省略号截断，悬浮时自动来回滚动展示全文 */
+/** 超长文本：默认省略号截断，悬浮时自动来回滚动展示全文。
+ *  单层结构：文字直接作为 flex item 的文本节点，省略号生效且无
+ *  inline-block 基线空隙（旧双层结构导致行内垂直偏移与 hover 微跳）。 */
 function MarqueeText({ text, className }: { text: string; className?: string }) {
-  const innerRef = useRef<HTMLSpanElement>(null)
+  const ref = useRef<HTMLSpanElement>(null)
   const [shift, setShift] = useState(0)
   const [duration, setDuration] = useState(6)
   const [hovered, setHovered] = useState(false)
 
   useEffect(() => {
-    const el = innerRef.current
+    const el = ref.current
     if (!el) return
     const measure = () => {
       const distance = Math.max(0, el.scrollWidth - el.clientWidth)
@@ -93,26 +95,22 @@ function MarqueeText({ text, className }: { text: string; className?: string }) 
 
   return (
     <span
+      ref={ref}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
-      className={className}
+      className={`${className ?? ''} whitespace-nowrap ${
+        scrolling ? 'marquee-x' : 'overflow-hidden text-ellipsis'
+      }`}
+      style={
+        scrolling
+          ? {
+              ['--marquee-shift' as string]: `-${shift}px`,
+              animationDuration: `${duration}s`,
+            }
+          : undefined
+      }
     >
-      <span
-        ref={innerRef}
-        className={`inline-block max-w-full whitespace-nowrap will-change-transform ${
-          scrolling ? 'marquee-x overflow-visible' : 'overflow-hidden text-ellipsis'
-        }`}
-        style={
-          scrolling
-            ? {
-                ['--marquee-shift' as string]: `-${shift}px`,
-                animationDuration: `${duration}s`,
-              }
-            : undefined
-        }
-      >
-        {text}
-      </span>
+      {text}
     </span>
   )
 }
@@ -861,7 +859,7 @@ export default function PlaylistSection({
                       <PlaylistCover playlist={p} />
                       <MarqueeText
                         text={p.name}
-                        className="min-w-0 flex-1 truncate font-body-md text-body-md"
+                        className="min-w-0 flex-1 font-body-md text-body-md"
                       />
                       <span className="font-label-mono text-label-mono text-outline">
                         {p.songCount}
@@ -942,7 +940,7 @@ export default function PlaylistSection({
                     <>
                       <MarqueeText
                         text={activePlaylist?.name ?? ''}
-                        className="min-w-0 truncate font-label-sm text-label-sm text-on-surface-variant"
+                        className="min-w-0 font-label-sm text-label-sm text-on-surface-variant"
                       />
                       {canManage && (
                         <button

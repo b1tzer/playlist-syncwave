@@ -375,6 +375,12 @@ tests/
 - PlaylistSection：`handleRowContextMenu` 同步构建条目（未选中右键 → 单选语义正确、多选保留、空条目不弹），移除旧 menu 渲染块与关闭监听、MENU_ITEM 常量。i18n 新增 `playlist.menuLabel` 中英。
 - **验证**：typecheck、lint、278 项测试、build 通过；dev 启动无报错。待手工验收（空菜单不弹、窗口边缘翻转、键盘上下键、滚动关闭、浅色阴影）。
 
+### 修复记录 — 右键菜单定位偏离与列表文字对齐 ✅
+- **问题 1 右键菜单远离鼠标**：根因是 `.view-enter`（fill both）动画结束后残留 `translateX(0)`，非 none 的 transform 使视图容器成为 fixed 后代的 containing block——菜单 `fixed` 坐标从视口变成了相对容器，页面滚动后菜单位置与鼠标严重错位。修复：① 所有 fill both 动画（view-enter/dialog-panel-enter/list-item-enter/detail-enter）to 帧移除 transform 残留；② ContextMenu 经 `createPortal(document.body)` 挂载，双保险隔离 transform/overflow 祖先。同类隐患（LoginSection 二维码弹窗 fixed inset-0 在视图容器内）随动画修复一并解除。
+- **问题 2 列表文字垂直偏移 + hover 微跳**：MarqueeText 旧结构为两层 span（外层 truncate + 内层 inline-block），inline-block 参与基线对齐产生 line-box descender 空隙（视觉不居中），且外层 `truncate` 的省略号对 inline-block 子元素无效；hover 切换 `overflow`/`will-change-transform` 合成层时文字微跳。修复：重构为单层 span（文字直接作 flex item 文本节点——省略号生效、无基线空隙、无 hover 位移），调用点移除冗余 `truncate` 类。
+- **排查范围**：全仓仅有 MarqueeText 一处 inline-block+nowrap 模式；fixed 元素共 4 处（toast/LoginSection 弹窗/ConfirmSyncDialog/ContextMenu），除 ContextMenu 已 Portal 外其余均在无 transform 祖先下（LoginSection 弹窗随 view-enter 修复恢复正常）。构建产物确认 to 帧无 translate 残留。
+- **验证**：typecheck、lint、278 项测试、build 通过；dev 启动无报错。待手工验收（滚动列表后右键菜单贴鼠标、歌单行文字垂直居中、hover 无位移）。
+
 ### 修复记录 — 歌单选择交互改为拖拽框选 ✅
 - **需求**：去掉歌单行复选框；单击按住拖拽框选多个（锚点行到当前行范围）；Cmd/Ctrl + 单击切换单行选择。
 - **实现**：行 mousedown 记录锚点，全局 mousemove 超 5px 阈值进入框选（先选中锚点行），行 mouseenter 按「锚点→当前行」重算范围；拖拽结束抑制同源 click 防止误打开歌单；行 onClick 区分 Cmd/Ctrl 切换与普通打开；列表 `select-none` 防拖拽时选中文字；右键、清除选择、选中计数等原有行为不变。
