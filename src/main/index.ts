@@ -32,6 +32,15 @@ import {
   findMappings,
 } from './mappingService'
 import { startKeepAliveScheduler, stopKeepAliveScheduler } from './keepAliveService'
+import {
+  listLocalPlaylists,
+  createLocalPlaylist,
+  renameLocalPlaylist,
+  deleteLocalPlaylist,
+  getLocalPlaylistSongs,
+  addLocalPlaylistSongs,
+  removeLocalPlaylistSongs,
+} from './localPlaylistService'
 import { loadWindowState, trackWindowState } from './windowState'
 import { buildApplicationMenu } from './menu'
 import { setupAutoUpdater, checkForUpdates, quitAndInstall } from './updater'
@@ -742,6 +751,74 @@ ipcMain.handle('sync-history:clear', () =>
   ipcLog.time('sync-history.clear', async () => {
     clearSyncTasks()
   }),
+)
+
+// --- 本地歌单库 ---
+
+ipcMain.handle('local-playlist:list', () =>
+  ipcLog.time(
+    'local-playlist.list',
+    async () => listLocalPlaylists(),
+    undefined,
+    'debug',
+  ),
+)
+
+ipcMain.handle('local-playlist:create', (_event, name: unknown, songs: unknown) =>
+  ipcLog.time(
+    'local-playlist.create',
+    async () => createLocalPlaylist(name, songs),
+    { songCount: Array.isArray(songs) ? songs.length : 0 },
+  ),
+)
+
+ipcMain.handle('local-playlist:rename', (_event, id: unknown, name: unknown) =>
+  ipcLog.time(
+    'local-playlist.rename',
+    async () => {
+      renameLocalPlaylist(id, name)
+    },
+    { id: String(id) },
+  ),
+)
+
+ipcMain.handle('local-playlist:delete', (_event, id: unknown) =>
+  ipcLog.time(
+    'local-playlist.delete',
+    async () => {
+      deleteLocalPlaylist(id)
+    },
+    { id: String(id) },
+  ),
+)
+
+ipcMain.handle('local-playlist:songs', (_event, id: unknown) =>
+  ipcLog.time(
+    'local-playlist.songs',
+    async () => getLocalPlaylistSongs(id),
+    { id: String(id) },
+    'debug',
+  ),
+)
+
+ipcMain.handle('local-playlist:add-songs', (_event, id: unknown, songs: unknown) =>
+  ipcLog.time(
+    'local-playlist.add-songs',
+    async () => {
+      addLocalPlaylistSongs(id, songs)
+    },
+    { id: String(id), count: Array.isArray(songs) ? songs.length : 0 },
+  ),
+)
+
+ipcMain.handle('local-playlist:remove-songs', (_event, id: unknown, positions: unknown) =>
+  ipcLog.time(
+    'local-playlist.remove-songs',
+    async () => {
+      removeLocalPlaylistSongs(id, positions)
+    },
+    { id: String(id), count: Array.isArray(positions) ? positions.length : 0 },
+  ),
 )
 
 // --- 应用设置（SQLite 持久化）---

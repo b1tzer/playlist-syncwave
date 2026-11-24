@@ -13,4 +13,15 @@ export interface SqliteDb {
   exec(sql: string): unknown
   pragma?(sql: string): unknown
   close?(): unknown
+  /** 事务包装（可选：注入的 fake 数据库可不实现） */
+  transaction?(fn: () => void): () => void
+}
+
+/** 事务执行：数据库不支持事务（测试 fake）时退化为直接执行 */
+export function withTransaction(db: SqliteDb, fn: () => void): void {
+  if (db.transaction) {
+    db.transaction(fn)()
+  } else {
+    fn()
+  }
 }

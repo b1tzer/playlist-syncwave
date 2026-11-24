@@ -401,7 +401,7 @@ tests/
 - **B5 开机启动真实现 ✅**：新增 `app:get-auto-launch`/`app:set-auto-launch` IPC，打包环境对接 `app.setLoginItemSettings`（win 补 `setAppUserModelId`），开发环境仅持久化偏好；SettingsView 开关改读系统登录项真实状态。typecheck、lint、264 项测试通过。
 - **B6 自动更新 ✅**：接入 `electron-updater`（generic provider，`SYNCWAVE_UPDATE_URL` 环境变量配置发布源）；打包环境启动 10s 后静默检查、自动下载、退出时安装；`main/updater.ts` 状态广播（checking/available/not-available/downloading/downloaded/error）+ `update:check`/`update:quit-and-install` IPC；设置页「自动更新」行（检查按钮/进度/重启安装）+ 帮助菜单「检查更新」入口；开发模式明确拒绝并提示。typecheck、lint、264 项测试、build 通过。
 - **B7 系统通知 ✅**：`main/notifications.ts` 系统通知模块（仅窗口失焦时发送，点击聚焦窗口，中英双语随语言设置）；接入同步完成/部分完成/全部未匹配/停止、账号凭证失效、新版本下载就绪四类事件。typecheck、lint、264 项测试通过。
-- **B8 本地歌单库（待实施）**：本地暂存歌单（未匹配歌曲草稿、登录前编辑）。
+- **B8 本地歌单库 ✅**：SQLite 新表 `local_playlists`/`local_playlist_songs`（`localPlaylistStore` 事务化整单替换/追加/按位删除重排）+ `localPlaylistService` 校验 + 7 项 `local-playlist:*` IPC；「我的歌单」页新增「本地」标签（`LocalPlaylistPanel`：列表/详情/新建/重命名/两步删除/删歌/平台搜索添加/同步到目标平台走现有 syncPlaylist 流程）；快速创建页新增「保存到本地」按钮（去重后写入，无需登录）。`SqliteDb` 增加可选 `transaction` 接口 + `withTransaction`（fake db 退化直执行）。typecheck、lint、271 项测试（+7）、build 通过。
 - **B9 文件导入（待实施）**：m3u/csv/txt 文件选择导入（复用 parser）。
 - **B10 歌单导出（待实施）**：导出 m3u/csv。
 - **B11 匹配/同步设置项（待实施）**：阈值、重试次数、限速等参数可配置化。

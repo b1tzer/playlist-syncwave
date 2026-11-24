@@ -9,6 +9,7 @@ import type {
 } from '@core/models/platform'
 import type { MatchQuery } from '@core/models/match'
 import type { SyncItemResult, SyncReport, SyncSelection, SyncTaskRecord } from '@core/models/sync'
+import type { LocalPlaylist, LocalPlaylistSong } from '@core/models/localPlaylist'
 import type { LogEntry } from '@core/logging'
 
 export interface SyncProgress {
@@ -202,6 +203,25 @@ const api = {
     stats: (): Promise<Array<{ platform: string; count: number; confirmed: number }>> =>
       ipcRenderer.invoke('mappings:stats'),
     clear: (platform: string): Promise<void> => ipcRenderer.invoke('mappings:clear', platform),
+  },
+
+  localPlaylists: {
+    list: (): Promise<LocalPlaylist[]> => ipcRenderer.invoke('local-playlist:list'),
+    create: (
+      name: string,
+      songs: Array<{ title: string; artist: string; album?: string; durationMs?: number }>,
+    ): Promise<LocalPlaylist | null> => ipcRenderer.invoke('local-playlist:create', name, songs),
+    rename: (id: string, name: string): Promise<void> =>
+      ipcRenderer.invoke('local-playlist:rename', id, name),
+    delete: (id: string): Promise<void> => ipcRenderer.invoke('local-playlist:delete', id),
+    songs: (id: string): Promise<LocalPlaylistSong[]> =>
+      ipcRenderer.invoke('local-playlist:songs', id),
+    addSongs: (
+      id: string,
+      songs: Array<{ title: string; artist: string; album?: string; durationMs?: number }>,
+    ): Promise<void> => ipcRenderer.invoke('local-playlist:add-songs', id, songs),
+    removeSongs: (id: string, positions: number[]): Promise<void> =>
+      ipcRenderer.invoke('local-playlist:remove-songs', id, positions),
   },
 }
 

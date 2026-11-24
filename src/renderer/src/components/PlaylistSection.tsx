@@ -20,6 +20,7 @@ import { useSyncRunner } from '../sync/useSyncRunner'
 import { songDupKey } from '../sync/helpers'
 import SongList from './SongList'
 import PlatformLogo from './PlatformLogo'
+import LocalPlaylistPanel from './LocalPlaylistPanel'
 import ProgressBar from './ProgressBar'
 import LoadMoreSentinel from './LoadMoreSentinel'
 import { notify } from './toast'
@@ -127,9 +128,9 @@ export default function PlaylistSection({
   const { t } = useI18n()
   const [active, setActive] = useState<string>('')
 
-  // 平台列表动态变化时，校正当前选中的平台
+  // 平台列表动态变化时，校正当前选中的平台（'local' 为本地歌单标签，不参与校正）
   useEffect(() => {
-    if (!platforms.some((p) => p.id === active)) {
+    if (active !== 'local' && !platforms.some((p) => p.id === active)) {
       setActive(platforms[0]?.id ?? '')
     }
   }, [platforms, active])
@@ -170,7 +171,7 @@ export default function PlaylistSection({
   const [searchResults, setSearchResults] = useState<PlatformSong[] | null>(null)
   const [addingIds, setAddingIds] = useState<Set<string>>(new Set())
 
-  const loggedIn = active !== '' && accounts[active] !== null
+  const loggedIn = active !== '' && active !== 'local' && accounts[active] !== null
   const keyword = searchQuery.trim().toLowerCase()
 
   /** 当前平台是否声明写能力（歌单管理操作仅写平台可用） */
@@ -673,10 +674,32 @@ export default function PlaylistSection({
               {p.name}
             </button>
           ))}
+          <button
+            onClick={() => {
+              log.info('playlist.platform-switch', '切换到本地歌单', { platform: 'local' })
+              setActive('local')
+            }}
+            className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 font-label-md text-label-md transition-colors ${
+              active === 'local'
+                ? 'bg-surface-container-highest text-primary'
+                : 'text-on-surface-variant hover:text-on-surface'
+            }`}
+          >
+            <span className="material-symbols-outlined text-base">save</span>
+            {t('playlist.localTab')}
+          </button>
         </div>
       </div>
 
-      {!loggedIn ? (
+      {active === 'local' ? (
+        <LocalPlaylistPanel
+          platforms={platforms}
+          accounts={accounts}
+          onTaskUpdate={onTaskUpdate}
+          pendingConfirm={pendingConfirm}
+          onPendingConfirmChange={onPendingConfirmChange}
+        />
+      ) : !loggedIn ? (
         <div className="mt-6 flex flex-col items-center rounded-lg border border-dashed border-outline-variant bg-surface-container-low px-6 py-14 text-center">
           <span className="material-symbols-outlined text-5xl text-outline">queue_music</span>
           <p className="mt-3 font-body-md text-body-md text-on-surface-variant">

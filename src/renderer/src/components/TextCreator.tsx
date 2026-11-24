@@ -10,6 +10,7 @@ import { songDupKey, syncFailedText } from '../sync/helpers'
 import LineTag from './LineTag'
 import PlatformLogo from './PlatformLogo'
 import ProgressBar from './ProgressBar'
+import { notify } from './toast'
 
 const log = createRendererLogger('renderer.text-creator')
 
@@ -54,7 +55,7 @@ export default function TextCreator({
   pendingConfirm,
   onPendingConfirmChange,
 }: TextCreatorProps) {
-  const { t } = useI18n()
+  const { t, formatDate } = useI18n()
   const [lines, setLines] = useState<string[]>(loadLines)
   const [draft, setDraft] = useState(loadDraft)
   const [editingIdx, setEditingIdx] = useState<number | null>(null)
@@ -65,6 +66,7 @@ export default function TextCreator({
   const cancelEditRef = useRef(false)
   const [playlistName, setPlaylistName] = useState('')
   const [target, setTarget] = useState('')
+  const [savingLocal, setSavingLocal] = useState(false)
 
   const { run, running, progress, report, error: syncError, reset: resetResult } = useSyncRunner()
 
@@ -141,6 +143,35 @@ export default function TextCreator({
         return t('textCreator.ambiguousOrder')
       default:
         return t('textCreator.unrecognized')
+    }
+  }
+
+  /** 保存解析结果到本地歌单库（去重后写入，无需登录） */
+  const handleSaveLocal = async () => {
+    if (result.songs.length === 0 || savingLocal) return
+    setSavingLocal(true)
+    try {
+      const seen = new Set<string>()
+      const songs = result.songs
+        .filter((s) => {
+          const key = songDupKey(s)
+          if (seen.has(key)) return false
+          seen.add(key)
+          return true
+        })
+        .map((s) => ({ title: s.title, artist: s.artist ?? '' }))
+      const name = playlistName.trim() || `${t('textCreator.defaultLocalName')} ${formatDate(new Date())}`
+      const created = await window.electronAPI.localPlaylists.create(name, songs)
+      log.info('text-creator.save-local', '已保存到本地歌单', {
+        id: created?.id,
+        count: songs.length,
+      })
+      notify('success', t('textCreator.savedLocal'), t('textCreator.savedLocalDetail', { name }))
+    } catch (e) {
+      log.error('text-creator.save-local-failed', '保存到本地歌单失败', e)
+      notify('error', t('textCreator.saveLocalFailed'), e instanceof Error ? e.message : '')
+    } finally {
+      setSavingLocal(false)
     }
   }
 
@@ -412,6 +443,17 @@ export default function TextCreator({
               >
                 <span className="material-symbols-outlined text-base">delete_sweep</span>
                 {t('textCreator.clear')}
+              </button>
+              <button
+                onClick={() => void handleSaveLocal()}
+                disabled={savingLocal || result.songs.length === 0}
+                title={t('textCreator.saveLocal')}
+                className="flex shrink-0 items-center gap-1.5 rounded-lg border border-outline-variant px-3 py-1.5 font-label-md text-label-md text-on-surface-variant transition-colors hover:bg-surface-container-high hover:text-primary disabled:opacity-40"
+              >
+                <span className="material-symbols-outlined text-base">
+                  {savingLocal ? 'progress_activity' : 'save'}
+                </span>
+                {t('textCreator.saveLocal')}
               </button>
               {!loggedIn && (
                 <span className="flex min-w-0 items-center gap-1 truncate font-label-sm text-label-sm text-on-surface-variant">
