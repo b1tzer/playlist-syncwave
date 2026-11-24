@@ -34,3 +34,48 @@ export interface PlatformAdapter {
   /** 批量添加歌曲到歌单 */
   addSongsToPlaylist(cookie: string, playlistId: string, songIds: string[]): Promise<void>
 }
+
+function unsupported(platform: string, method: string): Error {
+  return new Error(`平台 ${platform} 不支持操作：${method}`)
+}
+
+/**
+ * 平台适配器基类：所有方法默认抛「不支持」错误。
+ * 新增平台只需继承本类并 override 实际支持的能力
+ * （配合 PlatformMeta.capabilities 声明，渲染层不会调用未声明的能力）。
+ */
+export abstract class BasePlatformAdapter implements PlatformAdapter {
+  abstract readonly platform: string
+
+  createQrLogin(_channel?: string): Promise<QrLoginTicket> {
+    return Promise.reject(unsupported(this.platform, 'createQrLogin'))
+  }
+
+  checkQrLogin(_key: string): Promise<QrLoginResult> {
+    return Promise.reject(unsupported(this.platform, 'checkQrLogin'))
+  }
+
+  getLoginStatus(_cookie: string): Promise<PlatformAccount | null> {
+    return Promise.reject(unsupported(this.platform, 'getLoginStatus'))
+  }
+
+  getUserPlaylists(_cookie: string, _userId: string): Promise<PlatformPlaylist[]> {
+    return Promise.reject(unsupported(this.platform, 'getUserPlaylists'))
+  }
+
+  getPlaylistSongs(_cookie: string, _playlistId: string): Promise<PlatformSong[]> {
+    return Promise.reject(unsupported(this.platform, 'getPlaylistSongs'))
+  }
+
+  searchSongs(_cookie: string, _keyword: string, _limit?: number): Promise<PlatformSong[]> {
+    return Promise.reject(unsupported(this.platform, 'searchSongs'))
+  }
+
+  createPlaylist(_cookie: string, _name: string): Promise<string> {
+    return Promise.reject(unsupported(this.platform, 'createPlaylist'))
+  }
+
+  addSongsToPlaylist(_cookie: string, _playlistId: string, _songIds: string[]): Promise<void> {
+    return Promise.reject(unsupported(this.platform, 'addSongsToPlaylist'))
+  }
+}

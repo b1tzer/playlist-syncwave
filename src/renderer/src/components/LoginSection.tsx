@@ -1,37 +1,18 @@
 import { useEffect, useRef, useState } from 'react'
-import type { PlatformAccount, QrLoginTicket } from '@core/models/platform'
+import type { PlatformAccount, PlatformMeta, QrLoginTicket } from '@core/models/platform'
+import { createRendererLogger } from '../logging/rendererLogger'
 
-export interface PlatformMeta {
-  id: string
-  name: string
-  apiLabel: string
-  icon: string
-}
-
-export const PLATFORMS: PlatformMeta[] = [
-  {
-    id: 'netease',
-    name: '网易云音乐',
-    apiLabel: 'Netease API Gateway: v3.12 (Direct)',
-    icon: 'graphic_eq',
-  },
-  { id: 'qqmusic', name: 'QQ音乐', apiLabel: 'QQ Music API: Node Mode (Direct)', icon: 'equalizer' },
-]
-
-const QQ_LOGIN_CHANNELS = [
-  { id: 'qqmusic', label: 'QQ音乐 App 扫码' },
-  { id: 'wechat', label: '微信扫码' },
-  { id: 'qq', label: '手机QQ 扫码' },
-]
+const log = createRendererLogger('renderer.login')
 
 interface LoginSectionProps {
+  platforms: PlatformMeta[]
   accounts: Record<string, PlatformAccount | null>
   onAccountChange: (platform: string, account: PlatformAccount | null) => void
 }
 
-export default function LoginSection({ accounts, onAccountChange }: LoginSectionProps) {
+export default function LoginSection({ platforms, accounts, onAccountChange }: LoginSectionProps) {
   const [qrFor, setQrFor] = useState<string | null>(null)
-  const [qrChannel, setQrChannel] = useState<string>('qqmusic')
+  const [qrChannel, setQrChannel] = useState<string>('')
   const [ticket, setTicket] = useState<QrLoginTicket | null>(null)
   const [qrStatus, setQrStatus] = useState<string>('')
   const [loading, setLoading] = useState(false)
@@ -48,6 +29,7 @@ export default function LoginSection({ accounts, onAccountChange }: LoginSection
   useEffect(() => stopPolling, [])
 
   const closeQr = () => {
+    if (qrFor) log.info('login.qr.close', '关闭二维码弹窗', { platform: qrFor })
     stopPolling()
     setQrFor(null)
     setTicket(null)
@@ -56,15 +38,22 @@ export default function LoginSection({ accounts, onAccountChange }: LoginSection
     setLoading(false)
   }
 
+  /** 当前二维码平台的登录渠道（无声明则为单一默认渠道） */
+  const qrMeta = platforms.find((p) => p.id === qrFor)
+  const qrChannels = qrMeta?.loginChannels ?? []
+
   const startLogin = async (platform: string, channel?: string) => {
+    const channels = platforms.find((p) => p.id === platform)?.loginChannels ?? []
+    const activeChannel = channels.length > 0 ? (channel ?? qrChannel ?? channels[0]?.id) : undefined
+    log.info('login.qr.start', '发起扫码登录', {
+      platform,
+      channel: activeChannel ?? 'default',
+    })
     setError('')
     setLoading(true)
     setQrFor(platform)
     try {
-      const t = await window.electronAPI.platforms.createQr(
-        platform,
-        platform === 'qqmusic' ? channel ?? qrChannel : undefined,
-      )
+      const t = await window.electronAPI.platforms.createQr(platform, activeChannel)
       setTicket(t)
       setQrStatus('等待扫码…')
       pollRef.current = setInterval(async () => {
@@ -74,21 +63,28 @@ export default function LoginSection({ accounts, onAccountChange }: LoginSection
             stopPolling()
             setQrStatus('登录成功！')
             const status = await window.electronAPI.platforms.loginStatus(platform)
+            log.info('login.qr.success', '扫码登录成功', { platform })
             setTicket(null)
             onAccountChange(platform, status)
             setTimeout(closeQr, 800)
           } else if (result.status === 'expired') {
             stopPolling()
+            log.warn('login.qr.expired', '二维码已过期', { platform })
             setQrStatus('二维码已过期')
             setError('二维码已过期，请重新获取')
           } else if (result.status === 'scanned') {
             setQrStatus('已扫码，请在手机上确认')
           }
-        } catch {
-          // 轮询失败保持现状
+        } catch (e) {
+          // 轮询失败保持现状，避免高频错误日志刷屏
+          log.debug('login.qr.poll-failed', '轮询失败，继续等待', {
+            platform,
+            message: e instanceof Error ? e.message : String(e),
+          })
         }
       }, 2000)
     } catch (e) {
+      log.error('login.qr.create-failed', '获取二维码失败', e, { platform })
       setError(e instanceof Error ? e.message : '登录失败')
       setQrFor(null)
     } finally {
@@ -98,6 +94,7 @@ export default function LoginSection({ accounts, onAccountChange }: LoginSection
 
   /** 在二维码弹窗内切换扫码方式 */
   const switchChannel = (channel: string) => {
+    log.info('login.qr.switch-channel', '切换扫码通道', { platform: qrFor, channel })
     setQrChannel(channel)
     stopPolling()
     setTicket(null)
@@ -106,11 +103,12 @@ export default function LoginSection({ accounts, onAccountChange }: LoginSection
   }
 
   const logout = async (platform: string) => {
+    log.info('login.logout', '退出登录', { platform })
     await window.electronAPI.platforms.logout(platform)
     onAccountChange(platform, null)
   }
 
-  const loggedInCount = PLATFORMS.filter((p) => accounts[p.id] !== null).length
+  const loggedInCount = platforms.filter((p) => accounts[p.id] !== null).length
 
   return (
     <div>
@@ -131,13 +129,13 @@ export default function LoginSection({ accounts, onAccountChange }: LoginSection
         <div className="flex items-center gap-3">
           <span className="flex items-center gap-1.5 rounded-full bg-surface-container-high px-3 py-1.5 font-label-sm text-label-sm text-on-surface-variant">
             <span className="material-symbols-outlined text-base text-primary">verified_user</span>
-            {loggedInCount}/{PLATFORMS.length} 平台在线 · Token 有效
+            {loggedInCount}/{platforms.length} 平台在线 · Token 有效
           </span>
         </div>
       </div>
 
       <div className="mt-6 grid max-w-3xl grid-cols-1 gap-3">
-        {PLATFORMS.map((p) => {
+        {platforms.map((p) => {
           const account = accounts[p.id] ?? null
           return (
             <div
@@ -223,7 +221,7 @@ export default function LoginSection({ accounts, onAccountChange }: LoginSection
           <div className="w-80 rounded-lg border border-outline-variant bg-surface-container p-5">
             <div className="flex items-center justify-between">
               <p className="font-body-md text-body-md font-medium">
-                扫码登录 {PLATFORMS.find((p) => p.id === qrFor)?.name}
+                扫码登录 {qrMeta?.name ?? qrFor}
               </p>
               <button
                 onClick={closeQr}
@@ -233,9 +231,9 @@ export default function LoginSection({ accounts, onAccountChange }: LoginSection
               </button>
             </div>
 
-            {qrFor === 'qqmusic' && (
+            {qrChannels.length > 0 && (
               <div className="mt-4 flex justify-center gap-2">
-                {QQ_LOGIN_CHANNELS.map((c) => (
+                {qrChannels.map((c) => (
                   <button
                     key={c.id}
                     onClick={() => switchChannel(c.id)}

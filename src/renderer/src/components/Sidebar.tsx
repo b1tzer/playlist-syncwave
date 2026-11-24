@@ -1,4 +1,7 @@
 import type { PlatformAccount } from '@core/models/platform'
+import { createRendererLogger } from '../logging/rendererLogger'
+
+const log = createRendererLogger('renderer.nav')
 
 export type View = 'create' | 'playlists' | 'sync' | 'accounts' | 'settings'
 
@@ -38,7 +41,10 @@ export default function Sidebar({ view, onNavigate, runningTasks, accounts }: Si
           return (
             <button
               key={item.id}
-              onClick={() => onNavigate(item.id)}
+              onClick={() => {
+                log.info('nav.click', '侧边栏切换视图', { view: item.id })
+                onNavigate(item.id)
+              }}
               className={`flex items-center gap-3 rounded-lg px-3 py-2 text-left transition-colors ${
                 active
                   ? 'bg-primary-container/15 text-primary'

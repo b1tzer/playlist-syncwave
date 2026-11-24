@@ -1,7 +1,10 @@
 import type { ParseOptions, ParseResult } from '@core/models/parse'
+import { createLogger } from '@core/logging'
 import { detectFormat } from './detect'
 import { parseLineText } from './lines'
 import { parseCsv, parseJson, parseLrc, parseM3u } from './structured'
+
+const log = createLogger({ module: 'parser' })
 
 /**
  * 文本快速创建全自动解析入口：
@@ -10,12 +13,23 @@ import { parseCsv, parseJson, parseLrc, parseM3u } from './structured'
  */
 export function parseText(text: string, options: ParseOptions = {}): ParseResult {
   const format = detectFormat(text)
+  log.debug('parse.detected', '输入格式探测结果', { format, lines: text.split(/\r?\n/).length })
 
-  if (format === 'json') return parseJson(text)
-  if (format === 'csv') return parseCsv(text)
-  if (format === 'm3u') return parseM3u(text)
-  if (format === 'lrc') return parseLrc(text)
-
+  let result: ParseResult
+  if (format === 'json') result = parseJson(text)
+  else if (format === 'csv') result = parseCsv(text)
+  else if (format === 'm3u') result = parseM3u(text)
+  else if (format === 'lrc') result = parseLrc(text)
   // share / lines：同一行式管线，分享模板行由行分类过滤
-  return parseLineText(text.split(/\r?\n/), format, options.order)
+  else result = parseLineText(text.split(/\r?\n/), format, options.order)
+
+  log.info('parse.complete', '解析完成', {
+    format: result.format,
+    songs: result.songs.length,
+    failedLines: result.failedLines.length,
+    ignoredLines: result.ignoredLines.length,
+    detectedOrder: result.detectedOrder,
+  })
+
+  return result
 }

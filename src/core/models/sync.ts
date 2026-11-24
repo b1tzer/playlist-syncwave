@@ -1,6 +1,13 @@
 import type { MatchQuery } from './match'
 import type { PlatformSong } from './platform'
 
+/** 缓存命中的映射结果 */
+export interface MappingHit {
+  songId: string
+  /** 人工确认的映射（优先采用，无需再搜索验证） */
+  confirmed: boolean
+}
+
 /** 同步引擎依赖的目标平台能力（core 内定义，主进程用 adapter 包装注入） */
 export interface SyncTarget {
   /** 搜索候选歌曲 */
@@ -9,6 +16,10 @@ export interface SyncTarget {
   createPlaylist(name: string): Promise<string>
   /** 批量添加歌曲 */
   addSongs(playlistId: string, songIds: string[]): Promise<void>
+  /** 查询映射缓存（可选）：命中人工确认映射时跳过搜索 */
+  lookupMapping?(query: MatchQuery): MappingHit | null
+  /** 记录自动匹配结果到缓存（可选） */
+  saveMapping?(query: MatchQuery, songId: string): void
 }
 
 export interface SyncFailedItem {
@@ -79,3 +90,23 @@ export class SearchError extends Error {
 
 /** 同步输入：解析器输出的歌单请求（歌名+歌手） */
 export type SyncInput = MatchQuery[]
+
+/** 同步任务状态（同步中心展示 + SQLite 持久化共用） */
+export type SyncTaskStatus = 'running' | 'done' | 'failed'
+
+export interface SyncTaskRecord {
+  id: string
+  name: string
+  /** 目标平台 id */
+  targetPlatform: string
+  /** 来源描述，如「文本导入」 */
+  source: string
+  status: SyncTaskStatus
+  total: number
+  added: number
+  failed: number
+  createdAt: string
+  /** 0-1，运行中更新 */
+  progress: number
+  failedDetail: string[]
+}

@@ -1,9 +1,12 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { parseText } from '@core/parser/parseText'
 import type { ParseResult } from '@core/models/parse'
 import type { SyncChoice, SyncReport } from '@core/models/sync'
-import type { PlatformAccount } from '@core/models/platform'
-import type { SyncTaskRecord } from './SyncCenter'
+import type { PlatformAccount, PlatformMeta } from '@core/models/platform'
+import { createRendererLogger } from '../logging/rendererLogger'
+import type { SyncTaskRecord } from '@core/models/sync'
+
+const log = createRendererLogger('renderer.text-creator')
 
 const EXAMPLE = `晴天 - 周杰伦
 稻香——周杰伦
@@ -12,12 +15,8 @@ const EXAMPLE = `晴天 - 周杰伦
 1. 海阔天空 / Beyond
 推荐你听《乌梅子酱》李荣浩`
 
-export const TARGET_PLATFORMS: Array<{ id: string; name: string }> = [
-  { id: 'netease', name: '网易云音乐' },
-  { id: 'qqmusic', name: 'QQ音乐' },
-]
-
 interface TextCreatorProps {
+  platforms: PlatformMeta[]
   accounts: Record<string, PlatformAccount | null>
   onTaskUpdate: (task: SyncTaskRecord) => void
 }
@@ -31,11 +30,11 @@ const FORMATS = [
   { icon: 'filter_alt_off', title: '内置容错', example: '自动过滤表情包、多余标点、时间戳' },
 ]
 
-export default function TextCreator({ accounts, onTaskUpdate }: TextCreatorProps) {
+export default function TextCreator({ platforms, accounts, onTaskUpdate }: TextCreatorProps) {
   const [text, setText] = useState('')
   const [result, setResult] = useState<ParseResult | null>(null)
   const [playlistName, setPlaylistName] = useState('')
-  const [target, setTarget] = useState('netease')
+  const [target, setTarget] = useState('')
   const [syncing, setSyncing] = useState(false)
   const [progress, setProgress] = useState<{ ratio: number; stage: string } | null>(null)
   const [report, setReport] = useState<SyncReport | null>(null)
@@ -45,15 +44,30 @@ export default function TextCreator({ accounts, onTaskUpdate }: TextCreatorProps
   const [pendingChoices, setPendingChoices] = useState<SyncChoice[] | null>(null)
   const [selections, setSelections] = useState<Record<number, string>>({})
 
-  const loggedIn = accounts[target] !== null
+  /** 可作为同步目标的平台（声明 write 能力） */
+  const targetPlatforms = useMemo(
+    () => platforms.filter((p) => p.capabilities.write),
+    [platforms],
+  )
+
+  // 目标平台列表动态变化时，校正当前选择
+  useEffect(() => {
+    if (!targetPlatforms.some((p) => p.id === target)) {
+      setTarget(targetPlatforms[0]?.id ?? '')
+    }
+  }, [targetPlatforms, target])
+
+  const loggedIn = target !== '' && accounts[target] !== null
 
   const handleParse = () => {
+    log.info('parse.click', '点击解析歌曲', { chars: text.length })
     setResult(parseText(text))
     setReport(null)
     setSyncError('')
   }
 
   const applyCandidate = (index: number, title: string, artist?: string) => {
+    log.debug('parse.apply-candidate', '点选候选修正字段顺序', { index, title, artist })
     setResult((prev) => {
       if (!prev) return prev
       return {
@@ -69,6 +83,11 @@ export default function TextCreator({ accounts, onTaskUpdate }: TextCreatorProps
 
   const handleSync = async () => {
     if (!result || result.songs.length === 0) return
+    log.info('sync.start', '开始同步', {
+      targetPlatform: target,
+      playlistName: playlistName.trim() || '(自动命名)',
+      total: result.songs.length,
+    })
     setSyncing(true)
     setSyncError('')
     setReport(null)
@@ -120,6 +139,10 @@ export default function TextCreator({ accounts, onTaskUpdate }: TextCreatorProps
         await window.electronAPI.platforms.syncPlaylist(target, queries, name)
 
       if (rep.status === 'choice-needed') {
+        log.info('sync.choice-needed', '同步需要手动选择', {
+          targetPlatform: target,
+          choices: rep.choices.length,
+        })
         setPendingTaskId(syncTaskId)
         setPendingChoices(rep.choices)
         setSelections({})
@@ -141,6 +164,12 @@ export default function TextCreator({ accounts, onTaskUpdate }: TextCreatorProps
 
       setReport(rep)
       const ok = rep.playlistId !== ''
+      log.info('sync.done', '同步结束', {
+        targetPlatform: target,
+        playlistId: rep.playlistId,
+        added: rep.added,
+        failed: rep.failed.length,
+      })
       onTaskUpdate({
         id: taskId,
         name,
@@ -156,6 +185,7 @@ export default function TextCreator({ accounts, onTaskUpdate }: TextCreatorProps
       })
     } catch (e) {
       const msg = e instanceof Error ? e.message : '同步失败'
+      log.error('sync.failed', '同步失败', e, { targetPlatform: target })
       setSyncError(msg)
       onTaskUpdate({
         id: taskId,
@@ -184,6 +214,10 @@ export default function TextCreator({ accounts, onTaskUpdate }: TextCreatorProps
       .filter((s) => typeof s.songId === 'string')
     if (sel.length < pendingChoices.length) return
 
+    log.info('sync.confirm', '确认手动选择并继续同步', {
+      targetPlatform: target,
+      selections: sel.length,
+    })
     setSyncing(true)
     setSyncError('')
     setReport(null)
@@ -195,6 +229,12 @@ export default function TextCreator({ accounts, onTaskUpdate }: TextCreatorProps
 
     try {
       const rep = await window.electronAPI.platforms.confirmSync(target, pendingTaskId, sel)
+      log.info('sync.confirm-done', '确认同步完成', {
+        targetPlatform: target,
+        playlistId: rep.playlistId,
+        added: rep.added,
+        failed: rep.failed.length,
+      })
       setReport(rep)
       setPendingTaskId(null)
       setPendingChoices(null)
@@ -214,6 +254,7 @@ export default function TextCreator({ accounts, onTaskUpdate }: TextCreatorProps
         failedDetail: rep.failed.map((f) => `${f.query.title}（${f.message}）`),
       })
     } catch (e) {
+      log.error('sync.confirm-failed', '确认同步失败', e, { targetPlatform: target })
       setSyncError(e instanceof Error ? e.message : '同步失败')
     } finally {
       off()
@@ -240,6 +281,7 @@ export default function TextCreator({ accounts, onTaskUpdate }: TextCreatorProps
         <div className="flex gap-2">
           <button
             onClick={() => {
+              log.info('parse.load-example', '载入示例数据')
               setText(EXAMPLE)
               setResult(null)
             }}
@@ -250,7 +292,12 @@ export default function TextCreator({ accounts, onTaskUpdate }: TextCreatorProps
             <span className="font-label-mono text-label-mono text-outline">⌥E</span>
           </button>
           <button
-            onClick={() => setShowFormats((v) => !v)}
+            onClick={() =>
+              setShowFormats((v) => {
+                log.info('parse.toggle-formats', '切换格式说明', { show: !v })
+                return !v
+              })
+            }
             className="flex items-center gap-1.5 rounded-lg border border-outline-variant px-3 py-2 font-label-md text-label-md text-on-surface-variant transition-colors hover:bg-surface-container-high hover:text-on-surface"
           >
             <span className="material-symbols-outlined text-base">help_outline</span>
@@ -299,6 +346,7 @@ export default function TextCreator({ accounts, onTaskUpdate }: TextCreatorProps
             </button>
             <button
               onClick={() => {
+                log.info('parse.clear', '清空输入')
                 setText('')
                 setResult(null)
                 setReport(null)
@@ -326,7 +374,7 @@ export default function TextCreator({ accounts, onTaskUpdate }: TextCreatorProps
                 onChange={(e) => setTarget(e.target.value)}
                 className="w-full rounded-lg border border-outline-variant bg-surface px-3 py-2 font-body-md text-body-md text-on-surface outline-none focus:border-primary"
               >
-                {TARGET_PLATFORMS.map((p) => (
+                {targetPlatforms.map((p) => (
                   <option key={p.id} value={p.id}>
                     同步到 {p.name}
                   </option>
@@ -401,7 +449,7 @@ export default function TextCreator({ accounts, onTaskUpdate }: TextCreatorProps
               <span className="material-symbols-outlined text-3xl text-outline">switch_account</span>
               <p className="mt-2 font-label-sm text-label-sm text-on-surface-variant">
                 请先在「账号管理」登录{' '}
-                {TARGET_PLATFORMS.find((p) => p.id === target)?.name ?? ''}
+                {targetPlatforms.find((p) => p.id === target)?.name ?? ''}
               </p>
             </div>
           )}

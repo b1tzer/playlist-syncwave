@@ -1,14 +1,19 @@
 import { useEffect, useRef, useState } from 'react'
-import type { PlatformAccount } from '@core/models/platform'
+import type { PlatformAccount, PlatformMeta } from '@core/models/platform'
 import Sidebar, { type View } from './components/Sidebar'
 import TextCreator from './components/TextCreator'
 import PlaylistSection from './components/PlaylistSection'
 import LoginSection from './components/LoginSection'
-import SyncCenter, { type SyncTaskRecord } from './components/SyncCenter'
+import SyncCenter from './components/SyncCenter'
+import type { SyncTaskRecord } from '@core/models/sync'
 import SettingsView from './components/SettingsView'
+import { createRendererLogger } from './logging/rendererLogger'
+
+const log = createRendererLogger('renderer.app')
 
 export default function App() {
   const [view, setView] = useState<View>('create')
+  const [platforms, setPlatforms] = useState<PlatformMeta[]>([])
   const [accounts, setAccounts] = useState<Record<string, PlatformAccount | null>>({})
   const [tasks, setTasks] = useState<SyncTaskRecord[]>([])
   const [search, setSearch] = useState('')
@@ -17,13 +22,29 @@ export default function App() {
   useEffect(() => {
     window.electronAPI.platforms
       .list()
-      .then(async (platforms) => {
+      .then(async (list) => {
+        log.debug('app.init', '初始化平台账号状态', { platforms: list.map((p) => p.id) })
+        setPlatforms(list)
         const entries = await Promise.all(
-          platforms.map(async (p) => [p, await window.electronAPI.platforms.loginStatus(p)] as const),
+          list.map(async (p) => [p.id, await window.electronAPI.platforms.loginStatus(p.id)] as const),
         )
         setAccounts(Object.fromEntries(entries))
       })
-      .catch(() => setAccounts({}))
+      .catch((e) => {
+        log.error('app.init-failed', '初始化平台账号状态失败', e)
+        setAccounts({})
+      })
+
+    // 恢复同步历史
+    window.electronAPI.syncHistory
+      .list()
+      .then((history) => {
+        log.info('app.sync-history-restored', '恢复同步历史', { count: history.length })
+        setTasks(history)
+      })
+      .catch((e) => {
+        log.error('app.sync-history-restore-failed', '恢复同步历史失败', e)
+      })
   }, [])
 
   const handleAccountChange = (platform: string, account: PlatformAccount | null) => {
@@ -38,6 +59,10 @@ export default function App() {
       next[idx] = t
       return next
     })
+    // 落库持久化（失败不影响界面）
+    window.electronAPI.syncHistory.upsert(t).catch((e) => {
+      log.warn('sync.history-persist-failed', '同步历史落库失败', e)
+    })
   }
 
   const handleSearch = (value: string) => {
@@ -49,23 +74,28 @@ export default function App() {
     const onKey = (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey)) return
       const k = e.key.toLowerCase()
+      const navigate = (target: View) => {
+        log.info('nav.shortcut', '快捷键切换视图', { key: k, view: target })
+        setView(target)
+      }
       if (k === 'n') {
         e.preventDefault()
-        setView('create')
+        navigate('create')
       } else if (k === 'p') {
         e.preventDefault()
-        setView('playlists')
+        navigate('playlists')
       } else if (k === 's') {
         e.preventDefault()
-        setView('sync')
+        navigate('sync')
       } else if (k === 'a') {
         e.preventDefault()
-        setView('accounts')
+        navigate('accounts')
       } else if (k === ',') {
         e.preventDefault()
-        setView('settings')
+        navigate('settings')
       } else if (k === 'k') {
         e.preventDefault()
+        log.debug('nav.focus-search', '快捷键聚焦搜索框')
         searchRef.current?.focus()
       }
     }
@@ -97,7 +127,10 @@ export default function App() {
             />
             {search && (
               <button
-                onClick={() => handleSearch('')}
+                onClick={() => {
+                  log.info('search.clear', '清空搜索')
+                  handleSearch('')
+                }}
                 className="text-outline transition-colors hover:text-on-surface"
               >
                 <span className="material-symbols-outlined text-base">close</span>
@@ -114,14 +147,20 @@ export default function App() {
         <main className="flex-1 overflow-y-auto">
           <div className="mx-auto max-w-5xl px-6 py-6">
             {view === 'create' && (
-              <TextCreator accounts={accounts} onTaskUpdate={handleTaskUpdate} />
+              <TextCreator platforms={platforms} accounts={accounts} onTaskUpdate={handleTaskUpdate} />
             )}
             {view === 'playlists' && (
-              <PlaylistSection accounts={accounts} searchQuery={search} />
+              <PlaylistSection platforms={platforms} accounts={accounts} searchQuery={search} />
             )}
-            {view === 'sync' && <SyncCenter tasks={tasks} onNewTask={() => setView('create')} />}
+            {view === 'sync' && (
+              <SyncCenter platforms={platforms} tasks={tasks} onNewTask={() => setView('create')} />
+            )}
             {view === 'accounts' && (
-              <LoginSection accounts={accounts} onAccountChange={handleAccountChange} />
+              <LoginSection
+                platforms={platforms}
+                accounts={accounts}
+                onAccountChange={handleAccountChange}
+              />
             )}
             {view === 'settings' && <SettingsView />}
           </div>

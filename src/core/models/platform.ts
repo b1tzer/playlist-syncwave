@@ -34,3 +34,32 @@ export interface QrLoginResult {
   /** status 为 success 时的登录 cookie */
   cookie?: string
 }
+
+// --- 平台插件元数据：由各平台模块自带，主进程/渲染层动态消费，不硬编码 ---
+
+/** 平台能力声明：决定平台可作为同步来源（read）还是目标（write） */
+export interface PlatformCapabilities {
+  read: boolean
+  write: boolean
+}
+
+/** 扫码登录渠道（如 QQ音乐的 qqmusic/wechat/qq）；无渠道的平台省略 */
+export interface LoginChannel {
+  id: string
+  label: string
+}
+
+/** 平台元数据：注册时随模块注册，渲染层据此动态渲染 */
+export interface PlatformMeta {
+  /** 平台唯一 id，与 PlatformAdapter.platform 一致 */
+  id: string
+  /** 展示名称 */
+  name: string
+  /** 登录接口说明文案 */
+  apiLabel: string
+  /** material-symbols 图标名 */
+  icon: string
+  capabilities: PlatformCapabilities
+  /** 扫码登录渠道列表；undefined 表示单一默认渠道 */
+  loginChannels?: LoginChannel[]
+}

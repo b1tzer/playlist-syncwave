@@ -1,18 +1,29 @@
 import { useCallback, useEffect, useState } from 'react'
-import type { PlatformAccount, PlatformPlaylist, PlatformSong } from '@core/models/platform'
+import type {
+  PlatformAccount,
+  PlatformMeta,
+  PlatformPlaylist,
+  PlatformSong,
+} from '@core/models/platform'
+import { createRendererLogger } from '../logging/rendererLogger'
+
+const log = createRendererLogger('renderer.playlist')
 
 interface PlaylistSectionProps {
+  platforms: PlatformMeta[]
   accounts: Record<string, PlatformAccount | null>
   searchQuery: string
 }
 
-const PLATFORM_NAMES: Record<string, string> = {
-  netease: '网易云',
-  qqmusic: 'QQ音乐',
-}
+export default function PlaylistSection({ platforms, accounts, searchQuery }: PlaylistSectionProps) {
+  const [active, setActive] = useState<string>('')
 
-export default function PlaylistSection({ accounts, searchQuery }: PlaylistSectionProps) {
-  const [active, setActive] = useState<string>('netease')
+  // 平台列表动态变化时，校正当前选中的平台
+  useEffect(() => {
+    if (!platforms.some((p) => p.id === active)) {
+      setActive(platforms[0]?.id ?? '')
+    }
+  }, [platforms, active])
   const [playlists, setPlaylists] = useState<PlatformPlaylist[]>([])
   const [songs, setSongs] = useState<PlatformSong[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
@@ -20,7 +31,7 @@ export default function PlaylistSection({ accounts, searchQuery }: PlaylistSecti
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string>('')
 
-  const loggedIn = accounts[active] !== null
+  const loggedIn = active !== '' && accounts[active] !== null
   const keyword = searchQuery.trim().toLowerCase()
 
   const visiblePlaylists = keyword
@@ -32,8 +43,11 @@ export default function PlaylistSection({ accounts, searchQuery }: PlaylistSecti
     setLoading(true)
     setError('')
     try {
-      setPlaylists(await window.electronAPI.platforms.userPlaylists(active))
+      const list = await window.electronAPI.platforms.userPlaylists(active)
+      log.info('playlist.list.fetch', '拉取歌单列表', { platform: active, count: list.length })
+      setPlaylists(list)
     } catch (e) {
+      log.error('playlist.list.fetch-failed', '拉取歌单列表失败', e, { platform: active })
       setError(e instanceof Error ? e.message : '拉取歌单失败')
     } finally {
       setLoading(false)
@@ -48,6 +62,7 @@ export default function PlaylistSection({ accounts, searchQuery }: PlaylistSecti
   }, [fetchPlaylists])
 
   const handleRefresh = async () => {
+    log.info('playlist.list.refresh', '手动刷新歌单列表', { platform: active })
     setRefreshing(true)
     await fetchPlaylists()
     setRefreshing(false)
@@ -58,8 +73,15 @@ export default function PlaylistSection({ accounts, searchQuery }: PlaylistSecti
     setLoading(true)
     setError('')
     try {
-      setSongs(await window.electronAPI.platforms.playlistSongs(active, id))
+      const list = await window.electronAPI.platforms.playlistSongs(active, id)
+      log.info('playlist.songs.fetch', '拉取歌单歌曲', {
+        platform: active,
+        playlistId: id,
+        count: list.length,
+      })
+      setSongs(list)
     } catch (e) {
+      log.error('playlist.songs.fetch-failed', '拉取歌曲失败', e, { platform: active, playlistId: id })
       setError(e instanceof Error ? e.message : '拉取歌曲失败')
     } finally {
       setLoading(false)
@@ -80,20 +102,21 @@ export default function PlaylistSection({ accounts, searchQuery }: PlaylistSecti
           </p>
         </div>
         <div className="flex gap-1 rounded-lg border border-outline-variant bg-surface-container-low p-1">
-          {Object.keys(PLATFORM_NAMES).map((p) => (
+          {platforms.map((p) => (
             <button
-              key={p}
-              onClick={() => setActive(p)}
+              key={p.id}
+              onClick={() => {
+                log.info('playlist.platform-switch', '切换歌单平台', { platform: p.id })
+                setActive(p.id)
+              }}
               className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 font-label-md text-label-md transition-colors ${
-                active === p
+                active === p.id
                   ? 'bg-surface-container-highest text-primary'
                   : 'text-on-surface-variant hover:text-on-surface'
               }`}
             >
-              <span className="material-symbols-outlined text-base">
-                {p === 'netease' ? 'graphic_eq' : 'equalizer'}
-              </span>
-              {PLATFORM_NAMES[p]}
+              <span className="material-symbols-outlined text-base">{p.icon}</span>
+              {p.name}
             </button>
           ))}
         </div>
@@ -106,7 +129,7 @@ export default function PlaylistSection({ accounts, searchQuery }: PlaylistSecti
             登录后查看你的歌单
           </p>
           <p className="mt-1 font-label-sm text-label-sm text-outline">
-            前往「账号管理」扫码登录 {PLATFORM_NAMES[active]}
+            前往「账号管理」扫码登录 {platforms.find((p) => p.id === active)?.name ?? active}
           </p>
         </div>
       ) : (
@@ -179,7 +202,7 @@ export default function PlaylistSection({ accounts, searchQuery }: PlaylistSecti
               </span>
               {activeId && (
                 <span className="font-label-mono text-label-mono text-outline">
-                  {PLATFORM_NAMES[active]}
+                  {platforms.find((p) => p.id === active)?.name ?? active}
                 </span>
               )}
             </div>

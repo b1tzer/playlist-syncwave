@@ -37,11 +37,11 @@
 - 待验收：网易云端到端同步、QQ音乐扫码登录与同步。
 - 已验证的工具链版本：TypeScript 6.0.3（TS7 与 typescript-eslint 冲突）、Vite 8、Vitest 5、Electron 45。
 - 平台集成：网易云用 `NeteaseCloudMusicApi`（CJS + createRequire）；QQ音乐用 `@yakult-green-tea/qq-music-api` 的 **Node 模式**（主进程加载包根模块启动内置 Koa 服务，含 MQTT，监听动态空闲端口；主进程 handler 转发到 127.0.0.1:端口）。QQ音乐 serverless 模式不支持 qqmusic 通道（需 MQTT），勿回退。
-- 平台架构：`platformRegistry` 注册表（支持异步适配器工厂）+ 通用 `platform:*` IPC；新增平台只需实现 `PlatformAdapter` 并注册。
+- 平台架构：插件化平台模块。每个平台在 `src/platforms/<id>/index.ts` 中 default 导出 `PlatformModule`（meta：名称/图标/能力/登录渠道 + `createAdapter` 工厂，平台代码不直接依赖 electron，依赖经 `AdapterContext` 注入），由 `src/platforms/index.ts` 的 `import.meta.glob` 自动收集，主进程 `platformRegistry` 统一注册与预热。新增平台只需新建目录实现适配器（可继承 `BasePlatformAdapter` 只实现所需能力），无需修改任何历史代码；渲染层平台列表/图标/渠道/目标平台均从 `platform:list` 返回的 `PlatformMeta` 动态渲染。
 - ESM 下不要用 `const require = createRequire()` —— 与 electron-vite 注入的 require 冲突；用内联 `createRequire(import.meta.url)(...)`。
 - QQ音乐 Node 模式的 `/login/qr/*`（key/create/check）路由是 **GET**，不是 POST（serverless 模式可以 POST，Node 模式会 405）。
 - 主进程必须吞掉 stdout/stderr 的 EPIPE（NCM logger 写 console 会触发崩溃）。
-- native 模块（better-sqlite3/keytar）尚未引入；引入前先验证 rebuild。
+- better-sqlite3@13.2.0 已引入（同步历史持久化）。安装后需 `npx electron-builder install-app-deps` rebuild 到 Electron ABI（已验证 Node 与 Electron 双环境可用）。数据库文件在 `userData/sync-history.db`（WAL 模式）。
 - npm 11 默认拦截安装脚本（如 electron 二进制），需 `npm install-scripts approve <pkg>` 后再 rebuild。
 - 网易云 API 风控敏感：搜索请求需限速（>=500ms）并支持重试；连续快速请求会触发 405 风控。
 - QQ音乐 sealed token 依赖 `QQ_SESSION_SECRET`，该密钥已持久化到 userData，删除会导致全部登录失效。

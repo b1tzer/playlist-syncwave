@@ -421,3 +421,42 @@ describe('planSync — 备选候选搜索验证（T6.4 闭环）', () => {
     expect(plan.failed[0].reason).toBe('no-match')
   })
 })
+
+describe('planSync — 映射缓存（SQLite 命中免搜索）', () => {
+  it('人工确认映射命中 → 跳过搜索直接匹配', async () => {
+    const target = makeTarget({})
+    target.lookupMapping = vi.fn((query: MatchQuery) => {
+      if (query.title === '晴天') return { songId: 'cached-1', confirmed: true }
+      return null
+    })
+    const plan = await planSync([{ title: '晴天', artist: '周杰伦' }], target, {
+      searchIntervalMs: 0,
+    })
+    expect(plan.matched).toEqual([{ query: { title: '晴天', artist: '周杰伦' }, songId: 'cached-1' }])
+    expect(target.searchSongs).not.toHaveBeenCalled()
+  })
+
+  it('缓存未确认（confirmed=false）→ 不命中，正常搜索', async () => {
+    const target = makeTarget({
+      晴天: [song('1', '晴天', '周杰伦')],
+    })
+    target.lookupMapping = vi.fn(() => ({ songId: 'x', confirmed: false }))
+    const plan = await planSync([{ title: '晴天', artist: '周杰伦' }], target, {
+      searchIntervalMs: 0,
+    })
+    expect(target.searchSongs).toHaveBeenCalled()
+    expect(plan.matched).toHaveLength(1)
+  })
+
+  it('自动匹配成功后写入缓存', async () => {
+    const target = makeTarget({
+      晴天: [song('1', '晴天', '周杰伦')],
+    })
+    const saved: string[] = []
+    target.saveMapping = vi.fn((_query: MatchQuery, songId: string) => {
+      saved.push(songId)
+    })
+    await planSync([{ title: '晴天', artist: '周杰伦' }], target, { searchIntervalMs: 0 })
+    expect(saved).toEqual(['1'])
+  })
+})

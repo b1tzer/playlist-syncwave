@@ -1,4 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { createRendererLogger } from '../logging/rendererLogger'
+
+const log = createRendererLogger('renderer.settings')
 
 interface SettingRowProps {
   icon: string
@@ -25,6 +28,20 @@ function SettingRow({ icon, title, description, children }: SettingRowProps) {
 export default function SettingsView() {
   const [autoLaunch, setAutoLaunch] = useState(false)
   const [reportEnabled, setReportEnabled] = useState(false)
+
+  // 从 SQLite 恢复设置
+  useEffect(() => {
+    window.electronAPI.settings
+      .getAll()
+      .then((all) => {
+        setAutoLaunch(all.autoLaunch === true)
+        setReportEnabled(all.reportEnabled === true)
+        log.debug('settings.restored', '设置已恢复', { keys: Object.keys(all) })
+      })
+      .catch((e) => {
+        log.warn('settings.restore-failed', '设置恢复失败', e)
+      })
+  }, [])
 
   return (
     <div>
@@ -56,7 +73,14 @@ export default function SettingsView() {
           <button
             role="switch"
             aria-checked={autoLaunch}
-            onClick={() => setAutoLaunch((v) => !v)}
+            onClick={() => {
+              setAutoLaunch((v) => {
+                const next = !v
+                window.electronAPI.settings.set('autoLaunch', next).catch(() => {})
+                log.info('settings.auto-launch', '切换开机启动', { enabled: next })
+                return next
+              })
+            }}
             className={`h-6 w-11 rounded-full p-0.5 transition-colors ${
               autoLaunch ? 'bg-primary' : 'bg-surface-container-highest'
             }`}
@@ -76,7 +100,14 @@ export default function SettingsView() {
           <button
             role="switch"
             aria-checked={reportEnabled}
-            onClick={() => setReportEnabled((v) => !v)}
+            onClick={() => {
+              setReportEnabled((v) => {
+                const next = !v
+                window.electronAPI.settings.set('reportEnabled', next).catch(() => {})
+                log.info('settings.log-report', '切换日志上报', { enabled: next })
+                return next
+              })
+            }}
             className={`h-6 w-11 rounded-full p-0.5 transition-colors ${
               reportEnabled ? 'bg-primary' : 'bg-surface-container-highest'
             }`}

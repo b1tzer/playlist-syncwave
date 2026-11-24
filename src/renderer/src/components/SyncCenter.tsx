@@ -1,36 +1,24 @@
-export type TaskStatus = 'running' | 'done' | 'failed'
+import type { PlatformMeta } from '@core/models/platform'
+import { createRendererLogger } from '../logging/rendererLogger'
+import type { SyncTaskRecord } from '@core/models/sync'
 
-export interface SyncTaskRecord {
-  id: string
-  name: string
-  /** 目标平台 id */
-  targetPlatform: string
-  /** 来源描述，如「文本导入」 */
-  source: string
-  status: TaskStatus
-  total: number
-  added: number
-  failed: number
-  createdAt: string
-  /** 0-1，运行中更新 */
-  progress: number
-  failedDetail: string[]
-}
+const log = createRendererLogger('renderer.sync-center')
 
 interface SyncCenterProps {
+  platforms: PlatformMeta[]
   tasks: SyncTaskRecord[]
   onNewTask: () => void
 }
 
-const PLATFORM_LABELS: Record<string, string> = {
-  netease: '网易云音乐',
-  qqmusic: 'QQ音乐',
-}
-
-export default function SyncCenter({ tasks, onNewTask }: SyncCenterProps) {
+export default function SyncCenter({ platforms, tasks, onNewTask }: SyncCenterProps) {
   const running = tasks.filter((t) => t.status === 'running').length
   const done = tasks.filter((t) => t.status === 'done').length
   const failed = tasks.filter((t) => t.status === 'failed').length
+
+  const handleNewTask = () => {
+    log.info('sync.new-task', '新建同步任务')
+    onNewTask()
+  }
 
   return (
     <div>
@@ -49,7 +37,7 @@ export default function SyncCenter({ tasks, onNewTask }: SyncCenterProps) {
           </p>
         </div>
         <button
-          onClick={onNewTask}
+          onClick={handleNewTask}
           className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 font-label-md text-label-md font-medium text-on-primary transition-colors hover:bg-primary/85"
         >
           <span className="material-symbols-outlined text-base">add</span>
@@ -91,7 +79,7 @@ export default function SyncCenter({ tasks, onNewTask }: SyncCenterProps) {
               从「快速创建」粘贴歌曲文本，一键同步到目标平台
             </p>
             <button
-              onClick={onNewTask}
+              onClick={handleNewTask}
               className="mt-4 flex items-center gap-2 rounded-lg border border-outline-variant px-4 py-2 font-label-md text-label-md text-primary transition-colors hover:bg-surface-container-high"
             >
               <span className="material-symbols-outlined text-base">add</span>
@@ -138,7 +126,7 @@ export default function SyncCenter({ tasks, onNewTask }: SyncCenterProps) {
               <span className="material-symbols-outlined text-sm text-outline">arrow_forward</span>
               <span className="flex items-center gap-1">
                 <span className="material-symbols-outlined text-sm">library_music</span>
-                {PLATFORM_LABELS[t.targetPlatform] ?? t.targetPlatform}
+                {platforms.find((p) => p.id === t.targetPlatform)?.name ?? t.targetPlatform}
               </span>
               {t.status === 'running' && (
                 <span className="ml-auto flex items-center gap-1 text-tertiary">
