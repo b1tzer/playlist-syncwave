@@ -32,16 +32,16 @@
 - 依赖版本以 package.json 为准，不臆造不存在的包名或版本。
 
 ## 当前阶段
-- V0.1 MVP。已完成：`PRD.md`、`planning.md`、工程骨架、T2 文本解析器、T3 匹配引擎 + 网易云适配器、T4 单向同步引擎 + 最小可用 UI、T5 QQ音乐接入。
+- V0.1 MVP。已完成：`PRD.md`、`planning.md`、工程骨架、T2 文本解析器、T3 匹配引擎 + 网易云适配器、T4 单向同步引擎 + 最小可用 UI、T5 QQ音乐接入、T6 全自动解析、T7 歌单管理、T8 匹配增强、T9 同步中心、T10 列表模板、T11 歌单页增强、T12 歌单缓存，以及基础能力补齐 B1-B16（打包分发/单实例/窗口状态/应用菜单/开机启动/自动更新/系统通知/本地歌单库/文件导入/歌单导出/同步参数设置/代理/CSP+沙箱/迁移框架/浅色主题/崩溃恢复，详见 planning.md）。
 - 已验收：网易云扫码登录；已修复：搜索风控（限速+重试）、EPIPE 崩溃、启动失败。
-- 待验收：网易云端到端同步、QQ音乐扫码登录与同步。
+- 待验收：网易云端到端同步、QQ音乐扫码登录与同步、基础能力 B1-B16 手工验收。
 - 已验证的工具链版本：TypeScript 6.0.3（TS7 与 typescript-eslint 冲突）、Vite 8、Vitest 5、Electron 45。
 - 平台集成：网易云用 `NeteaseCloudMusicApi`（CJS + createRequire）；QQ音乐用 `@yakult-green-tea/qq-music-api` 的 **Node 模式**（主进程加载包根模块启动内置 Koa 服务，含 MQTT，监听动态空闲端口；主进程 handler 转发到 127.0.0.1:端口）。QQ音乐 serverless 模式不支持 qqmusic 通道（需 MQTT），勿回退。
 - 平台架构：插件化平台模块。每个平台在 `src/platforms/<id>/index.ts` 中 default 导出 `PlatformModule`（meta：名称/图标/能力/登录渠道 + `createAdapter` 工厂，平台代码不直接依赖 electron，依赖经 `AdapterContext` 注入），由 `src/platforms/index.ts` 的 `import.meta.glob` 自动收集，主进程 `platformRegistry` 统一注册与预热。新增平台只需新建目录实现适配器（可继承 `BasePlatformAdapter` 只实现所需能力），无需修改任何历史代码；渲染层平台列表/图标/渠道/目标平台均从 `platform:list` 返回的 `PlatformMeta` 动态渲染。
 - ESM 下不要用 `const require = createRequire()` —— 与 electron-vite 注入的 require 冲突；用内联 `createRequire(import.meta.url)(...)`。
 - QQ音乐 Node 模式的 `/login/qr/*`（key/create/check）路由是 **GET**，不是 POST（serverless 模式可以 POST，Node 模式会 405）。
 - 主进程必须吞掉 stdout/stderr 的 EPIPE（NCM logger 写 console 会触发崩溃）。
-- better-sqlite3@13.2.0 已引入（统一应用数据库）。安装后需 `npx electron-builder install-app-deps` rebuild 到 Electron ABI（已验证 Node 与 Electron 双环境可用）。数据库文件在 `userData/app.db`（WAL 模式），含六张表：`sync_tasks`（同步历史）、`app_settings`（应用设置 key-value）、`song_mappings`（跨平台歌曲映射缓存，人工确认优先）、`playlist_cache`（歌单列表缓存）、`playlist_song_cache`（歌单歌曲缓存）、`playlist_song_meta`（每单歌曲缓存时间戳）。
+- better-sqlite3@13.2.0 已引入（统一应用数据库）。安装后需 `npx electron-builder install-app-deps` rebuild 到 Electron ABI（已验证 Node 与 Electron 双环境可用）。数据库文件在 `userData/app.db`（WAL 模式），含九张表：`sync_tasks`（同步历史）、`app_settings`（应用设置 key-value）、`song_mappings`（跨平台歌曲映射缓存，人工确认优先）、`playlist_cache`（歌单列表缓存）、`playlist_song_cache`（歌单歌曲缓存）、`playlist_song_meta`（每单歌曲缓存时间戳）、`local_playlists`/`local_playlist_songs`（本地歌单库）、`schema_migrations`（版本化迁移，只追加 `main/migrations.ts` 的 MIGRATIONS 数组，启动时迁移先于 store 初始化）。
 - 歌单缓存策略（T12，`core/cachePolicy.ts` 常量 + `playlistCacheService` 单飞去重/限流 + `playlistCacheStore` 存储）：列表 TTL 10min、歌曲 TTL 30min、手动强制刷新最小间隔 30s；渲染层手动刷新按钮同步冷却；重命名/删除/增删歌曲/同步建单后主进程联动失效对应缓存。
 - 凭证与 QQ 会话文件（credentials.json / qq-session*.json / qq-device.json）保持文件存储，不进 SQLite（凭证安全隔离）。
 - 数据层模式：`createXxxStore(db)` 依赖注入 + `appDatabase.getDatabase()` 统一入口 + `xxxService.ts` 供 IPC 调用。
@@ -50,3 +50,4 @@
 - QQ音乐 sealed token 依赖 `QQ_SESSION_SECRET`，该密钥已持久化到 userData，删除会导致全部登录失效。
 - 文本快速创建全自动解析（T6）：格式自动探测（json/m3u/lrc/csv/share/lines）→ 行分类去噪 → 字段顺序仅用强结构信号判定（书名号/版本词/多人名/feat/长度，**无本地词典**）+ 整段投票（`core/parser/orderInfer.ts`）→ 无信号行保留双候选，**顺序最终由平台搜索验证裁决**（`exactMatch.classifyCandidates` 反向精确匹配 + `planSync` alternatives 备选搜索）；`ParseOptions.order` 仅高级覆盖，UI 无手动格式选择。
 - 同步金标准（T6.4）：标题+歌手归一化精确相等 = 自动选（`core/matcher/exactMatch.ts`）；同歌不同作者（标题精确、歌手不同）→ `choice-needed` 两阶段（planSync/executeSync + `pendingSyncs` 缓存 + `platform:confirm-sync`），用户手动选择。行业真金标准 ISRC 国内平台不暴露，故用代理金标准。
+- 基础能力要点：渲染层 `sandbox: true`，preload 必须是 **CJS**（electron-vite preload 已配置 `format: 'cjs'` 输出 `out/preload/index.js`，主进程加载 `../preload/index.js`，勿改回 .mjs）；打包环境 CSP 由 `main/security.ts` 注入响应头；`electron-updater` 等 CJS 包在主进程 ESM 下需内联 `createRequire(import.meta.url)(...)` 加载（named import 运行时失败）；打包用 `npm run dist`（electron-builder.yml，发布前配置 CSC 证书与 SYNCWAVE_UPDATE_URL）。
