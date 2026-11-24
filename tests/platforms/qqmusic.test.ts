@@ -162,6 +162,26 @@ describe('QqMusicAdapter — serverless HTTP 映射', () => {
     expect(account).toEqual({ platform: 'qqmusic', userId: '123', nickname: '测试用户' })
   })
 
+  it('登录状态：昵称在嵌套 info 对象里（GetLoginUserInfo 真实结构）', async () => {
+    const { handler } = makeHandler(() =>
+      json({
+        code: 200,
+        data: {
+          profile: {
+            musicid: '456',
+            str_musicid: '456',
+            errMsg: '',
+            identify: {},
+            info: { nickname: '微信用户', headurl: 'http://x/a.jpg' },
+            celebrityInfo: {},
+          },
+        },
+      }),
+    )
+    const account = await new QqMusicAdapter(handler, env).getLoginStatus('tok')
+    expect(account).toEqual({ platform: 'qqmusic', userId: '456', nickname: '微信用户' })
+  })
+
   it('歌单列表映射：tid/dirName/songNum（QQ音乐真实字段）', async () => {
     const { handler } = makeHandler(() =>
       json({

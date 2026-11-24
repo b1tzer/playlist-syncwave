@@ -140,9 +140,12 @@ export class QqMusicAdapter extends BasePlatformAdapter {
   protected async fetchLoginStatus(token: string): Promise<LoginStatusRaw> {
     const res = await this.call('GET', '/login/status', token)
     const profile = asObject(asObject(res.data).profile)
+    // 昵称在 GetLoginUserInfo 的嵌套 info 对象里（顶层只有 credential 派生的 musicid/nick 等），
+    // 微信等通道的 credential 不带 nick，必须从 info 里取
+    const info = asObject(profile.info)
     return {
       userId: pickString(profile.musicid, profile.str_musicid, profile.encryptUin),
-      nickname: pickString(profile.nickname, profile.nick),
+      nickname: pickString(profile.nickname, profile.nick, info.nickname, info.nick),
     }
   }
 

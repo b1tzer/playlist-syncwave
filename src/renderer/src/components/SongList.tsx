@@ -9,7 +9,7 @@ interface SongListProps {
   showIndex?: boolean
   /** 是否显示封面 */
   showCover?: boolean
-  /** 滚动容器最大高度类名，如 max-h-[30rem] */
+  /** 滚动容器最大高度类名，如 max-h-64；省略时可由 className 控制伸缩 */
   maxHeightClass?: string
   /** 列表容器附加类名（边框、圆角、间距等） */
   className?: string

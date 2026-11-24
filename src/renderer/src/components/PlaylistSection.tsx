@@ -509,8 +509,8 @@ export default function PlaylistSection({
   }
 
   return (
-    <div>
-      <div className="flex items-start justify-between">
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex shrink-0 items-start justify-between">
         <div>
           <h1 className="mt-1 font-headline-lg text-headline-lg font-semibold">
             {t('playlist.title')}
@@ -553,10 +553,10 @@ export default function PlaylistSection({
           </p>
         </div>
       ) : (
-        <div className="mt-6 flex gap-4">
-          <div className="w-72 shrink-0">
-            <div className="rounded-lg border border-outline-variant bg-surface-container-low">
-              <div className="flex items-center justify-between border-b border-outline-variant px-3 py-2">
+        <div className="mt-6 flex min-h-0 flex-1 gap-4">
+          <div className="flex w-72 min-h-0 shrink-0 flex-col">
+            <div className="flex min-h-0 flex-1 flex-col rounded-lg border border-outline-variant bg-surface-container-low">
+              <div className="flex shrink-0 items-center justify-between border-b border-outline-variant px-3 py-2">
                 <div className="flex items-center gap-1.5">
                   <span className="font-label-sm text-label-sm text-on-surface-variant">
                     {t('playlist.listTitle')}
@@ -597,7 +597,7 @@ export default function PlaylistSection({
                   </span>
                 )}
               </div>
-              <ul className="max-h-[32rem] select-none space-y-0.5 overflow-y-auto p-1.5">
+              <ul className="min-h-0 flex-1 select-none space-y-0.5 overflow-y-auto p-1.5">
                 {loading && playlists.length === 0 && (
                   <li className="px-2 py-2 font-label-md text-label-md text-outline">
                     {t('common.loading')}
@@ -622,6 +622,8 @@ export default function PlaylistSection({
                           toggleSelect(p.id)
                           return
                         }
+                        // 普通点击打开歌单时清空右键/框选产生的勾选状态
+                        setSelectedIds(new Set())
                         void openPlaylist(p.id)
                       }}
                       onMouseDown={(e) => handleRowMouseDown(e, p.id)}
@@ -649,7 +651,7 @@ export default function PlaylistSection({
             </div>
 
             {(gathering || syncRunning) && (
-              <div className="mt-2 rounded-lg border border-outline-variant bg-surface-container-low p-2">
+              <div className="mt-2 shrink-0 rounded-lg border border-outline-variant bg-surface-container-low p-2">
                 {syncProgress ? (
                   <ProgressBar
                     ratio={syncProgress.ratio}
@@ -674,8 +676,8 @@ export default function PlaylistSection({
             )}
           </div>
 
-          <div className="min-w-0 flex-1 rounded-lg border border-outline-variant bg-surface-container-low">
-            <div className="flex items-center justify-between gap-2 border-b border-outline-variant px-4 py-2">
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col rounded-lg border border-outline-variant bg-surface-container-low">
+            <div className="flex shrink-0 items-center justify-between gap-2 border-b border-outline-variant px-4 py-2">
               <div className="flex min-w-0 items-center gap-2">
                 {activeId ? (
                   renaming && activePlaylist ? (
@@ -736,9 +738,6 @@ export default function PlaylistSection({
               </div>
               {activeId && canManage && (
                 <div className="flex shrink-0 items-center gap-2">
-                  <span className="font-label-sm text-label-sm text-on-surface-variant">
-                    {t('playlist.songList', { count: songs.length })}
-                  </span>
                   <button
                     onClick={() => (confirmDelete ? void handleDelete() : setConfirmDelete(true))}
                     disabled={managing}
@@ -757,14 +756,16 @@ export default function PlaylistSection({
                 </div>
               )}
             </div>
-            {error && <p className="px-4 py-2 font-label-sm text-label-sm text-error">{error}</p>}
+            {error && (
+              <p className="shrink-0 px-4 py-2 font-label-sm text-label-sm text-error">{error}</p>
+            )}
             {loading && (
-              <p className="px-4 py-2 font-label-md text-label-md text-outline">
+              <p className="shrink-0 px-4 py-2 font-label-md text-label-md text-outline">
                 {t('common.loading')}
               </p>
             )}
             {!loading && activeId && canManage && (
-              <div className="border-b border-outline-variant px-4 py-2">
+              <div className="shrink-0 border-b border-outline-variant px-4 py-2">
                 <div className="flex items-center gap-2">
                   <span className="flex items-center gap-1 font-label-sm text-label-sm text-on-surface-variant">
                     <span className="material-symbols-outlined text-base text-primary">
@@ -828,7 +829,7 @@ export default function PlaylistSection({
             {!loading && activeId && (
               <SongList
                 songs={songs}
-                maxHeightClass="max-h-[30rem]"
+                className="min-h-0 flex-1"
                 renderAction={(s) =>
                   canManage ? (
                     <button
