@@ -1,0 +1,54 @@
+# 校验流水线:push / PR 触发
+# check 通过后,main 分支推送自动同步代码到 Gitee
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    name: check · lint / typecheck / test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run lint
+
+      - run: npm run typecheck
+
+      - run: npm test
+
+  sync-gitee:
+    name: sync to gitee
+    needs: check
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # 需在 GitHub 仓库 Settings → Secrets and variables → Actions
+      # 配置 GITEE_TOKEN(Gitee 私人令牌:https://gitee.com/personal_access_tokens)
+      - name: skip gitee
+        if: ${{ secrets.GITEE_TOKEN == '' }}
+        run: echo "GITEE_TOKEN 未配置,跳过 Gitee 同步"
+
+      - name: push to gitee
+        if: ${{ secrets.GITEE_TOKEN != '' }}
+        env:
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+        run: |
+          set -euo pipefail
+          git remote add gitee "https://bibobibo_309:${GITEE_TOKEN}@gitee.com/bibobibo_309/playlist-syncwave.git"
+          git push gitee main
+          git push gitee --tags || echo "no tags to sync"

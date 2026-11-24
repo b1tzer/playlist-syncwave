@@ -23,10 +23,13 @@ files:
 asarUnpack:
   - '**/*.node'
 
-# 自动更新发布源（generic：静态文件服务器）。发布时可用 SYNCWAVE_UPDATE_URL 覆盖
+# 自动更新发布源（GitHub Releases）：发布时设置 GH_TOKEN 后执行
+#   npx electron-builder --publish always
+# 国内备用源在 src/main/updater.ts 的 FALLBACK_FEEDS 中配置（运行时 fallback）
 publish:
-  provider: generic
-  url: ${env.SYNCWAVE_UPDATE_URL}
+  provider: github
+  owner: b1tzer
+  repo: playlist-syncwave
 
 npmRebuild: true
 

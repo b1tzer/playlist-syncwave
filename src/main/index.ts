@@ -47,7 +47,7 @@ import {
 } from './localPlaylistService'
 import { loadWindowState, trackWindowState } from './windowState'
 import { buildApplicationMenu } from './menu'
-import { setupAutoUpdater, checkForUpdates, quitAndInstall } from './updater'
+import { setupAutoUpdater, checkForUpdates, quitAndInstall, setAutoUpdateEnabled } from './updater'
 import { notifySyncResult, notifySyncStopped } from './notifications'
 import { createPlaylistCacheService } from './playlistCacheService'
 import { getDatabase } from './appDatabase'
@@ -960,6 +960,10 @@ ipcMain.handle('settings:set', (_event, key: string, value: unknown) =>
       setSetting(key, value)
       // 语言变更时重建菜单（菜单文案在主进程侧，不依赖渲染层 i18n）
       if (key === 'language') buildApplicationMenu()
+      // 自动更新开关：实时生效（关闭取消静默检查，开启重新计划）
+      if (key === 'autoUpdateEnabled' && typeof value === 'boolean') {
+        setAutoUpdateEnabled(value)
+      }
     },
     { key },
     'debug',

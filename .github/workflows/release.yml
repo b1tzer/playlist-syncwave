@@ -1,0 +1,119 @@
+# 手动发布:三平台构建 → GitHub Releases,并同步 Gitee 备用源
+# 触发:仓库 Actions 页 → Release → Run workflow
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '发布版本号(留空使用 package.json 的 version,同版本重复发布会追加 assets)'
+        required: false
+        default: ''
+      publish:
+        description: '是否发布到 GitHub Releases(关闭则仅产出构建物到 Artifacts)'
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build · ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: mac
+            artifacts: 'dist/*.dmg,dist/*.zip'
+          - os: windows-latest
+            target: win
+            artifacts: 'dist/*.exe'
+          - os: ubuntu-latest
+            target: linux
+            artifacts: 'dist/*.AppImage'
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: set version
+        if: ${{ github.event.inputs.version != '' }}
+        run: npm version ${{ github.event.inputs.version }} --no-git-tag-version --allow-same-version
+
+      - run: npm ci
+
+      - run: npm test
+
+      - run: npm run typecheck
+
+      - run: npm run build
+
+      - name: package & publish
+        if: ${{ github.event.inputs.publish == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # 无证书时跳过签名;配置 CSC_LINK/CSC_KEY_PASSWORD secrets 后自动启用签名
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+        run: npx electron-builder --${{ matrix.target }} --publish always
+
+      - name: package only
+        if: ${{ github.event.inputs.publish != 'true' }}
+        run: npx electron-builder --${{ matrix.target }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: artifacts-${{ matrix.target }}
+          path: ${{ matrix.artifacts }}
+          if-no-files-found: error
+
+  sync-gitee:
+    name: sync gitee fallback feed
+    needs: build
+    runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.publish == 'true' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: download release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          version=$(node -p "require('./package.json').version")
+          gh release download "v${version}" --dir dist --clobber
+
+      # 需在 Gitee 创建同名仓库 playlist-syncwave 并配置 GITEE_TOKEN secret
+      - name: push to gitee
+        if: ${{ secrets.GITEE_TOKEN != '' }}
+        env:
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+        run: |
+          set -euo pipefail
+          version=$(node -p "require('./package.json').version")
+          tmpdir=$(mktemp -d)
+          git clone --depth 1 "https://gitee.com/bibobibo_309/playlist-syncwave.git" "$tmpdir/repo"
+          cd "$tmpdir/repo"
+          git fetch origin release 2>/dev/null || true
+          git checkout -B release origin/release 2>/dev/null || git checkout -B release
+          mkdir -p releases
+          cp "${GITHUB_WORKSPACE}/dist/"* releases/
+          git add -A
+          git -c user.name='release-bot' -c user.email='release-bot@users.noreply.github.com' \
+            commit -m "release: v${version}" || echo "nothing to commit"
+          git remote set-url origin "https://bibobibo_309:${GITEE_TOKEN}@gitee.com/bibobibo_309/playlist-syncwave.git"
+          git push origin release
+
+      - name: skip gitee
+        if: ${{ secrets.GITEE_TOKEN == '' }}
+        run: echo "GITEE_TOKEN 未配置,跳过 Gitee 备用源同步"

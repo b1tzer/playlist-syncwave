@@ -34,6 +34,7 @@ export default function SettingsView() {
   const { t, locale, setLocale } = useI18n()
   const [autoLaunch, setAutoLaunch] = useState(false)
   const [reportEnabled, setReportEnabled] = useState(false)
+  const [autoUpdateEnabled, setAutoUpdateEnabled] = useState(true)
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null)
   const [syncThreshold, setSyncThreshold] = useState(0.6)
   const [syncRetries, setSyncRetries] = useState(2)
@@ -91,6 +92,7 @@ export default function SettingsView() {
       .getAll()
       .then((all) => {
         setReportEnabled(all.reportEnabled === true)
+        setAutoUpdateEnabled(typeof all.autoUpdateEnabled === 'boolean' ? all.autoUpdateEnabled : true)
         if (typeof all.syncThreshold === 'number') setSyncThreshold(all.syncThreshold)
         if (typeof all.syncRetries === 'number') setSyncRetries(all.syncRetries)
         if (typeof all.syncSearchInterval === 'number') setSyncInterval(all.syncSearchInterval)
@@ -339,6 +341,22 @@ export default function SettingsView() {
           description={t('settings.updateDesc')}
         >
           <div className="flex items-center gap-3">
+            <ToggleSwitch
+              checked={autoUpdateEnabled}
+              onChange={(next) => {
+                setAutoUpdateEnabled(next)
+                window.electronAPI.settings
+                  .set('autoUpdateEnabled', next)
+                  .then(() =>
+                    log.info('settings.auto-update', '自动更新开关已保存', { enabled: next }),
+                  )
+                  .catch((e) =>
+                    log.error('settings.auto-update', '自动更新设置保存失败', e, {
+                      enabled: next,
+                    }),
+                  )
+              }}
+            />
             {updateStatus?.state === 'downloaded' ? (
               <button
                 onClick={() => {
