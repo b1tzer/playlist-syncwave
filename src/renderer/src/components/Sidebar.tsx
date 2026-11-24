@@ -27,6 +27,7 @@ export default function Sidebar({ view, onNavigate, runningTasks, accounts }: Si
   const { t } = useI18n()
   const [version, setVersion] = useState('')
   const loggedInCount = Object.values(accounts).filter((a) => a !== null).length
+  const isMac = window.electronAPI.platform === 'darwin'
 
   useEffect(() => {
     window.electronAPI
@@ -37,6 +38,8 @@ export default function Sidebar({ view, onNavigate, runningTasks, accounts }: Si
 
   return (
     <aside className="flex w-60 shrink-0 flex-col border-r border-outline-variant bg-surface-container-lowest px-3 py-4">
+      {/* macOS 隐藏标题栏后为红绿灯留白，同时作为窗口拖拽区 */}
+      {isMac && <div className="h-9 shrink-0 [-webkit-app-region:drag]" />}
       <div className="flex items-center gap-2 px-2">
         <span className="material-symbols-outlined text-lg text-primary">graphic_eq</span>
         <div>

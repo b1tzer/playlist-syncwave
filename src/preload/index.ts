@@ -49,6 +49,8 @@ export interface PagedFetchResult<T> {
 }
 
 const api = {
+  /** 运行平台（darwin/win32/linux），渲染层用于红绿灯避让等平台差异布局 */
+  platform: process.platform,
   getVersion: (): Promise<string> => ipcRenderer.invoke('app:get-version'),
   encrypt: (plain: string): Promise<string> => ipcRenderer.invoke('crypto:encrypt', plain),
   /** 在系统浏览器/平台应用中打开链接（http/https/平台深链白名单） */

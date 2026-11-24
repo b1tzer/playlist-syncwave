@@ -294,8 +294,17 @@ export default function App() {
       />
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex items-center gap-4 border-b border-outline-variant px-6 py-3">
-          <div className="flex w-96 items-center gap-2 rounded-lg border border-outline-variant bg-surface-container-low px-3 py-2 transition-colors focus-within:border-primary">
+        <header
+          // macOS 无标题栏：顶部条作为窗口拖拽区，搜索框内单独恢复交互
+          className={`flex items-center gap-4 border-b border-outline-variant px-6 py-3 ${
+            window.electronAPI.platform === 'darwin' ? '[-webkit-app-region:drag]' : ''
+          }`}
+        >
+          <div
+            className={`flex w-96 items-center gap-2 rounded-lg border border-outline-variant bg-surface-container-low px-3 py-2 transition-colors focus-within:border-primary ${
+              window.electronAPI.platform === 'darwin' ? '[-webkit-app-region:no-drag]' : ''
+            }`}
+          >
             <span className="material-symbols-outlined text-base text-outline">search</span>
             <input
               value={search}

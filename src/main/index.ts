@@ -63,6 +63,7 @@ for (const stream of [process.stdout, process.stderr]) {
 }
 
 const isDev = process.env.NODE_ENV === 'development'
+const isMac = process.platform === 'darwin'
 
 // Windows 开机启动依赖 AppUserModelID 与打包 appId 一致
 if (process.platform === 'win32') {
@@ -174,6 +175,8 @@ function createWindow(): void {
     height: state.height,
     x: state.x,
     y: state.y,
+    // macOS 隐藏标题栏（红绿灯内嵌），标题文字不再显示；Windows 保留标准标题栏
+    ...(isMac ? ({ titleBarStyle: 'hiddenInset' } as const) : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
