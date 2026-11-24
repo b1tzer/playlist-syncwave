@@ -406,7 +406,7 @@ tests/
 - **B10 歌单导出 ✅**：core 新增 `export/toM3u.ts`/`toCsv.ts` 纯函数（+4 测试）；主进程 `app:save-text-file`（保存对话框 + 文件名清洗 + 20MB 上限）；本地歌单与平台歌单详情头部均新增导出按钮（m3u/csv 下拉）。typecheck、lint、275 项测试、build 通过。
 - **B11 匹配/同步设置项 ✅**：`settingsService.syncTuning()` 从设置读取阈值（0.4-0.9）/重试次数（0-5）/搜索间隔（300-3000ms）并 clamp 兜底，主进程 `planSync`/`executeSync`（含 confirm-sync）三处传入；设置页新增三个滑块行（实时保存）。typecheck、lint、275 项测试通过。
 - **B12 代理设置 ✅**：`main/proxy.ts` 三路注入——axios defaults（平台 API，共享单例）、`session.setProxy`（渲染层请求）、HTTP_PROXY/HTTPS_PROXY 环境变量（Node fetch）；启动自动恢复、设置页代理行（输入/应用/清除，失败 toast）。typecheck、lint、275 项测试通过。
-- **B13 CSP 与 sandbox 加固（待实施）**：渲染层 CSP、评估 sandbox 开启。
+- **B13 CSP 与 sandbox 加固 ✅**：窗口开启 `sandbox: true`（preload 改 CJS 输出 `index.js`，仅 require electron）；`main/security.ts` 打包环境注入 CSP（仅放行字体外链与 https 图片）+ nosniff。附带修复任务 6 埋下问题：electron-updater 在 ESM 主进程下 named export 运行时失败，改 createRequire 加载。dev 启动实测：无报错、IPC 正常、退出流程完整；typecheck、lint、275 项测试通过。
 - **B14 SQLite 版本化迁移（待实施）**：schema 版本表 + 迁移框架，替代散落 ALTER TABLE。
 - **B15 浅色主题（待实施）**：深浅主题切换与持久化。
 - **B16 关于版本号 + 崩溃恢复（待实施）**：设置页显示版本；崩溃提示与重启选项。

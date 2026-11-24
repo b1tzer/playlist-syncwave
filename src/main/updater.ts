@@ -1,7 +1,12 @@
+import { createRequire } from 'node:module'
 import { app, BrowserWindow } from 'electron'
-import { autoUpdater } from 'electron-updater'
 import { logCenter } from './logging/logCenter'
 import { notifyUpdateReady } from './notifications'
+
+// CJS 包在 ESM 主进程下无可靠 named export，内联 createRequire 加载（与平台 SDK 加载方式一致）
+const { autoUpdater } = createRequire(import.meta.url)(
+  'electron-updater',
+) as typeof import('electron-updater')
 
 const log = logCenter.logger('updater')
 

@@ -27,6 +27,7 @@ import { logCenter } from './logging/logCenter'
 import { upsertSyncTask, listSyncTasks, removeSyncTask, clearSyncTasks } from './syncHistoryService'
 import { getSetting, setSetting, getAllSettings, syncTuning } from './settingsService'
 import { restoreProxy, getProxySetting, setProxySetting } from './proxy'
+import { applySecurityHeaders } from './security'
 import {
   saveAutoMapping,
   saveConfirmedMapping,
@@ -143,10 +144,10 @@ function createWindow(): void {
     x: state.x,
     y: state.y,
     webPreferences: {
-      preload: join(__dirname, '../preload/index.mjs'),
+      preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      sandbox: true,
     },
   })
 
@@ -1043,6 +1044,7 @@ app.whenReady().then(() => {
   buildApplicationMenu()
   setupAutoUpdater()
   restoreProxy()
+  applySecurityHeaders()
   createWindow()
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

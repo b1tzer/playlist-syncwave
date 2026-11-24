@@ -18,6 +18,15 @@ export default defineConfig({
     resolve: {
       alias: { '@core': resolve(root, 'src/core') },
     },
+    build: {
+      rollupOptions: {
+        // 沙箱 preload 必须为 CJS（Electron 限制），输出 index.js
+        output: {
+          format: 'cjs',
+          entryFileNames: '[name].js',
+        },
+      },
+    },
   },
   renderer: {
     resolve: {
