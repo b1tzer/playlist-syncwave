@@ -92,8 +92,6 @@ const zhCN = {
   'playlist.refreshCooldown': '{seconds} 秒后可刷新',
   'song.coverAlt': '{title} 封面',
   'login.title': '音乐平台账号',
-  'login.subtitle':
-    '管理网易云音乐、QQ音乐授权凭证，支持扫码登录与 Cookie 导入，自动维系无感知后台同步。',
   'login.onlineBadge': '{count}/{total} 平台在线',
   'login.authorized': '已授权（活跃）',
   'login.disconnected': '未连接',
@@ -272,8 +270,6 @@ const enUS: Record<TranslationKey, string> = {
   'playlist.refreshCooldown': 'Refresh available in {seconds}s',
   'song.coverAlt': 'Cover of {title}',
   'login.title': 'Music Platform Accounts',
-  'login.subtitle':
-    'Manage NetEase Cloud Music and QQ Music credentials, with QR login and Cookie import for seamless background sync.',
   'login.onlineBadge': '{count}/{total} platforms online · Token valid',
   'login.authorized': 'Authorized (active)',
   'login.disconnected': 'Not connected',

@@ -130,9 +130,6 @@ export default function LoginSection({ platforms, accounts, onAccountChange }: L
           <h1 className="mt-1 font-headline-lg text-headline-lg font-semibold">
             {t('login.title')}
           </h1>
-          <p className="mt-1 font-body-md text-body-md text-on-surface-variant">
-            {t('login.subtitle')}
-          </p>
         </div>
         <div className="flex items-center gap-3">
           <span className="flex items-center gap-1.5 rounded-full bg-surface-container-high px-3 py-1.5 font-label-sm text-label-sm text-on-surface-variant">
