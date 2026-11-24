@@ -32,17 +32,22 @@ export default function SettingsView() {
   const [autoLaunch, setAutoLaunch] = useState(false)
   const [reportEnabled, setReportEnabled] = useState(false)
 
-  // 从 SQLite 恢复设置
+  // 从 SQLite 恢复设置；开机启动读取系统登录项真实状态
   useEffect(() => {
     window.electronAPI.settings
       .getAll()
       .then((all) => {
-        setAutoLaunch(all.autoLaunch === true)
         setReportEnabled(all.reportEnabled === true)
         log.debug('settings.restored', '设置已恢复', { keys: Object.keys(all) })
       })
       .catch((e) => {
         log.warn('settings.restore-failed', '设置恢复失败', e)
+      })
+    window.electronAPI
+      .getAutoLaunch()
+      .then(setAutoLaunch)
+      .catch((e) => {
+        log.warn('settings.auto-launch-read-failed', '读取开机启动状态失败', e)
       })
   }, [])
 
@@ -95,11 +100,11 @@ export default function SettingsView() {
             checked={autoLaunch}
             onChange={(next) => {
               setAutoLaunch(next)
-              window.electronAPI.settings
-                .set('autoLaunch', next)
-                .then(() => log.info('settings.auto-launch', '开机启动设置已保存', { enabled: next }))
+              window.electronAPI
+                .setAutoLaunch(next)
+                .then(() => log.info('settings.auto-launch', '开机启动设置已应用', { enabled: next }))
                 .catch((e) =>
-                  log.error('settings.auto-launch', '开机启动设置保存失败', e, {
+                  log.error('settings.auto-launch', '开机启动设置失败', e, {
                     enabled: next,
                   }),
                 )

@@ -49,6 +49,11 @@ for (const stream of [process.stdout, process.stderr]) {
 
 const isDev = process.env.NODE_ENV === 'development'
 
+// Windows 开机启动依赖 AppUserModelID 与打包 appId 一致
+if (process.platform === 'win32') {
+  app.setAppUserModelId('com.syncwave.app')
+}
+
 // --- 单实例锁：二次启动聚焦已有窗口，避免多进程并发写同一 SQLite ---
 const gotSingleInstanceLock = app.requestSingleInstanceLock()
 if (!gotSingleInstanceLock) {
@@ -146,6 +151,24 @@ function createWindow(): void {
 ipcMain.handle('app:get-version', () => {
   ipcLog.debug('app.get-version', '查询应用版本')
   return app.getVersion()
+})
+
+// --- 开机启动：打包环境对接系统登录项，开发环境仅持久化偏好 ---
+
+ipcMain.handle('app:get-auto-launch', () => {
+  if (app.isPackaged) {
+    return app.getLoginItemSettings().openAtLogin
+  }
+  return getSetting<boolean>('autoLaunch', false)
+})
+
+ipcMain.handle('app:set-auto-launch', (_event, enabled: unknown) => {
+  if (typeof enabled !== 'boolean') throw new Error('无效的开机启动参数')
+  setSetting('autoLaunch', enabled)
+  if (app.isPackaged) {
+    app.setLoginItemSettings({ openAtLogin: enabled })
+  }
+  ipcLog.info('app.set-auto-launch', '开机启动设置已应用', { enabled, packaged: app.isPackaged })
 })
 
 ipcMain.handle('crypto:encrypt', (_event, plain: string) => {

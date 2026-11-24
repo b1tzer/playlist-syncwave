@@ -53,6 +53,10 @@ const api = {
     ipcRenderer.on('app:navigate', listener)
     return () => ipcRenderer.removeListener('app:navigate', listener)
   },
+  /** 开机启动：读取系统登录项真实状态 / 应用设置 */
+  getAutoLaunch: (): Promise<boolean> => ipcRenderer.invoke('app:get-auto-launch'),
+  setAutoLaunch: (enabled: boolean): Promise<void> =>
+    ipcRenderer.invoke('app:set-auto-launch', enabled),
 
   platforms: {
     list: (): Promise<PlatformMeta[]> => ipcRenderer.invoke('platform:list'),
