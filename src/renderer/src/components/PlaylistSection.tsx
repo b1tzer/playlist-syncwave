@@ -171,6 +171,15 @@ export default function PlaylistSection({
   // --- 歌单管理操作状态 ---
   const [renaming, setRenaming] = useState(false)
   const [renameDraft, setRenameDraft] = useState('')
+  /** 行内重命名：正在列表中原地编辑的歌单 id（右键重命名 / 双击行触发） */
+  const [renamingId, setRenamingId] = useState<string | null>(null)
+  const inlineRenameInputRef = useRef<HTMLInputElement>(null)
+  const renameSubmittingRef = useRef(false)
+
+  // 进入行内编辑时聚焦输入框（后于右键菜单关闭时的焦点还原执行，确保焦点落在输入框）
+  useEffect(() => {
+    if (renamingId) inlineRenameInputRef.current?.focus()
+  }, [renamingId])
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [managing, setManaging] = useState(false)
   const [removingIds, setRemovingIds] = useState<Set<string>>(new Set())
@@ -197,9 +206,6 @@ export default function PlaylistSection({
   const visiblePlaylists = keyword
     ? playlists.filter((p) => p.name.toLowerCase().includes(keyword))
     : playlists
-
-  const selectedPlaylists = playlists.filter((p) => selectedIds.has(p.id))
-  const singlePlaylist = selectedPlaylists.length === 1 ? selectedPlaylists[0] : null
 
   /** 拖拽框选：锚点行到结束行（含）之间的可见行 */
   const selectRange = (anchorId: string, endId: string): Set<string> => {
@@ -371,6 +377,7 @@ export default function PlaylistSection({
       setError('')
       // 切换歌单时重置管理操作状态
       setRenaming(false)
+      setRenamingId(null)
       setConfirmDelete(false)
       setSearchResults(null)
       setSearchInput('')
@@ -476,7 +483,7 @@ export default function PlaylistSection({
         id: 'rename',
         label: t('playlist.rename'),
         icon: 'edit',
-        onSelect: handleMenuRename,
+        onSelect: () => handleMenuRename(playlist),
       })
     }
     if (single && canRename && syncTargets.length > 0) pushDivider()
@@ -514,13 +521,16 @@ export default function PlaylistSection({
     setMenu({ x: e.clientX, y: e.clientY, entries })
   }
 
-  /** 右键重命名：目标歌单未激活时先激活，再进入头部内联编辑 */
-  const handleMenuRename = () => {
-    if (!singlePlaylist || !canRename) return
-    void openPlaylist(singlePlaylist.id)
-    setRenameDraft(singlePlaylist.name)
-    setRenaming(true)
-    setConfirmDelete(false)
+  /** 右键重命名：直接在歌单列表该行原地进入内联编辑 */
+  const handleMenuRename = (playlist: PlatformPlaylist) => {
+    if (!canRename) return
+    log.info('playlist.rename-inline', '行内重命名歌单', {
+      platform: active,
+      playlistId: playlist.id,
+    })
+    setRenameDraft(playlist.name)
+    setRenamingId(playlist.id)
+    setRenaming(false)
   }
 
   const handleOpenUrl = async (url: string) => {
@@ -567,22 +577,35 @@ export default function PlaylistSection({
     }
   }
 
-  const handleRename = async () => {
+  /** 提交重命名：头部编辑与行内编辑共用 */
+  const submitRename = async (id: string | null): Promise<boolean> => {
     const name = renameDraft.trim()
-    if (!name || !activeId) return
-    log.info('playlist.rename', '重命名歌单', { platform: active, playlistId: activeId })
+    if (!name || !id || renameSubmittingRef.current) return false
+    renameSubmittingRef.current = true
+    log.info('playlist.rename', '重命名歌单', { platform: active, playlistId: id })
     setManaging(true)
     setError('')
     try {
-      await window.electronAPI.platforms.renamePlaylist(active, activeId, name)
-      setPlaylists((prev) => prev.map((p) => (p.id === activeId ? { ...p, name } : p)))
-      setRenaming(false)
+      await window.electronAPI.platforms.renamePlaylist(active, id, name)
+      setPlaylists((prev) => prev.map((p) => (p.id === id ? { ...p, name } : p)))
+      return true
     } catch (e) {
-      log.error('playlist.rename-failed', '重命名失败', e, { platform: active, playlistId: activeId })
+      log.error('playlist.rename-failed', '重命名失败', e, { platform: active, playlistId: id })
       setError(e instanceof Error ? e.message : t('playlist.fetchFailed'))
+      return false
     } finally {
       setManaging(false)
+      renameSubmittingRef.current = false
     }
+  }
+
+  const handleRename = async () => {
+    if (await submitRename(activeId)) setRenaming(false)
+  }
+
+  /** 行内编辑提交：成功后退出该行编辑态 */
+  const handleInlineRename = async () => {
+    if (await submitRename(renamingId)) setRenamingId(null)
   }
 
   const handleDelete = async () => {
@@ -867,43 +890,89 @@ export default function PlaylistSection({
                     className="list-item-enter"
                     style={{ animationDelay: `${Math.min(i, 15) * 24}ms` }}
                   >
-                    <div
-                      role="button"
-                      tabIndex={0}
-                      onClick={(e) => {
-                        if (suppressClickRef.current) {
-                          suppressClickRef.current = false
-                          return
-                        }
-                        if (e.metaKey || e.ctrlKey) {
-                          toggleSelect(p.id)
-                          return
-                        }
-                        // 普通点击打开歌单时清空右键/框选产生的勾选状态
-                        setSelectedIds(new Set())
-                        void openPlaylist(p.id)
-                      }}
-                      onMouseDown={(e) => handleRowMouseDown(e, p.id)}
-                      onMouseEnter={() => handleRowMouseEnter(p.id)}
-                      onContextMenu={(e) => handleRowContextMenu(e, p)}
-                      className={`flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors ${
-                        activeId === p.id
-                          ? 'bg-primary-container/15 text-primary'
-                          : selectedIds.has(p.id)
-                            ? 'bg-primary/10 text-on-surface'
-                            : 'text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface'
-                      }`}
-                    >
-                      <PlaylistCover playlist={p} />
-                      <MarqueeText
-                        text={p.name}
-                        className="min-w-0 flex-1 font-body-md text-body-md"
-                      />
-                      <span className="font-label-mono text-label-mono text-outline">
-                        {/* 平台未提供歌曲数（如 Apple Music 资料库歌单）时留空 */}
-                        {p.songCount ?? ''}
-                      </span>
-                    </div>
+                    {renamingId === p.id ? (
+                      <div className="flex w-full items-center gap-1.5 rounded-lg border border-primary bg-surface px-2 py-1.5">
+                        <PlaylistCover playlist={p} />
+                        <input
+                          ref={inlineRenameInputRef}
+                          autoFocus
+                          value={renameDraft}
+                          onChange={(e) => setRenameDraft(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') void handleInlineRename()
+                            if (e.key === 'Escape') setRenamingId(null)
+                          }}
+                          placeholder={t('playlist.renamePlaceholder')}
+                          disabled={managing}
+                          className="min-w-0 flex-1 rounded-md border border-outline-variant bg-surface px-2 py-1 font-body-md text-body-md text-on-surface outline-none focus:border-primary disabled:opacity-50"
+                        />
+                        <button
+                          onClick={() => void handleInlineRename()}
+                          disabled={managing || !renameDraft.trim()}
+                          title={t('playlist.save')}
+                          className="flex items-center rounded-md p-1 text-primary transition-colors hover:bg-surface-container-highest disabled:opacity-50"
+                        >
+                          <span className="material-symbols-outlined text-base">check</span>
+                        </button>
+                        <button
+                          onClick={() => setRenamingId(null)}
+                          disabled={managing}
+                          title={t('playlist.cancel')}
+                          className="flex items-center rounded-md p-1 text-on-surface-variant transition-colors hover:bg-surface-container-highest disabled:opacity-50"
+                        >
+                          <span className="material-symbols-outlined text-base">close</span>
+                        </button>
+                      </div>
+                    ) : (
+                      <div
+                        role="button"
+                        tabIndex={0}
+                        onClick={(e) => {
+                          // 双击的第二次 click（detail=2）交给 onDoubleClick 处理
+                          if (e.detail === 2) return
+                          if (suppressClickRef.current) {
+                            suppressClickRef.current = false
+                            return
+                          }
+                          if (e.metaKey || e.ctrlKey) {
+                            toggleSelect(p.id)
+                            return
+                          }
+                          // 普通点击打开歌单时清空右键/框选产生的勾选状态
+                          setSelectedIds(new Set())
+                          void openPlaylist(p.id)
+                        }}
+                        onDoubleClick={() => {
+                          if (!canRename) return
+                          log.info('playlist.rename-inline', '双击行内重命名歌单', {
+                            platform: active,
+                            playlistId: p.id,
+                          })
+                          setRenameDraft(p.name)
+                          setRenamingId(p.id)
+                        }}
+                        onMouseDown={(e) => handleRowMouseDown(e, p.id)}
+                        onMouseEnter={() => handleRowMouseEnter(p.id)}
+                        onContextMenu={(e) => handleRowContextMenu(e, p)}
+                        className={`flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors ${
+                          activeId === p.id
+                            ? 'bg-primary-container/15 text-primary'
+                            : selectedIds.has(p.id)
+                              ? 'bg-primary/10 text-on-surface'
+                              : 'text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface'
+                        }`}
+                      >
+                        <PlaylistCover playlist={p} />
+                        <MarqueeText
+                          text={p.name}
+                          className="min-w-0 flex-1 font-body-md text-body-md"
+                        />
+                        <span className="font-label-mono text-label-mono text-outline">
+                          {/* 平台未提供歌曲数（如 Apple Music 资料库歌单）时留空 */}
+                          {p.songCount ?? ''}
+                        </span>
+                      </div>
+                    )}
                   </li>
                 ))}
                 {playlists.length < playlistTotal && (

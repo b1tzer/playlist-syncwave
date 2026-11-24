@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { LocalPlaylist, LocalPlaylistSong } from '@core/models/localPlaylist'
 import type { MatchQuery } from '@core/models/match'
 import type { PlatformAccount, PlatformMeta, PlatformSong } from '@core/models/platform'
@@ -44,7 +44,16 @@ export default function LocalPlaylistPanel({
   const [createDraft, setCreateDraft] = useState('')
   const [renaming, setRenaming] = useState(false)
   const [renameDraft, setRenameDraft] = useState('')
+  /** 行内重命名：正在列表中原地编辑的歌单 id（双击行触发） */
+  const [renamingId, setRenamingId] = useState<string | null>(null)
+  const inlineRenameInputRef = useRef<HTMLInputElement>(null)
+  const renameSubmittingRef = useRef(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
+
+  // 进入行内编辑时聚焦输入框
+  useEffect(() => {
+    if (renamingId) inlineRenameInputRef.current?.focus()
+  }, [renamingId])
 
   // 同步目标平台选择
   const [syncPicker, setSyncPicker] = useState(false)
@@ -96,6 +105,7 @@ export default function LocalPlaylistPanel({
 
   const handleSelect = (id: string) => {
     setActiveId(id)
+    setRenamingId(null)
     void loadSongs(id)
   }
 
@@ -122,18 +132,32 @@ export default function LocalPlaylistPanel({
     }
   }
 
-  const handleRename = async () => {
+  /** 提交重命名：头部编辑与行内编辑共用 */
+  const submitRename = async (id: string | null): Promise<boolean> => {
     const name = renameDraft.trim()
-    if (!name || !activeId) return
+    if (!name || !id || renameSubmittingRef.current) return false
+    renameSubmittingRef.current = true
     try {
-      await window.electronAPI.localPlaylists.rename(activeId, name)
-      log.info('local-playlist.renamed', '本地歌单已重命名', { id: activeId })
-      setRenaming(false)
+      await window.electronAPI.localPlaylists.rename(id, name)
+      log.info('local-playlist.renamed', '本地歌单已重命名', { id })
       await fetchPlaylists()
+      return true
     } catch (e) {
       log.error('local-playlist.rename-failed', '重命名失败', e)
       notify('error', t('localPlaylist.renameFailed'))
+      return false
+    } finally {
+      renameSubmittingRef.current = false
     }
+  }
+
+  const handleRename = async () => {
+    if (await submitRename(activeId)) setRenaming(false)
+  }
+
+  /** 行内编辑提交：成功后退出该行编辑态 */
+  const handleInlineRename = async () => {
+    if (await submitRename(renamingId)) setRenamingId(null)
   }
 
   const handleDelete = async () => {
@@ -328,22 +352,66 @@ export default function LocalPlaylistPanel({
             )}
             {playlists.map((p) => (
               <li key={p.id}>
-                <button
-                  onClick={() => handleSelect(p.id)}
-                  className={`flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left transition-colors ${
-                    activeId === p.id
-                      ? 'bg-primary/10 text-primary'
-                      : 'text-on-surface hover:bg-surface-container-high'
-                  }`}
-                >
-                  <span className="material-symbols-outlined text-lg">queue_music</span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate font-label-md text-label-md">{p.name}</span>
-                    <span className="block font-label-sm text-label-sm text-on-surface-variant">
-                      {t('localPlaylist.songCount', { count: p.songCount })}
+                {renamingId === p.id ? (
+                  <div className="flex items-center gap-1.5 rounded-md border border-primary bg-surface px-2.5 py-1.5">
+                    <span className="material-symbols-outlined text-lg">queue_music</span>
+                    <input
+                      ref={inlineRenameInputRef}
+                      autoFocus
+                      value={renameDraft}
+                      onChange={(e) => setRenameDraft(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') void handleInlineRename()
+                        if (e.key === 'Escape') setRenamingId(null)
+                      }}
+                      placeholder={t('localPlaylist.namePlaceholder')}
+                      className="min-w-0 flex-1 rounded-md border border-outline-variant bg-surface px-2 py-1 font-label-md text-label-md text-on-surface outline-none placeholder:text-outline focus:border-primary"
+                    />
+                    <button
+                      onClick={() => void handleInlineRename()}
+                      disabled={!renameDraft.trim()}
+                      title={t('localPlaylist.rename')}
+                      className="flex items-center rounded-md p-1 text-primary transition-colors hover:bg-primary/10 disabled:opacity-50"
+                    >
+                      <span className="material-symbols-outlined text-base">check</span>
+                    </button>
+                    <button
+                      onClick={() => setRenamingId(null)}
+                      title={t('localPlaylist.cancel')}
+                      className="flex items-center rounded-md p-1 text-on-surface-variant transition-colors hover:bg-surface-container-highest disabled:opacity-50"
+                    >
+                      <span className="material-symbols-outlined text-base">close</span>
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={(e) => {
+                      // 双击的第二次 click（detail=2）交给 onDoubleClick 处理
+                      if (e.detail === 2) return
+                      handleSelect(p.id)
+                    }}
+                    onDoubleClick={() => {
+                      log.info('local-playlist.rename-inline', '双击行内重命名本地歌单', {
+                        id: p.id,
+                      })
+                      setRenameDraft(p.name)
+                      setRenamingId(p.id)
+                    }}
+                    className={`flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left transition-colors ${
+                      activeId === p.id
+                        ? 'bg-primary/10 text-primary'
+                        : 'text-on-surface hover:bg-surface-container-high'
+                    }`}
+                  >
+                    <span className="material-symbols-outlined text-lg">queue_music</span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate font-label-md text-label-md">{p.name}</span>
+                      <span className="block font-label-sm text-label-sm text-on-surface-variant">
+                        {t('localPlaylist.songCount', { count: p.songCount })}
+                      </span>
                     </span>
-                  </span>
-                </button>
+                  </button>
+                )}
               </li>
             ))}
           </ul>
