@@ -47,6 +47,12 @@ const api = {
   log: (entry: LogEntry): void => {
     ipcRenderer.send('log:write', entry)
   },
+  /** 应用菜单导航请求（菜单快捷键触发，主进程广播视图切换） */
+  onNavigate: (callback: (view: string) => void): (() => void) => {
+    const listener = (_event: unknown, view: string) => callback(view)
+    ipcRenderer.on('app:navigate', listener)
+    return () => ipcRenderer.removeListener('app:navigate', listener)
+  },
 
   platforms: {
     list: (): Promise<PlatformMeta[]> => ipcRenderer.invoke('platform:list'),

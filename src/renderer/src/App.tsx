@@ -58,6 +58,23 @@ export default function App() {
       })
   }, [])
 
+  // 应用菜单导航快捷键：主进程广播视图切换
+  useEffect(() => {
+    const off = window.electronAPI.onNavigate((target) => {
+      if (
+        target === 'create' ||
+        target === 'playlists' ||
+        target === 'sync' ||
+        target === 'accounts' ||
+        target === 'settings'
+      ) {
+        log.info('app.menu-navigate', '菜单导航切换视图', { view: target })
+        setView(target)
+      }
+    })
+    return off
+  }, [])
+
   // 主进程保活调度可能导致凭证续期或失效，收到广播后重新查询该平台登录态
   useEffect(() => {
     const off = window.electronAPI.platforms.onAccountsChanged((platform) => {

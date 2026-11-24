@@ -33,6 +33,7 @@ import {
 } from './mappingService'
 import { startKeepAliveScheduler, stopKeepAliveScheduler } from './keepAliveService'
 import { loadWindowState, trackWindowState } from './windowState'
+import { buildApplicationMenu } from './menu'
 import { createPlaylistCacheService } from './playlistCacheService'
 import { getDatabase } from './appDatabase'
 import type { SyncTaskRecord, SyncChoice } from '@core/models/sync'
@@ -716,6 +717,8 @@ ipcMain.handle('settings:set', (_event, key: string, value: unknown) =>
         throw new Error('不支持的设置值类型')
       }
       setSetting(key, value)
+      // 语言变更时重建菜单（菜单文案在主进程侧，不依赖渲染层 i18n）
+      if (key === 'language') buildApplicationMenu()
     },
     { key },
     'debug',
@@ -831,6 +834,7 @@ ipcMain.handle(
 )
 
 app.whenReady().then(() => {
+  buildApplicationMenu()
   createWindow()
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
