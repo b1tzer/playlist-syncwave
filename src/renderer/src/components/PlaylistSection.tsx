@@ -19,6 +19,7 @@ import type {
   SyncTaskRecord,
 } from '@core/models/sync'
 import { normalize } from '@core/matcher/matchSong'
+import { MANUAL_REFRESH_MIN_INTERVAL_MS } from '@core/cachePolicy'
 import { createRendererLogger } from '../logging/rendererLogger'
 import { useI18n } from '../i18n'
 import SongList from './SongList'
@@ -88,6 +89,8 @@ export default function PlaylistSection({
   const [activeId, setActiveId] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
+  // 手动刷新冷却倒计时（秒）：与主进程限流阈值同口径，防连点触发平台风控
+  const [refreshCooldown, setRefreshCooldown] = useState(0)
   const [error, setError] = useState<string>('')
 
   // --- 歌单选择与右键菜单 ---
@@ -153,27 +156,38 @@ export default function PlaylistSection({
     (p) => p.capabilities.write && p.id !== active && accounts[p.id] !== null,
   )
 
-  const fetchPlaylists = useCallback(async () => {
-    if (!loggedIn) return
-    setLoading(true)
-    setError('')
-    try {
-      const list = await window.electronAPI.platforms.userPlaylists(active)
-      log.info('playlist.list.fetch', '拉取歌单列表', { platform: active, count: list.length })
-      setPlaylists(list)
-      // 刷新后剔除已不存在的选择
-      setSelectedIds((prev) => {
-        const ids = new Set(list.map((p) => p.id))
-        const next = new Set([...prev].filter((id) => ids.has(id)))
-        return next.size === prev.size ? prev : next
-      })
-    } catch (e) {
-      log.error('playlist.list.fetch-failed', '拉取歌单列表失败', e, { platform: active })
-      setError(e instanceof Error ? e.message : t('playlist.fetchFailed'))
-    } finally {
-      setLoading(false)
-    }
-  }, [active, loggedIn, t])
+  const fetchPlaylists = useCallback(
+    async (force = false) => {
+      if (!loggedIn) return
+      setLoading(true)
+      setError('')
+      try {
+        const res = await window.electronAPI.platforms.userPlaylists(active, force)
+        if (res.throttled) {
+          notify('warning', t('playlist.refreshThrottled'))
+        }
+        log.info('playlist.list.fetch', '拉取歌单列表', {
+          platform: active,
+          count: res.data.length,
+          fromCache: res.fromCache,
+          force,
+        })
+        setPlaylists(res.data)
+        // 刷新后剔除已不存在的选择
+        setSelectedIds((prev) => {
+          const ids = new Set(res.data.map((p) => p.id))
+          const next = new Set([...prev].filter((id) => ids.has(id)))
+          return next.size === prev.size ? prev : next
+        })
+      } catch (e) {
+        log.error('playlist.list.fetch-failed', '拉取歌单列表失败', e, { platform: active })
+        setError(e instanceof Error ? e.message : t('playlist.fetchFailed'))
+      } finally {
+        setLoading(false)
+      }
+    },
+    [active, loggedIn, t],
+  )
 
   useEffect(() => {
     setPlaylists([])
@@ -230,10 +244,19 @@ export default function PlaylistSection({
     }
   }, [])
 
+  // 手动刷新冷却倒计时
+  useEffect(() => {
+    if (refreshCooldown <= 0) return
+    const timer = setInterval(() => setRefreshCooldown((s) => s - 1), 1000)
+    return () => clearInterval(timer)
+  }, [refreshCooldown])
+
   const handleRefresh = async () => {
-    log.info('playlist.list.refresh', '手动刷新歌单列表', { platform: active })
+    if (refreshCooldown > 0 || refreshing || syncRunning) return
+    log.info('playlist.list.refresh', '手动强制刷新歌单列表', { platform: active })
     setRefreshing(true)
-    await fetchPlaylists()
+    setRefreshCooldown(Math.ceil(MANUAL_REFRESH_MIN_INTERVAL_MS / 1000))
+    await fetchPlaylists(true)
     setRefreshing(false)
   }
 
@@ -247,13 +270,14 @@ export default function PlaylistSection({
     setSearchResults(null)
     setSearchInput('')
     try {
-      const list = await window.electronAPI.platforms.playlistSongs(active, id)
+      const res = await window.electronAPI.platforms.playlistSongs(active, id)
       log.info('playlist.songs.fetch', '拉取歌单歌曲', {
         platform: active,
         playlistId: id,
-        count: list.length,
+        count: res.data.length,
+        fromCache: res.fromCache,
       })
-      setSongs(list)
+      setSongs(res.data)
     } catch (e) {
       log.error('playlist.songs.fetch-failed', '拉取歌曲失败', e, { platform: active, playlistId: id })
       setError(e instanceof Error ? e.message : t('playlist.fetchSongsFailed'))
@@ -474,8 +498,8 @@ export default function PlaylistSection({
       const seen = new Set<string>()
       const queries: MatchQuery[] = []
       for (const p of selected) {
-        const list = await window.electronAPI.platforms.playlistSongs(active, p.id)
-        for (const s of list) {
+        const res = await window.electronAPI.platforms.playlistSongs(active, p.id)
+        for (const s of res.data) {
           const key = songDupKey(s)
           if (seen.has(key)) continue
           seen.add(key)
@@ -713,9 +737,13 @@ export default function PlaylistSection({
                     {t('playlist.listTitle')}
                   </span>
                   <button
-                    onClick={handleRefresh}
-                    disabled={refreshing || loading}
-                    title={t('playlist.refresh')}
+                    onClick={() => void handleRefresh()}
+                    disabled={refreshing || loading || refreshCooldown > 0}
+                    title={
+                      refreshCooldown > 0
+                        ? t('playlist.refreshCooldown', { seconds: refreshCooldown })
+                        : t('playlist.refresh')
+                    }
                     className="flex items-center rounded-md p-1 text-on-surface-variant transition-colors hover:bg-surface-container-highest hover:text-primary disabled:opacity-50"
                   >
                     <span

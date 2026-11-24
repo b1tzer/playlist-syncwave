@@ -374,6 +374,23 @@ tests/
 - **实现**：行 mousedown 记录锚点，全局 mousemove 超 5px 阈值进入框选（先选中锚点行），行 mouseenter 按「锚点→当前行」重算范围；拖拽结束抑制同源 click 防止误打开歌单；行 onClick 区分 Cmd/Ctrl 切换与普通打开；列表 `select-none` 防拖拽时选中文字；右键、清除选择、选中计数等原有行为不变。
 - **验证**：typecheck、ESLint 通过；全量 241 项测试保持全绿。
 
+### T12 — 歌单数据本地缓存与刷新策略 ✅
+- **需求**：歌单列表与歌单歌曲数据保存到本地 SQLite 作为缓存；合理刷新周期；避免自动刷新与手动刷新冲突；手动刷新限流防平台风控。
+- **方案**：
+  1. 缓存策略常量放 `core/cachePolicy.ts`（双端共用）：歌单列表 TTL 10 分钟、歌单歌曲 TTL 30 分钟、手动强制刷新最小间隔 30 秒
+  2. 存储 `main/playlistCacheStore.ts`：`playlist_cache`（歌单列表）/ `playlist_song_cache`（歌曲，整单替换写入）/ `playlist_song_meta`（每单更新时间）；支持失效操作
+  3. 服务 `main/playlistCacheService.ts`（依赖注入时钟，可单测）：缓存优先（新鲜直接返回）→ TTL 过期自动刷新 → 单飞（同一资源并发请求共享一次拉取，消除自动/手动冲突）→ 手动强制刷新限流（30s 内返回缓存 + throttled 标记）→ 成功后写缓存并记 lastSuccess
+  4. 本地变更联动失效：重命名/删除/增删歌曲后失效对应缓存；同步建单成功后失效目标平台列表缓存
+- **验收**：
+  - 缓存命中：平台切换/打开歌单不再请求平台接口（日志 fromCache=true）
+  - TTL 过期后首次访问自动刷新并更新缓存；并发访问同一资源只发一次平台请求
+  - 手动刷新 30s 内二次点击：按钮冷却禁用（倒计时提示）+ 主进程限流兜底（返回缓存并标 throttled，渲染层 toast 提示）
+  - 重命名/删除/增删歌曲/同步建单后，对应缓存失效，下次访问拿到新数据
+  - 服务层与存储层新增验收测试（fake store + 可控时钟 + :memory: 库）；全量测试、typecheck、lint 通过
+- **边界情况**：缓存为空时强制刷新不受限流；拉取失败不记 lastSuccess（可立即重试）；无缓存且拉取失败向上抛错；多歌单并发拉取互不阻塞
+- **验证命令**：`npm run test -- main` + `npm run typecheck` + `npm run lint`
+- **实际结果**：新增 17 项测试（store 7 项 + service 10 项）全绿，全量 258 项测试、typecheck、ESLint 全部通过。实现要点：`core/cachePolicy.ts` 策略常量（列表 10min / 歌曲 30min / 手动刷新 30s）；`playlistCacheStore` 三张表（列表整份替换、歌曲整单替换 + meta 时间戳、ORDER BY rowid 保平台顺序）；`playlistCacheService` 缓存优先 → TTL 自动刷新 → 单飞去重（自动/手动冲突共享在途请求）→ 手动限流（返回缓存 + throttled 标记）；主进程两个拉取 IPC 接入服务（登录态校验并入实际拉取路径，缓存命中零平台请求），重命名/删除/增删歌曲/同步建单后联动失效对应缓存；渲染层平台切换与打开歌单缓存优先、手动刷新按钮 30s 冷却倒计时 + 主进程限流兜底 toast。i18n 中英补齐 2 键。
+
 ---
 
 | 风险 | 缓解 |

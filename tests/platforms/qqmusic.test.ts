@@ -28,6 +28,7 @@ const SONG = {
   title: '晴天',
   singer: [{ name: '周杰伦' }],
   album: { name: '叶惠美' },
+  albummid: '000MkMni19ClKG',
   interval: 269,
 }
 
@@ -48,10 +49,53 @@ describe('QqMusicAdapter — serverless HTTP 映射', () => {
         title: '晴天',
         artist: '周杰伦',
         album: '叶惠美',
+        coverUrl: 'https://y.gtimg.cn/music/photo_new/T002R500x500M000000MkMni19ClKG.jpg',
         durationMs: 269000,
       },
     ])
     expect(calls[0].headers.get('x-qq-session')).toBe('tok')
+  })
+
+  it('搜索封面：直接 URL 字段优先于 albummid 拼图床', async () => {
+    const { handler } = makeHandler(() =>
+      json({
+        code: 200,
+        items: [
+          {
+            id: 1,
+            mid: 'm1',
+            name: '歌',
+            singer: [],
+            albumPic: 'https://cdn.example.com/cover.jpg',
+            albummid: 'A1',
+          },
+        ],
+      }),
+    )
+    const adapter = new QqMusicAdapter(handler, env)
+    const songs = await adapter.searchSongs('tok', '歌', 10)
+    expect(songs[0].coverUrl).toBe('https://cdn.example.com/cover.jpg')
+  })
+
+  it('搜索封面：无专辑 mid 时用歌曲 mid 拼歌曲图兜底', async () => {
+    const { handler } = makeHandler(() =>
+      json({ code: 200, items: [{ id: 1, mid: 'm1', name: '歌', singer: [] }] }),
+    )
+    const adapter = new QqMusicAdapter(handler, env)
+    const songs = await adapter.searchSongs('tok', '歌', 10)
+    expect(songs[0].coverUrl).toBe('https://y.gtimg.cn/music/photo_new/T002R300x300M000m1.jpg')
+  })
+
+  it('搜索封面：album.mid 对象形式同样可拼图床', async () => {
+    const { handler } = makeHandler(() =>
+      json({
+        code: 200,
+        items: [{ id: 1, mid: 'm1', name: '歌', singer: [], album: { mid: 'A2', name: '专辑' } }],
+      }),
+    )
+    const adapter = new QqMusicAdapter(handler, env)
+    const songs = await adapter.searchSongs('tok', '歌', 10)
+    expect(songs[0].coverUrl).toBe('https://y.gtimg.cn/music/photo_new/T002R500x500M000A2.jpg')
   })
 
   it('二维码登录：key → create → 返回 qrBase64', async () => {
@@ -169,6 +213,7 @@ describe('QqMusicAdapter — serverless HTTP 映射', () => {
             songname: '晴天',
             singer: [{ name: '周杰伦' }],
             albumname: '叶惠美',
+            albummid: '000MkMni19ClKG',
             interval: 269,
           },
         ],
@@ -182,6 +227,7 @@ describe('QqMusicAdapter — serverless HTTP 映射', () => {
         title: '晴天',
         artist: '周杰伦',
         album: '叶惠美',
+        coverUrl: 'https://y.gtimg.cn/music/photo_new/T002R500x500M000000MkMni19ClKG.jpg',
         durationMs: 269000,
       },
     ])

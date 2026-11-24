@@ -41,7 +41,8 @@
 - ESM 下不要用 `const require = createRequire()` —— 与 electron-vite 注入的 require 冲突；用内联 `createRequire(import.meta.url)(...)`。
 - QQ音乐 Node 模式的 `/login/qr/*`（key/create/check）路由是 **GET**，不是 POST（serverless 模式可以 POST，Node 模式会 405）。
 - 主进程必须吞掉 stdout/stderr 的 EPIPE（NCM logger 写 console 会触发崩溃）。
-- better-sqlite3@13.2.0 已引入（统一应用数据库）。安装后需 `npx electron-builder install-app-deps` rebuild 到 Electron ABI（已验证 Node 与 Electron 双环境可用）。数据库文件在 `userData/app.db`（WAL 模式），含三张表：`sync_tasks`（同步历史）、`app_settings`（应用设置 key-value）、`song_mappings`（跨平台歌曲映射缓存，人工确认优先）。
+- better-sqlite3@13.2.0 已引入（统一应用数据库）。安装后需 `npx electron-builder install-app-deps` rebuild 到 Electron ABI（已验证 Node 与 Electron 双环境可用）。数据库文件在 `userData/app.db`（WAL 模式），含六张表：`sync_tasks`（同步历史）、`app_settings`（应用设置 key-value）、`song_mappings`（跨平台歌曲映射缓存，人工确认优先）、`playlist_cache`（歌单列表缓存）、`playlist_song_cache`（歌单歌曲缓存）、`playlist_song_meta`（每单歌曲缓存时间戳）。
+- 歌单缓存策略（T12，`core/cachePolicy.ts` 常量 + `playlistCacheService` 单飞去重/限流 + `playlistCacheStore` 存储）：列表 TTL 10min、歌曲 TTL 30min、手动强制刷新最小间隔 30s；渲染层手动刷新按钮同步冷却；重命名/删除/增删歌曲/同步建单后主进程联动失效对应缓存。
 - 凭证与 QQ 会话文件（credentials.json / qq-session*.json / qq-device.json）保持文件存储，不进 SQLite（凭证安全隔离）。
 - 数据层模式：`createXxxStore(db)` 依赖注入 + `appDatabase.getDatabase()` 统一入口 + `xxxService.ts` 供 IPC 调用。
 - npm 11 默认拦截安装脚本（如 electron 二进制），需 `npm install-scripts approve <pkg>` 后再 rebuild。

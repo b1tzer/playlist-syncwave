@@ -19,6 +19,7 @@ import { upsertSyncTask, listSyncTasks, removeSyncTask, clearSyncTasks } from '.
 import { getSetting, setSetting, getAllSettings } from './settingsService'
 import { saveConfirmedMapping, clearMappings, mappingStats, findMappings } from './mappingService'
 import { startKeepAliveScheduler, stopKeepAliveScheduler } from './keepAliveService'
+import { createPlaylistCacheService } from './playlistCacheService'
 import { getDatabase } from './appDatabase'
 import type { SyncTaskRecord, SyncChoice } from '@core/models/sync'
 
@@ -32,6 +33,10 @@ for (const stream of [process.stdout, process.stderr]) {
 }
 
 const isDev = process.env.NODE_ENV === 'development'
+
+// 歌单缓存服务：TTL 自动刷新 + 单飞去重 + 手动刷新限流（内存态，随进程生命周期）
+const playlistCache = createPlaylistCacheService(getDatabase().playlistCache)
+const playlistCacheStore = getDatabase().playlistCache
 
 // --- 日志中心：初始化文件输出并注册为全局默认传输 ---
 logCenter.init()
@@ -201,7 +206,7 @@ ipcMain.handle('platform:logout', (_event, platform: string) =>
   ),
 )
 
-ipcMain.handle('platform:user-playlists', (_event, platform: string) =>
+ipcMain.handle('platform:user-playlists', (_event, platform: string, force?: boolean) =>
   ipcLog.time(
     'platform.user-playlists',
     async () => {
@@ -209,37 +214,56 @@ ipcMain.handle('platform:user-playlists', (_event, platform: string) =>
       const credential = services.getCredential()
       if (!credential) throw new Error('尚未登录')
       const adapter = await resolveAdapter(platform)
-      const account = await adapter.getLoginStatus(credential)
-      if (!account) throw new Error('登录已过期，请重新扫码')
-      const playlists = await adapter.getUserPlaylists(credential, account.userId)
-      ipcLog.info('platform.user-playlists', '拉取歌单列表完成', {
+      const result = await playlistCache.playlists(
         platform,
-        count: playlists.length,
+        // 登录态校验并入实际拉取路径：缓存命中时不产生平台请求
+        async () => {
+          const account = await adapter.getLoginStatus(credential)
+          if (!account) throw new Error('登录已过期，请重新扫码')
+          return adapter.getUserPlaylists(credential, account.userId)
+        },
+        { force: force === true },
+      )
+      ipcLog.info('platform.user-playlists', '歌单列表返回', {
+        platform,
+        count: result.data.length,
+        fromCache: result.fromCache,
+        throttled: result.throttled === true,
+        force: force === true,
       })
-      return playlists
+      return result
     },
-    { platform },
+    { platform, force: force === true },
   ),
 )
 
-ipcMain.handle('platform:playlist-songs', (_event, platform: string, playlistId: string) =>
-  ipcLog.time(
-    'platform.playlist-songs',
-    async () => {
-      const services = getPlatform(platform)
-      const credential = services.getCredential()
-      if (!credential) throw new Error('尚未登录')
-      const adapter = await resolveAdapter(platform)
-      const songs = await adapter.getPlaylistSongs(credential, playlistId)
-      ipcLog.info('platform.playlist-songs', '拉取歌单歌曲完成', {
-        platform,
-        playlistId,
-        count: songs.length,
-      })
-      return songs
-    },
-    { platform, playlistId },
-  ),
+ipcMain.handle(
+  'platform:playlist-songs',
+  (_event, platform: string, playlistId: string, force?: boolean) =>
+    ipcLog.time(
+      'platform.playlist-songs',
+      async () => {
+        const services = getPlatform(platform)
+        const credential = services.getCredential()
+        if (!credential) throw new Error('尚未登录')
+        const adapter = await resolveAdapter(platform)
+        const result = await playlistCache.songs(
+          platform,
+          playlistId,
+          () => adapter.getPlaylistSongs(credential, playlistId),
+          { force: force === true },
+        )
+        ipcLog.info('platform.playlist-songs', '歌单歌曲返回', {
+          platform,
+          playlistId,
+          count: result.data.length,
+          fromCache: result.fromCache,
+          force: force === true,
+        })
+        return result
+      },
+      { platform, playlistId, force: force === true },
+    ),
 )
 
 /** 歌单管理类 IPC 的统一前置：已登录平台 + 凭证 */
@@ -273,6 +297,7 @@ ipcMain.handle(
         if (typeof name !== 'string' || !name.trim()) throw new Error('歌单名不能为空')
         const { credential, adapter } = await withPlaylistCredential(platform)
         await adapter.renamePlaylist(credential, playlistId, name.trim())
+        playlistCacheStore.invalidatePlaylist(platform, playlistId)
         ipcLog.info('platform.playlist-rename', '歌单重命名完成', { platform, playlistId })
       },
       { platform, playlistId },
@@ -285,6 +310,8 @@ ipcMain.handle('platform:playlist-delete', (_event, platform: string, playlistId
     async () => {
       const { credential, adapter } = await withPlaylistCredential(platform)
       await adapter.deletePlaylist(credential, playlistId)
+      playlistCacheStore.invalidatePlaylist(platform, playlistId)
+      playlistCacheStore.invalidateSongs(platform, playlistId)
       ipcLog.info('platform.playlist-delete', '歌单删除完成', { platform, playlistId })
     },
     { platform, playlistId },
@@ -300,6 +327,8 @@ ipcMain.handle(
         if (!Array.isArray(songIds)) throw new Error('无效的歌曲列表')
         const { credential, adapter } = await withPlaylistCredential(platform)
         await adapter.removeSongsFromPlaylist(credential, playlistId, songIds)
+        playlistCacheStore.invalidateSongs(platform, playlistId)
+        playlistCacheStore.invalidatePlaylist(platform, playlistId)
         ipcLog.info('platform.playlist-remove-songs', '移除歌曲完成', {
           platform,
           playlistId,
@@ -319,6 +348,8 @@ ipcMain.handle(
         if (!Array.isArray(songIds)) throw new Error('无效的歌曲列表')
         const { credential, adapter } = await withPlaylistCredential(platform)
         await adapter.addSongsToPlaylist(credential, playlistId, songIds)
+        playlistCacheStore.invalidateSongs(platform, playlistId)
+        playlistCacheStore.invalidatePlaylist(platform, playlistId)
         ipcLog.info('platform.playlist-add-songs', '添加歌曲完成', {
           platform,
           playlistId,
@@ -479,6 +510,10 @@ ipcMain.handle(
             onProgress: notify,
             ...controlOptions,
           })
+          // 目标平台新建了歌单：失效其列表缓存，下次访问拉取最新
+          if (report.playlistId !== '') {
+            playlistCacheStore.invalidatePlaylists(platform)
+          }
           ipcLog.info('platform.sync-playlist', '同步完成', {
             platform,
             taskId,
@@ -675,7 +710,7 @@ ipcMain.handle(
         const skip = { requested: false }
         runningSyncs.set(taskId, { abort: ctrl, skip })
         try {
-          return await executeSync(pending.plan, selections, pending.playlistName, pending.target, {
+          const report = await executeSync(pending.plan, selections, pending.playlistName, pending.target, {
             batchSize: pending.batchSize,
             signal: ctrl.signal,
             skipCheck: () => {
@@ -694,6 +729,10 @@ ipcMain.handle(
               }
             },
           })
+          if (report.playlistId !== '') {
+            playlistCacheStore.invalidatePlaylists(platform)
+          }
+          return report
         } catch (e) {
           if (e instanceof SyncAbortedError) {
             ipcLog.info('platform.confirm-sync', '写入被用户停止', { platform, taskId })

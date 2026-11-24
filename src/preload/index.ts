@@ -23,6 +23,13 @@ export interface SyncStep {
   item: SyncItemResult
 }
 
+/** 歌单数据拉取结果：缓存优先 + 刷新策略（throttled 表示手动刷新被限流拦截） */
+export interface PlaylistFetchResult<T> {
+  data: T
+  fromCache: boolean
+  throttled?: boolean
+}
+
 const api = {
   getVersion: (): Promise<string> => ipcRenderer.invoke('app:get-version'),
   encrypt: (plain: string): Promise<string> => ipcRenderer.invoke('crypto:encrypt', plain),
@@ -42,10 +49,16 @@ const api = {
     loginStatus: (platform: string): Promise<PlatformAccount | null> =>
       ipcRenderer.invoke('platform:login-status', platform),
     logout: (platform: string): Promise<void> => ipcRenderer.invoke('platform:logout', platform),
-    userPlaylists: (platform: string): Promise<PlatformPlaylist[]> =>
-      ipcRenderer.invoke('platform:user-playlists', platform),
-    playlistSongs: (platform: string, playlistId: string): Promise<PlatformSong[]> =>
-      ipcRenderer.invoke('platform:playlist-songs', platform, playlistId),
+    /** 歌单列表（force=true 手动强制刷新，受限流阈值约束） */
+    userPlaylists: (platform: string, force?: boolean): Promise<PlaylistFetchResult<PlatformPlaylist[]>> =>
+      ipcRenderer.invoke('platform:user-playlists', platform, force === true),
+    /** 歌单歌曲（force=true 手动强制刷新） */
+    playlistSongs: (
+      platform: string,
+      playlistId: string,
+      force?: boolean,
+    ): Promise<PlaylistFetchResult<PlatformSong[]>> =>
+      ipcRenderer.invoke('platform:playlist-songs', platform, playlistId, force === true),
     searchSongs: (platform: string, keyword: string, limit?: number): Promise<PlatformSong[]> =>
       ipcRenderer.invoke('platform:search-songs', platform, keyword, limit),
     renamePlaylist: (platform: string, playlistId: string, name: string): Promise<void> =>

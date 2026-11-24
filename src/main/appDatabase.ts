@@ -5,12 +5,14 @@ import { join } from 'node:path'
 import { createSyncHistoryStore, type SyncHistoryStore } from './syncHistoryStore'
 import { createSettingsStore, type SettingsStore } from './settingsStore'
 import { createMappingStore, type MappingStore } from './mappingStore'
+import { createPlaylistCacheStore, type PlaylistCacheStore } from './playlistCacheStore'
 
 /** 应用 SQLite 数据库：统一打开连接，初始化全部业务表 */
 export interface AppDatabase {
   syncHistory: SyncHistoryStore
   settings: SettingsStore
   mappings: MappingStore
+  playlistCache: PlaylistCacheStore
 }
 
 type RawDatabase = {
@@ -72,6 +74,7 @@ export function getDatabase(): AppDatabase {
       syncHistory: createSyncHistoryStore(db),
       settings: createSettingsStore(db),
       mappings: createMappingStore(db),
+      playlistCache: createPlaylistCacheStore(db),
     }
     // 旧库数据迁移（幂等：旧文件删掉后不再执行）
     migrateLegacyHistory(db)

@@ -33,12 +33,27 @@ function asArray(v: unknown): unknown[] {
   return Array.isArray(v) ? v : []
 }
 
-/** 提取歌曲封面：优先直接 URL 字段，其次用专辑图片 mid 拼图床 URL */
+/**
+ * 提取歌曲封面：
+ * 1. 优先条目里自带的直接 URL 字段；
+ * 2. 其次用专辑 mid 拼 QQ 音乐公开图床（T002R500x500M000 = 专辑封面 500x500）。
+ *    精简搜索/歌单详情的条目只有 albummid/album.mid 之类 mid，没有图片 URL；
+ * 3. 都没有时退而求其次用歌曲 mid 拼歌曲图（部分歌曲无独立歌曲图，可能 404）。
+ */
 function coverOf(item: JsonObject, album: JsonObject): string | undefined {
-  const direct = pickString(album.picUrl, album.albumPic, item.albumPic, item.picUrl, item.coverUrl)
+  const direct = pickString(album.picUrl, album.albumPic, album.pic, item.albumPic, item.picUrl, item.coverUrl)
   if (direct) return direct
-  const pmid = pickString(album.pmid, item.pmid)
-  if (pmid) return `https://y.gtimg.cn/music/photo_new/T002R500x500M000${pmid}.jpg`
+  const albumMid = pickString(
+    item.albummid,
+    item.album_mid,
+    album.mid,
+    album.albummid,
+    album.pmid,
+    item.pmid,
+  )
+  if (albumMid) return `https://y.gtimg.cn/music/photo_new/T002R500x500M000${albumMid}.jpg`
+  const songMid = pickString(item.mid, item.songmid)
+  if (songMid) return `https://y.gtimg.cn/music/photo_new/T002R300x300M000${songMid}.jpg`
   return undefined
 }
 
@@ -156,7 +171,7 @@ export class QqMusicAdapter extends BasePlatformAdapter {
           id,
           name: pickString(item.dirName, item.title, item.name) ?? '未命名歌单',
           songCount: Number(item.songNum ?? item.songCnt ?? item.song_count ?? 0),
-          coverUrl: pickString(item.picUrl, item.coverUrl),
+          coverUrl: pickString(item.picUrl, item.coverUrl, item.pic),
           webUrl: `https://y.qq.com/n/ryqq/playlist/${id}`,
           appUrl: `qqmusic://qq.com/media/playSonglist?p=${id}`,
         }
@@ -181,6 +196,7 @@ export class QqMusicAdapter extends BasePlatformAdapter {
           .filter((n): n is string => Boolean(n))
           .join(' / '),
         album: pickString(item.albumname, asObject(item.album).name),
+        coverUrl: coverOf(item, asObject(item.album)),
         durationMs:
           typeof item.interval === 'number' ? item.interval * 1000 : undefined,
       }

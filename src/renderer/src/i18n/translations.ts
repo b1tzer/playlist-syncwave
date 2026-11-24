@@ -85,6 +85,8 @@ const zhCN = {
   'playlist.openFailed': '打开链接失败：{reason}',
   'playlist.syncGathering': '正在读取歌单歌曲…',
   'playlist.emptySyncSource': '所选歌单没有歌曲可同步',
+  'playlist.refreshThrottled': '刷新太频繁，已展示缓存数据，请稍后再试',
+  'playlist.refreshCooldown': '{seconds} 秒后可刷新',
   'song.coverAlt': '{title} 封面',
   'login.title': '音乐平台账号',
   'login.subtitle':
@@ -260,6 +262,8 @@ const enUS: Record<TranslationKey, string> = {
   'playlist.openFailed': 'Failed to open link: {reason}',
   'playlist.syncGathering': 'Fetching playlist songs…',
   'playlist.emptySyncSource': 'The selected playlists contain no songs to sync',
+  'playlist.refreshThrottled': 'Refreshing too often — showing cached data, please try again later',
+  'playlist.refreshCooldown': 'Refresh available in {seconds}s',
   'song.coverAlt': 'Cover of {title}',
   'login.title': 'Music Platform Accounts',
   'login.subtitle':
