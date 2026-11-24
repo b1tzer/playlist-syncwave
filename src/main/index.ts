@@ -282,6 +282,71 @@ ipcMain.handle(
     ),
 )
 
+/** 缓存全量切片出 offset/limit 一页，供渲染层滚动分页使用 */
+function slicePage<T>(data: T[], offset: number, limit: number) {
+  const from = Math.max(0, Math.floor(Number(offset) || 0))
+  const size = Math.min(200, Math.max(1, Math.floor(Number(limit) || 50)))
+  return { items: data.slice(from, from + size), total: data.length }
+}
+
+ipcMain.handle(
+  'platform:playlist-songs-page',
+  (_event, platform: string, playlistId: string, offset: number, limit: number, force?: boolean) =>
+    ipcLog.time(
+      'platform.playlist-songs-page',
+      async () => {
+        const { credential, adapter } = await withPlaylistCredential(platform)
+        const result = await playlistCache.songs(
+          platform,
+          playlistId,
+          () => adapter.getPlaylistSongs(credential, playlistId),
+          { force: force === true },
+        )
+        const page = slicePage(result.data, offset, limit)
+        ipcLog.info('platform.playlist-songs-page', '歌单歌曲分页返回', {
+          platform,
+          playlistId,
+          offset,
+          limit,
+          total: page.total,
+          fromCache: result.fromCache,
+        })
+        return { ...page, fromCache: result.fromCache, throttled: result.throttled === true }
+      },
+      { platform, playlistId, offset, limit },
+    ),
+)
+
+ipcMain.handle(
+  'platform:user-playlists-page',
+  (_event, platform: string, offset: number, limit: number, force?: boolean) =>
+    ipcLog.time(
+      'platform.user-playlists-page',
+      async () => {
+        const { credential, adapter } = await withPlaylistCredential(platform)
+        const result = await playlistCache.playlists(
+          platform,
+          async () => {
+            const account = await adapter.getLoginStatus(credential)
+            if (!account) throw new Error('登录已过期，请重新扫码')
+            return adapter.getUserPlaylists(credential, account.userId)
+          },
+          { force: force === true },
+        )
+        const page = slicePage(result.data, offset, limit)
+        ipcLog.info('platform.user-playlists-page', '歌单列表分页返回', {
+          platform,
+          offset,
+          limit,
+          total: page.total,
+          fromCache: result.fromCache,
+        })
+        return { ...page, fromCache: result.fromCache, throttled: result.throttled === true }
+      },
+      { platform, offset, limit },
+    ),
+)
+
 ipcMain.handle('platform:search-songs', (_event, platform: string, keyword: string, limit?: number) =>
   ipcLog.time(
     'platform.search-songs',

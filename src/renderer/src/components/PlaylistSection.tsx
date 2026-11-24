@@ -21,9 +21,15 @@ import { songDupKey } from '../sync/helpers'
 import SongList from './SongList'
 import PlatformLogo from './PlatformLogo'
 import ProgressBar from './ProgressBar'
+import LoadMoreSentinel from './LoadMoreSentinel'
 import { notify } from './toast'
 
 const log = createRendererLogger('renderer.playlist')
+
+/** 歌单列表滚动分页大小 */
+const PLAYLIST_PAGE_SIZE = 100
+/** 歌曲列表滚动分页大小 */
+const SONG_PAGE_SIZE = 50
 
 const MENU_ITEM =
   'flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 font-label-md text-label-md text-on-surface transition-colors hover:bg-surface-container-high'
@@ -60,6 +66,56 @@ function PlaylistCover({ playlist }: { playlist: PlatformPlaylist }) {
   )
 }
 
+/** 超长文本：默认省略号截断，悬浮时自动来回滚动展示全文 */
+function MarqueeText({ text, className }: { text: string; className?: string }) {
+  const innerRef = useRef<HTMLSpanElement>(null)
+  const [shift, setShift] = useState(0)
+  const [duration, setDuration] = useState(6)
+  const [hovered, setHovered] = useState(false)
+
+  useEffect(() => {
+    const el = innerRef.current
+    if (!el) return
+    const measure = () => {
+      const distance = Math.max(0, el.scrollWidth - el.clientWidth)
+      setShift(distance)
+      // 单程约 50px/s（滚动段占动画 70%），总时长限制在 2.5s ~ 12s
+      setDuration(Math.min(12, Math.max(2.5, distance / 17.5)))
+    }
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [text])
+
+  const scrolling = hovered && shift > 0
+
+  return (
+    <span
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      className={className}
+    >
+      <span
+        ref={innerRef}
+        className={`inline-block max-w-full whitespace-nowrap will-change-transform ${
+          scrolling ? 'marquee-x overflow-visible' : 'overflow-hidden text-ellipsis'
+        }`}
+        style={
+          scrolling
+            ? {
+                ['--marquee-shift' as string]: `-${shift}px`,
+                animationDuration: `${duration}s`,
+              }
+            : undefined
+        }
+      >
+        {text}
+      </span>
+    </span>
+  )
+}
+
 export default function PlaylistSection({
   platforms,
   accounts,
@@ -78,9 +134,13 @@ export default function PlaylistSection({
     }
   }, [platforms, active])
   const [playlists, setPlaylists] = useState<PlatformPlaylist[]>([])
+  const [playlistTotal, setPlaylistTotal] = useState(0)
   const [songs, setSongs] = useState<PlatformSong[]>([])
+  const [songTotal, setSongTotal] = useState(0)
   const [activeId, setActiveId] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  // 滚动分页加载防重入（歌单/歌曲共用）
+  const loadingMoreRef = useRef(false)
   const [refreshing, setRefreshing] = useState(false)
   // 手动刷新冷却倒计时（秒）：与主进程限流阈值同口径，防连点触发平台风控
   const [refreshCooldown, setRefreshCooldown] = useState(0)
@@ -155,20 +215,27 @@ export default function PlaylistSection({
       setLoading(true)
       setError('')
       try {
-        const res = await window.electronAPI.platforms.userPlaylists(active, force)
+        const res = await window.electronAPI.platforms.userPlaylistsPage(
+          active,
+          0,
+          PLAYLIST_PAGE_SIZE,
+          force,
+        )
         if (res.throttled) {
           notify('warning', t('playlist.refreshThrottled'))
         }
-        log.info('playlist.list.fetch', '拉取歌单列表', {
+        log.info('playlist.list.fetch', '拉取歌单列表第一页', {
           platform: active,
-          count: res.data.length,
+          count: res.items.length,
+          total: res.total,
           fromCache: res.fromCache,
           force,
         })
-        setPlaylists(res.data)
+        setPlaylists(res.items)
+        setPlaylistTotal(res.total)
         // 刷新后剔除已不存在的选择
         setSelectedIds((prev) => {
-          const ids = new Set(res.data.map((p) => p.id))
+          const ids = new Set(res.items.map((p) => p.id))
           const next = new Set([...prev].filter((id) => ids.has(id)))
           return next.size === prev.size ? prev : next
         })
@@ -182,9 +249,38 @@ export default function PlaylistSection({
     [active, loggedIn, t],
   )
 
+  /** 滚动到底部时加载下一页歌单 */
+  const loadMorePlaylists = async () => {
+    if (!loggedIn || loadingMoreRef.current) return
+    loadingMoreRef.current = true
+    try {
+      const res = await window.electronAPI.platforms.userPlaylistsPage(
+        active,
+        playlists.length,
+        PLAYLIST_PAGE_SIZE,
+      )
+      setPlaylists((prev) => {
+        const known = new Set(prev.map((p) => p.id))
+        return [...prev, ...res.items.filter((p) => !known.has(p.id))]
+      })
+      setPlaylistTotal(res.total)
+      log.debug('playlist.list.load-more', '加载更多歌单', {
+        platform: active,
+        loaded: playlists.length + res.items.length,
+        total: res.total,
+      })
+    } catch (e) {
+      log.error('playlist.list.load-more-failed', '加载更多歌单失败', e, { platform: active })
+    } finally {
+      loadingMoreRef.current = false
+    }
+  }
+
   useEffect(() => {
     setPlaylists([])
+    setPlaylistTotal(0)
     setSongs([])
+    setSongTotal(0)
     setActiveId(null)
     setSelectedIds(new Set())
     setMenu(null)
@@ -263,19 +359,53 @@ export default function PlaylistSection({
     setSearchResults(null)
     setSearchInput('')
     try {
-      const res = await window.electronAPI.platforms.playlistSongs(active, id)
-      log.info('playlist.songs.fetch', '拉取歌单歌曲', {
+      const res = await window.electronAPI.platforms.playlistSongsPage(active, id, 0, SONG_PAGE_SIZE)
+      log.info('playlist.songs.fetch', '拉取歌单歌曲第一页', {
         platform: active,
         playlistId: id,
-        count: res.data.length,
+        count: res.items.length,
+        total: res.total,
         fromCache: res.fromCache,
       })
-      setSongs(res.data)
+      setSongs(res.items)
+      setSongTotal(res.total)
     } catch (e) {
       log.error('playlist.songs.fetch-failed', '拉取歌曲失败', e, { platform: active, playlistId: id })
       setError(e instanceof Error ? e.message : t('playlist.fetchSongsFailed'))
     } finally {
       setLoading(false)
+    }
+  }
+
+  /** 滚动到底部时加载下一页歌曲 */
+  const loadMoreSongs = async () => {
+    if (!activeId || loadingMoreRef.current) return
+    loadingMoreRef.current = true
+    try {
+      const res = await window.electronAPI.platforms.playlistSongsPage(
+        active,
+        activeId,
+        songs.length,
+        SONG_PAGE_SIZE,
+      )
+      setSongs((prev) => {
+        const known = new Set(prev.map((s) => s.id))
+        return [...prev, ...res.items.filter((s) => !known.has(s.id))]
+      })
+      setSongTotal(res.total)
+      log.debug('playlist.songs.load-more', '加载更多歌曲', {
+        platform: active,
+        playlistId: activeId,
+        loaded: songs.length + res.items.length,
+        total: res.total,
+      })
+    } catch (e) {
+      log.error('playlist.songs.load-more-failed', '加载更多歌曲失败', e, {
+        platform: active,
+        playlistId: activeId,
+      })
+    } finally {
+      loadingMoreRef.current = false
     }
   }
 
@@ -363,7 +493,9 @@ export default function PlaylistSection({
     try {
       await window.electronAPI.platforms.deletePlaylist(active, activeId)
       setPlaylists((prev) => prev.filter((p) => p.id !== activeId))
+      setPlaylistTotal((total) => Math.max(0, total - 1))
       setSongs([])
+      setSongTotal(0)
       setActiveId(null)
       setConfirmDelete(false)
       setSearchResults(null)
@@ -387,6 +519,7 @@ export default function PlaylistSection({
     try {
       await window.electronAPI.platforms.removeSongsFromPlaylist(active, activeId, [songId])
       setSongs((prev) => prev.filter((s) => s.id !== songId))
+      setSongTotal((total) => Math.max(0, total - 1))
     } catch (e) {
       log.error('playlist.remove-song-failed', '移除歌曲失败', e, {
         platform: active,
@@ -433,6 +566,9 @@ export default function PlaylistSection({
       await window.electronAPI.platforms.addSongsToPlaylist(active, activeId, [song.id])
       setSearchResults((prev) => prev?.filter((s) => s.id !== song.id) ?? null)
       setSongs((prev) => (prev.some((s) => s.id === song.id) ? prev : [...prev, song]))
+      if (!songs.some((s) => s.id === song.id)) {
+        setSongTotal((total) => total + 1)
+      }
     } catch (e) {
       log.error('playlist.add-song-failed', '添加歌曲失败', e, {
         platform: active,
@@ -608,8 +744,12 @@ export default function PlaylistSection({
                     {keyword ? t('playlist.noMatch') : t('playlist.empty')}
                   </li>
                 )}
-                {visiblePlaylists.map((p) => (
-                  <li key={p.id}>
+                {visiblePlaylists.map((p, i) => (
+                  <li
+                    key={p.id}
+                    className="list-item-enter"
+                    style={{ animationDelay: `${Math.min(i, 15) * 24}ms` }}
+                  >
                     <div
                       role="button"
                       tabIndex={0}
@@ -638,15 +778,21 @@ export default function PlaylistSection({
                       }`}
                     >
                       <PlaylistCover playlist={p} />
-                      <span className="min-w-0 flex-1 truncate font-body-md text-body-md">
-                        {p.name}
-                      </span>
+                      <MarqueeText
+                        text={p.name}
+                        className="min-w-0 flex-1 truncate font-body-md text-body-md"
+                      />
                       <span className="font-label-mono text-label-mono text-outline">
                         {p.songCount}
                       </span>
                     </div>
                   </li>
                 ))}
+                {playlists.length < playlistTotal && (
+                  <li className="list-none">
+                    <LoadMoreSentinel onVisible={() => void loadMorePlaylists()} />
+                  </li>
+                )}
               </ul>
             </div>
 
@@ -713,9 +859,10 @@ export default function PlaylistSection({
                     </div>
                   ) : (
                     <>
-                      <span className="truncate font-label-sm text-label-sm text-on-surface-variant">
-                        {activePlaylist?.name ?? ''}
-                      </span>
+                      <MarqueeText
+                        text={activePlaylist?.name ?? ''}
+                        className="min-w-0 truncate font-label-sm text-label-sm text-on-surface-variant"
+                      />
                       {canManage && (
                         <button
                           onClick={startRename}
@@ -830,6 +977,11 @@ export default function PlaylistSection({
               <SongList
                 songs={songs}
                 className="min-h-0 flex-1"
+                renderFooter={
+                  songs.length < songTotal
+                    ? () => <LoadMoreSentinel onVisible={() => void loadMoreSongs()} />
+                    : undefined
+                }
                 renderAction={(s) =>
                   canManage ? (
                     <button

@@ -170,24 +170,40 @@ export class QqMusicAdapter extends BasePlatformAdapter {
   }
 
   protected async fetchPlaylistSongs(token: string, playlistId: string): Promise<PlatformSong[]> {
-    const res = await this.call(
-      'GET',
-      `/user/playlist-detail?tid=${encodeURIComponent(playlistId)}&limit=100`,
-      token,
-    )
-    const songs = asArray(res.songs)
-    return songs.map((s) => {
-      const item = asObject(s)
-      return {
-        id: pickString(item.songid, item.id, item.songmid) ?? '',
-        title: pickString(item.songname, item.name, item.title) ?? '未知歌曲',
-        artist: artistNames(asArray(item.singer ?? item.singers)),
-        album: pickString(item.albumname, asObject(item.album).name),
-        coverUrl: coverOf(item, asObject(item.album)),
-        durationMs:
-          typeof item.interval === 'number' ? item.interval * 1000 : undefined,
+    const rawItems: JsonObject[] = []
+    const pageSize = 100
+    // 接口支持 offset/limit 分页（limit 上限 100），逐页拉取直到 more=false，
+    // 避免超过 100 首的歌单被截断。防御上限 50 页（5000 首），防止接口异常时无限循环。
+    for (let page = 0; page < 50; page++) {
+      const res = await this.call(
+        'GET',
+        `/user/playlist-detail?tid=${encodeURIComponent(playlistId)}&offset=${page * pageSize}&limit=${pageSize}`,
+        token,
+      )
+      const songs = asArray(res.songs)
+      rawItems.push(...songs.map((s) => asObject(s)))
+      const total = typeof res.total === 'number' ? res.total : undefined
+      const more = res.more === true || Number(res.more) === 1
+      if (
+        songs.length < pageSize ||
+        (total !== undefined && rawItems.length >= total) ||
+        !more
+      ) {
+        break
       }
-    })
+    }
+    return rawItems.map((item) => this.mapSong(item))
+  }
+
+  private mapSong(item: JsonObject): PlatformSong {
+    return {
+      id: pickString(item.songid, item.id, item.songmid) ?? '',
+      title: pickString(item.songname, item.name, item.title) ?? '未知歌曲',
+      artist: artistNames(asArray(item.singer ?? item.singers)),
+      album: pickString(item.albumname, asObject(item.album).name),
+      coverUrl: coverOf(item, asObject(item.album)),
+      durationMs: typeof item.interval === 'number' ? item.interval * 1000 : undefined,
+    }
   }
 
   protected async doSearch(token: string, keyword: string, limit: number): Promise<PlatformSong[]> {

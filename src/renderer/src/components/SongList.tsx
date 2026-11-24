@@ -17,6 +17,8 @@ interface SongListProps {
   renderAction?: (song: PlatformSong) => ReactNode
   /** 歌名下方第二行辅助信息（如失败原因），由调用方注入 */
   renderSubtitle?: (song: PlatformSong) => ReactNode
+  /** 列表末尾追加内容（如滚动分页哨兵） */
+  renderFooter?: () => ReactNode
 }
 
 function SongCover({ song }: { song: PlatformSong }) {
@@ -48,6 +50,7 @@ export default function SongList({
   className = '',
   renderAction,
   renderSubtitle,
+  renderFooter,
 }: SongListProps) {
   // 整列缺失时隐藏该列，避免全空占位
   const hasAlbum = songs.some((s) => s.album !== undefined)
@@ -62,7 +65,8 @@ export default function SongList({
         return (
           <li
             key={s.id}
-            className="group flex items-center gap-3 px-4 py-1.5 font-body-md text-body-md"
+            className="list-item-enter group flex items-center gap-3 px-4 py-1.5 font-body-md text-body-md"
+            style={{ animationDelay: `${Math.min(i, 15) * 24}ms` }}
           >
             {showIndex && (
               <span className="w-6 shrink-0 text-right font-label-mono text-label-mono text-outline">
@@ -91,6 +95,7 @@ export default function SongList({
           </li>
         )
       })}
+      {renderFooter?.()}
     </ul>
   )
 }

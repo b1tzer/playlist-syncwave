@@ -15,7 +15,7 @@ export default function ToggleSwitch({ checked, onChange }: ToggleSwitchProps) {
       }`}
     >
       <span
-        className={`block h-5 w-5 rounded-full bg-on-surface transition-transform ${
+        className={`block h-5 w-5 rounded-full bg-on-surface transition-transform duration-300 [transition-timing-function:cubic-bezier(0.34,1.56,0.64,1)] ${
           checked ? 'translate-x-5' : ''
         }`}
       />

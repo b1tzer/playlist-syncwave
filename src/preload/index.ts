@@ -30,6 +30,14 @@ export interface PlaylistFetchResult<T> {
   throttled?: boolean
 }
 
+/** 分页拉取结果：items 为当前页切片，total 为全量数量 */
+export interface PagedFetchResult<T> {
+  items: T[]
+  total: number
+  fromCache: boolean
+  throttled?: boolean
+}
+
 const api = {
   getVersion: (): Promise<string> => ipcRenderer.invoke('app:get-version'),
   encrypt: (plain: string): Promise<string> => ipcRenderer.invoke('crypto:encrypt', plain),
@@ -52,6 +60,14 @@ const api = {
     /** 歌单列表（force=true 手动强制刷新，受限流阈值约束） */
     userPlaylists: (platform: string, force?: boolean): Promise<PlaylistFetchResult<PlatformPlaylist[]>> =>
       ipcRenderer.invoke('platform:user-playlists', platform, force === true),
+    /** 歌单列表分页（滚动加载：offset 从 0 起，limit ≤200） */
+    userPlaylistsPage: (
+      platform: string,
+      offset: number,
+      limit: number,
+      force?: boolean,
+    ): Promise<PagedFetchResult<PlatformPlaylist>> =>
+      ipcRenderer.invoke('platform:user-playlists-page', platform, offset, limit, force === true),
     /** 歌单歌曲（force=true 手动强制刷新） */
     playlistSongs: (
       platform: string,
@@ -59,6 +75,15 @@ const api = {
       force?: boolean,
     ): Promise<PlaylistFetchResult<PlatformSong[]>> =>
       ipcRenderer.invoke('platform:playlist-songs', platform, playlistId, force === true),
+    /** 歌单歌曲分页（滚动加载：offset 从 0 起，limit ≤200） */
+    playlistSongsPage: (
+      platform: string,
+      playlistId: string,
+      offset: number,
+      limit: number,
+      force?: boolean,
+    ): Promise<PagedFetchResult<PlatformSong>> =>
+      ipcRenderer.invoke('platform:playlist-songs-page', platform, playlistId, offset, limit, force === true),
     searchSongs: (platform: string, keyword: string, limit?: number): Promise<PlatformSong[]> =>
       ipcRenderer.invoke('platform:search-songs', platform, keyword, limit),
     renamePlaylist: (platform: string, playlistId: string, name: string): Promise<void> =>

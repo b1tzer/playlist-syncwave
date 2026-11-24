@@ -7,8 +7,12 @@ import type { TranslationKey, TranslateParams } from '../i18n/translations'
 import { syncItemTitle } from '../sync/helpers'
 import SongList from './SongList'
 import ProgressBar from './ProgressBar'
+import LoadMoreSentinel from './LoadMoreSentinel'
 
 const log = createRendererLogger('renderer.sync-center')
+
+/** 任务列表滚动分页：首屏渲染条数 */
+const TASK_PAGE_SIZE = 30
 
 type Translate = (key: TranslationKey, params?: TranslateParams) => string
 
@@ -247,6 +251,9 @@ export default function SyncCenter({
 }: SyncCenterProps) {
   const { t } = useI18n()
   const [expandedId, setExpandedId] = useState<string | null>(null)
+  // 滚动分页：只渲染已加载部分，哨兵触发时追加下一页
+  const [visibleCount, setVisibleCount] = useState(TASK_PAGE_SIZE)
+  const visibleTasks = tasks.slice(0, visibleCount)
   const running = tasks.filter((task) => task.status === 'running').length
   const done = tasks.filter((task) => task.status === 'done').length
   const failed = tasks.filter((task) => task.status === 'failed').length
@@ -365,7 +372,7 @@ export default function SyncCenter({
           </div>
         )}
 
-        {tasks.map((task) => {
+        {visibleTasks.map((task, i) => {
           const expanded = expandedId === task.id
           const intervenable = intervenableIds.includes(task.id)
           const statusMeta = STATUS_META[task.status]
@@ -376,7 +383,8 @@ export default function SyncCenter({
                 log.debug('sync.toggle-detail', '展开/收起任务详情', { taskId: task.id })
                 setExpandedId(expanded ? null : task.id)
               }}
-              className="cursor-pointer rounded-lg border border-outline-variant bg-surface-container-low p-4 transition-colors hover:border-outline"
+              className="list-item-enter cursor-pointer rounded-lg border border-outline-variant bg-surface-container-low p-4 transition-colors hover:border-outline"
+              style={{ animationDelay: `${Math.min(i, 15) * 24}ms` }}
             >
               <div className="flex items-center justify-between">
                 <div className="flex min-w-0 items-center gap-2">
@@ -464,16 +472,25 @@ export default function SyncCenter({
               )}
 
               {expanded && (
-                <TaskDetailSection
-                  task={task}
-                  intervenable={intervenable}
-                  onStop={() => onStopTask(task.id)}
-                  onSkip={() => onSkipTask(task.id)}
-                />
+                <div className="detail-enter">
+                  <TaskDetailSection
+                    task={task}
+                    intervenable={intervenable}
+                    onStop={() => onStopTask(task.id)}
+                    onSkip={() => onSkipTask(task.id)}
+                  />
+                </div>
               )}
             </div>
           )
         })}
+        {tasks.length > visibleCount && (
+          <LoadMoreSentinel
+            onVisible={() =>
+              setVisibleCount((c) => Math.min(tasks.length, c + TASK_PAGE_SIZE))
+            }
+          />
+        )}
       </div>
     </div>
   )

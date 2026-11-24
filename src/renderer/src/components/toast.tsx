@@ -116,10 +116,10 @@ export function ToastHost() {
     setToasts((prev) =>
       prev.map((t) => (t.id === id && !t.leaving ? { ...t, leaving: true } : t)),
     )
-    // 退出动画播完再从堆栈移除
+    // 退出动画播完再从堆栈移除（与 toast-leave 0.25s 时长一致）
     setTimeout(() => {
       setToasts((prev) => prev.filter((t) => t.id !== id))
-    }, 220)
+    }, 250)
   }
 
   return (

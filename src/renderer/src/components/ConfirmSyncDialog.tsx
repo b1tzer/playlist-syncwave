@@ -185,8 +185,8 @@ export default function ConfirmSyncDialog({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-      <div className="flex h-[32rem] max-h-[85vh] w-[36rem] flex-col overflow-hidden rounded-lg border border-outline-variant bg-surface-container">
+    <div className="dialog-backdrop-enter fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+      <div className="dialog-panel-enter flex h-[32rem] max-h-[85vh] w-[36rem] flex-col overflow-hidden rounded-lg border border-outline-variant bg-surface-container">
         {confirmResult ? (
           // --- 完成态：同步结果摘要 ---
           <div className="p-5">

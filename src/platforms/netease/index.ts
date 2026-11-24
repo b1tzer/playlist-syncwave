@@ -97,10 +97,25 @@ export class NeteaseAdapter extends BasePlatformAdapter {
   }
 
   protected async fetchPlaylists(cookie: string, userId: string): Promise<PlatformPlaylist[]> {
-    const res = asObject(await callNcm(this.api.user_playlist!, { uid: userId, cookie }))
-    const list = asObject(res.body).playlist
-    if (!Array.isArray(list)) return []
-    return list
+    const raw: JsonObject[] = []
+    const pageSize = 100
+    // 接口默认 limit=30：必须显式分页拉取，否则超过 30 个歌单会被截断。
+    // 防御上限 50 页（5000 个歌单），避免接口异常时无限循环。
+    for (let page = 0; page < 50; page++) {
+      const res = asObject(
+        await callNcm(this.api.user_playlist!, {
+          uid: userId,
+          cookie,
+          limit: pageSize,
+          offset: page * pageSize,
+        }),
+      )
+      const body = asObject(res.body)
+      const list = asArray(body.playlist)
+      raw.push(...list.map((p) => asObject(p)))
+      if (body.more === false || list.length < pageSize) break
+    }
+    return raw
       .map((p) => asObject(p))
       // 过滤收藏类特殊歌单：specialType=5 是「我喜欢的音乐」收藏夹
       .filter((item) => Number(item.specialType ?? 0) === 0)

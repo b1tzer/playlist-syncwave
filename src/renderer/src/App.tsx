@@ -301,7 +301,10 @@ export default function App() {
         </header>
 
         <main className="flex-1 overflow-y-auto">
-          <div className={`px-6 py-6 ${view === 'playlists' ? 'flex h-full flex-col' : ''}`}>
+          <div
+            key={view}
+            className={`view-enter px-6 py-6 ${view === 'playlists' ? 'flex h-full flex-col' : ''}`}
+          >
             {view === 'create' && (
               <TextCreator
                 platforms={platforms}
