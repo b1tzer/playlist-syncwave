@@ -8,12 +8,12 @@ const log = createRendererLogger('renderer.nav')
 
 export type View = 'create' | 'playlists' | 'sync' | 'accounts' | 'settings'
 
-const NAV_ITEMS: Array<{ id: View; labelKey: TranslationKey; icon: string; shortcut?: string }> = [
-  { id: 'create', labelKey: 'nav.create', icon: 'edit_note', shortcut: '⌘N' },
-  { id: 'playlists', labelKey: 'nav.playlists', icon: 'queue_music', shortcut: '⌘P' },
-  { id: 'sync', labelKey: 'nav.sync', icon: 'sync_alt', shortcut: '⌘S' },
-  { id: 'accounts', labelKey: 'nav.accounts', icon: 'switch_account', shortcut: '⌘A' },
-  { id: 'settings', labelKey: 'nav.settings', icon: 'settings', shortcut: '⌘,' },
+const NAV_ITEMS: Array<{ id: View; labelKey: TranslationKey; icon: string }> = [
+  { id: 'create', labelKey: 'nav.create', icon: 'edit_note' },
+  { id: 'playlists', labelKey: 'nav.playlists', icon: 'queue_music' },
+  { id: 'sync', labelKey: 'nav.sync', icon: 'sync_alt' },
+  { id: 'accounts', labelKey: 'nav.accounts', icon: 'switch_account' },
+  { id: 'settings', labelKey: 'nav.settings', icon: 'settings' },
 ]
 
 interface SidebarProps {
@@ -74,11 +74,6 @@ export default function Sidebar({ view, onNavigate, runningTasks, accounts }: Si
               {item.id === 'sync' && runningTasks > 0 && (
                 <span className="rounded-full bg-primary px-1.5 py-0.5 font-label-sm text-label-sm font-medium text-on-primary">
                   {runningTasks}
-                </span>
-              )}
-              {item.shortcut && (
-                <span className="font-label-mono text-label-mono text-outline">
-                  {item.shortcut}
                 </span>
               )}
             </button>

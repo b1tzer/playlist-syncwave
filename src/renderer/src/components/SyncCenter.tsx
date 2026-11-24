@@ -277,7 +277,6 @@ export default function SyncCenter({
         >
           <span className="material-symbols-outlined text-base">add</span>
           {t('syncCenter.newTask')}
-          <span className="font-label-mono text-label-mono opacity-70">⌘N</span>
         </button>
       </div>
 

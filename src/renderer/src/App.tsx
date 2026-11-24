@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { PlatformAccount, PlatformMeta } from '@core/models/platform'
 import Sidebar, { type View } from './components/Sidebar'
 import TextCreator from './components/TextCreator'
@@ -22,7 +22,6 @@ export default function App() {
   const [accounts, setAccounts] = useState<Record<string, PlatformAccount | null>>({})
   const [tasks, setTasks] = useState<SyncTaskRecord[]>([])
   const [search, setSearch] = useState('')
-  const searchRef = useRef<HTMLInputElement>(null)
 
   // 待确认同步会话提升到 App 层：分步确认弹窗挂载于此，切换视图不丢失
   const [pendingConfirm, setPendingConfirm] = useState<PendingConfirmSession | null>(null)
@@ -260,39 +259,6 @@ export default function App() {
     if (value.trim() && view !== 'playlists') setView('playlists')
   }
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (!(e.metaKey || e.ctrlKey)) return
-      const k = e.key.toLowerCase()
-      const navigate = (target: View) => {
-        log.info('nav.shortcut', '快捷键切换视图', { key: k, view: target })
-        setView(target)
-      }
-      if (k === 'n') {
-        e.preventDefault()
-        navigate('create')
-      } else if (k === 'p') {
-        e.preventDefault()
-        navigate('playlists')
-      } else if (k === 's') {
-        e.preventDefault()
-        navigate('sync')
-      } else if (k === 'a') {
-        e.preventDefault()
-        navigate('accounts')
-      } else if (k === ',') {
-        e.preventDefault()
-        navigate('settings')
-      } else if (k === 'k') {
-        e.preventDefault()
-        log.debug('nav.focus-search', '快捷键聚焦搜索框')
-        searchRef.current?.focus()
-      }
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [])
-
   const runningTasks = tasks.filter((t) => t.status === 'running').length
 
   // 可介入（停止/跳过）的任务：执行中，且不在「等待手动确认选择」阶段（确认弹窗执行写入时也允许停止）
@@ -315,7 +281,6 @@ export default function App() {
           <div className="flex w-96 items-center gap-2 rounded-lg border border-outline-variant bg-surface-container-low px-3 py-2 transition-colors focus-within:border-primary">
             <span className="material-symbols-outlined text-base text-outline">search</span>
             <input
-              ref={searchRef}
               value={search}
               onChange={(e) => handleSearch(e.target.value)}
               placeholder={t('app.searchPlaceholder')}
@@ -332,7 +297,6 @@ export default function App() {
                 <span className="material-symbols-outlined text-base">close</span>
               </button>
             )}
-            <span className="shrink-0 font-label-mono text-label-mono text-outline">⌘K</span>
           </div>
         </header>
 
