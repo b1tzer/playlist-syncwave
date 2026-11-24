@@ -41,6 +41,7 @@ export default function SettingsView() {
   const [proxyUrl, setProxyUrl] = useState('')
   const [proxyDraft, setProxyDraft] = useState('')
   const [theme, setTheme] = useState<Theme>('dark')
+  const [version, setVersion] = useState('')
 
   const handleProxyApply = async () => {
     try {
@@ -119,6 +120,12 @@ export default function SettingsView() {
         if (value === 'light' || value === 'dark') setTheme(value)
       })
       .catch(() => {})
+    window.electronAPI
+      .getVersion()
+      .then(setVersion)
+      .catch((e) => {
+        log.debug('settings.version', '查询应用版本失败', e)
+      })
   }, [])
 
   return (
@@ -377,7 +384,7 @@ export default function SettingsView() {
           description={t('settings.aboutDesc')}
         >
           <span className="font-label-mono text-label-mono text-outline">
-            Electron · React · Tailwind
+            {version ? `SyncWave v${version}` : 'Electron · React · Tailwind'}
           </span>
         </SettingRow>
       </div>

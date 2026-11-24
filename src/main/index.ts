@@ -136,6 +136,37 @@ app.whenReady().then(() => {
   startKeepAliveScheduler()
 })
 
+/** 渲染进程崩溃弹窗防重入（单窗口应用仅一次提示） */
+let crashDialogShown = false
+
+/** 渲染进程崩溃：提示用户重启（应用数据已持久化，重启安全） */
+function handleRenderProcessGone(reason: string): void {
+  if (crashDialogShown) return
+  crashDialogShown = true
+  log.error('app.render-process-gone', '渲染进程异常退出', { reason })
+  const zh = getSetting<string>('language', 'zh-CN') !== 'en-US'
+  void dialog
+    .showMessageBox({
+      type: 'error',
+      title: zh ? 'SyncWave 遇到问题' : 'SyncWave ran into a problem',
+      message: zh ? '界面进程意外退出' : 'The interface process quit unexpectedly',
+      detail: zh
+        ? '数据已保存到本地。重启应用通常可以恢复；若反复出现，请反馈日志目录内容。'
+        : 'Your data is saved locally. Restarting usually fixes this; please share your logs if it keeps happening.',
+      buttons: [zh ? '重启应用' : 'Restart', zh ? '关闭' : 'Quit'],
+      defaultId: 0,
+      cancelId: 1,
+    })
+    .then(({ response }) => {
+      if (response === 0) {
+        app.relaunch()
+        app.exit(0)
+      } else {
+        app.quit()
+      }
+    })
+}
+
 function createWindow(): void {
   const state = loadWindowState()
   const win = new BrowserWindow({
@@ -153,6 +184,12 @@ function createWindow(): void {
 
   if (state.maximized) win.maximize()
   trackWindowState(win)
+
+  // 渲染进程崩溃兜底：除用户主动刷新导致的 killed 外均弹重启提示
+  win.webContents.on('render-process-gone', (_event, details) => {
+    if (details.reason === 'clean-exit') return
+    handleRenderProcessGone(details.reason)
+  })
 
   log.info('window.create', '创建主窗口', { dev: isDev })
 
