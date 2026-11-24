@@ -1,23 +1,80 @@
-import { useCallback, useEffect, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+} from 'react'
 import type {
   PlatformAccount,
   PlatformMeta,
   PlatformPlaylist,
   PlatformSong,
 } from '@core/models/platform'
+import type { MatchQuery } from '@core/models/match'
+import type {
+  PendingConfirmSession,
+  SyncFailedItem,
+  SyncItemResult,
+  SyncTaskRecord,
+} from '@core/models/sync'
+import { normalize } from '@core/matcher/matchSong'
 import { createRendererLogger } from '../logging/rendererLogger'
 import { useI18n } from '../i18n'
+import SongList from './SongList'
+import { PLATFORM_LOGOS } from './platformLogos'
+import { notify } from './toast'
 
 const log = createRendererLogger('renderer.playlist')
+
+/** 歌曲去重键：标题+歌手归一化（与匹配引擎同口径） */
+const songDupKey = (s: { title: string; artist?: string }): string =>
+  `${normalize(s.title)}|${normalize(s.artist ?? '')}`
+
+const MENU_ITEM =
+  'flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 font-label-md text-label-md text-on-surface transition-colors hover:bg-surface-container-high'
 
 interface PlaylistSectionProps {
   platforms: PlatformMeta[]
   accounts: Record<string, PlatformAccount | null>
   searchQuery: string
+  /** 同步任务记录上报（同步中心展示与持久化） */
+  onTaskUpdate: (task: SyncTaskRecord) => void
+  /** 待确认会话（App 层持有，选择流程由 ConfirmSyncDialog 完成） */
+  pendingConfirm: PendingConfirmSession | null
+  onPendingConfirmChange: (session: PendingConfirmSession | null) => void
 }
 
-export default function PlaylistSection({ platforms, accounts, searchQuery }: PlaylistSectionProps) {
-  const { t } = useI18n()
+/** 歌单封面：缺省或加载失败回退音符图标 */
+function PlaylistCover({ playlist }: { playlist: PlatformPlaylist }) {
+  const [failed, setFailed] = useState(false)
+  if (!playlist.coverUrl || failed) {
+    return (
+      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-surface-container-high text-outline">
+        <span className="material-symbols-outlined text-base">queue_music</span>
+      </span>
+    )
+  }
+  return (
+    <img
+      src={playlist.coverUrl}
+      alt={playlist.name}
+      loading="lazy"
+      onError={() => setFailed(true)}
+      className="h-8 w-8 shrink-0 rounded-md object-cover"
+    />
+  )
+}
+
+export default function PlaylistSection({
+  platforms,
+  accounts,
+  searchQuery,
+  onTaskUpdate,
+  pendingConfirm,
+  onPendingConfirmChange,
+}: PlaylistSectionProps) {
+  const { t, formatTime, formatDate } = useI18n()
   const [active, setActive] = useState<string>('')
 
   // 平台列表动态变化时，校正当前选中的平台
@@ -32,6 +89,19 @@ export default function PlaylistSection({ platforms, accounts, searchQuery }: Pl
   const [loading, setLoading] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string>('')
+
+  // --- 歌单选择与右键菜单 ---
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
+  // 拖拽框选：mousedown 记录锚点，移动超阈值后进入框选，行 mouseenter 扩展范围
+  const dragRef = useRef<{ anchorId: string; startX: number; startY: number; moved: boolean } | null>(
+    null,
+  )
+  const suppressClickRef = useRef(false)
+
+  // --- 跨平台歌单同步状态 ---
+  const [syncRunning, setSyncRunning] = useState(false)
+  const [syncProgress, setSyncProgress] = useState<{ ratio: number; stage: string } | null>(null)
 
   // --- 歌单管理操作状态 ---
   const [renaming, setRenaming] = useState(false)
@@ -55,6 +125,34 @@ export default function PlaylistSection({ platforms, accounts, searchQuery }: Pl
     ? playlists.filter((p) => p.name.toLowerCase().includes(keyword))
     : playlists
 
+  const selectedPlaylists = playlists.filter((p) => selectedIds.has(p.id))
+  const singlePlaylist = selectedPlaylists.length === 1 ? selectedPlaylists[0] : null
+
+  /** 拖拽框选：锚点行到结束行（含）之间的可见行 */
+  const selectRange = (anchorId: string, endId: string): Set<string> => {
+    const idxA = visiblePlaylists.findIndex((p) => p.id === anchorId)
+    const idxB = visiblePlaylists.findIndex((p) => p.id === endId)
+    if (idxA === -1 || idxB === -1) return new Set([anchorId])
+    const [from, to] = idxA < idxB ? [idxA, idxB] : [idxB, idxA]
+    return new Set(visiblePlaylists.slice(from, to + 1).map((p) => p.id))
+  }
+
+  const handleRowMouseDown = (e: ReactMouseEvent, id: string) => {
+    if (e.button !== 0) return
+    dragRef.current = { anchorId: id, startX: e.clientX, startY: e.clientY, moved: false }
+  }
+
+  const handleRowMouseEnter = (id: string) => {
+    const drag = dragRef.current
+    if (!drag || !drag.moved) return
+    setSelectedIds(selectRange(drag.anchorId, id))
+  }
+  const sourceName = platforms.find((p) => p.id === active)?.name ?? active
+  /** 右键可同步到的目标平台：写能力 + 已登录 + 非源平台 */
+  const syncTargets = platforms.filter(
+    (p) => p.capabilities.write && p.id !== active && accounts[p.id] !== null,
+  )
+
   const fetchPlaylists = useCallback(async () => {
     if (!loggedIn) return
     setLoading(true)
@@ -63,6 +161,12 @@ export default function PlaylistSection({ platforms, accounts, searchQuery }: Pl
       const list = await window.electronAPI.platforms.userPlaylists(active)
       log.info('playlist.list.fetch', '拉取歌单列表', { platform: active, count: list.length })
       setPlaylists(list)
+      // 刷新后剔除已不存在的选择
+      setSelectedIds((prev) => {
+        const ids = new Set(list.map((p) => p.id))
+        const next = new Set([...prev].filter((id) => ids.has(id)))
+        return next.size === prev.size ? prev : next
+      })
     } catch (e) {
       log.error('playlist.list.fetch-failed', '拉取歌单列表失败', e, { platform: active })
       setError(e instanceof Error ? e.message : t('playlist.fetchFailed'))
@@ -75,8 +179,56 @@ export default function PlaylistSection({ platforms, accounts, searchQuery }: Pl
     setPlaylists([])
     setSongs([])
     setActiveId(null)
+    setSelectedIds(new Set())
+    setMenu(null)
     void fetchPlaylists()
   }, [fetchPlaylists])
+
+  // 右键菜单：点击外部或 Esc 关闭
+  useEffect(() => {
+    if (!menu) return
+    const close = () => setMenu(null)
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMenu(null)
+    }
+    window.addEventListener('mousedown', close)
+    window.addEventListener('keydown', onKey)
+    window.addEventListener('blur', close)
+    return () => {
+      window.removeEventListener('mousedown', close)
+      window.removeEventListener('keydown', onKey)
+      window.removeEventListener('blur', close)
+    }
+  }, [menu])
+
+  // 拖拽框选：全局监听移动/抬起，移动超阈值即进入框选
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      const drag = dragRef.current
+      if (!drag || drag.moved) return
+      if (Math.abs(e.clientX - drag.startX) > 5 || Math.abs(e.clientY - drag.startY) > 5) {
+        drag.moved = true
+        setSelectedIds(new Set([drag.anchorId]))
+      }
+    }
+    const onUp = () => {
+      const wasDrag = dragRef.current?.moved ?? false
+      dragRef.current = null
+      if (wasDrag) {
+        // 拖拽结束后在同一行释放会触发 click，先抑制一次打开行为
+        suppressClickRef.current = true
+        setTimeout(() => {
+          suppressClickRef.current = false
+        }, 0)
+      }
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+    return () => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+  }, [])
 
   const handleRefresh = async () => {
     log.info('playlist.list.refresh', '手动刷新歌单列表', { platform: active })
@@ -107,6 +259,55 @@ export default function PlaylistSection({ platforms, accounts, searchQuery }: Pl
       setError(e instanceof Error ? e.message : t('playlist.fetchSongsFailed'))
     } finally {
       setLoading(false)
+    }
+  }
+
+  // --- 歌单选择 ---
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const clearSelection = () => setSelectedIds(new Set())
+
+  /** 右键行：未选中则单选该行，随后在鼠标位置弹出菜单 */
+  const handleRowContextMenu = (e: ReactMouseEvent, playlist: PlatformPlaylist) => {
+    e.preventDefault()
+    log.debug('playlist.context-menu', '打开歌单右键菜单', { playlistId: playlist.id })
+    if (!selectedIds.has(playlist.id)) {
+      setSelectedIds(new Set([playlist.id]))
+    }
+    setMenu({
+      x: Math.min(e.clientX, window.innerWidth - 232),
+      y: Math.min(e.clientY, window.innerHeight - 320),
+    })
+  }
+
+  /** 右键重命名：目标歌单未激活时先激活，再进入头部内联编辑 */
+  const handleMenuRename = () => {
+    if (!singlePlaylist || !canManage) return
+    void openPlaylist(singlePlaylist.id)
+    setRenameDraft(singlePlaylist.name)
+    setRenaming(true)
+    setConfirmDelete(false)
+  }
+
+  const handleOpenUrl = async (url: string) => {
+    try {
+      await window.electronAPI.openExternal(url)
+    } catch (e) {
+      log.error('playlist.open-external-failed', '打开外部链接失败', e, {
+        platform: active,
+      })
+      notify(
+        'error',
+        t('playlist.openFailed', { reason: e instanceof Error ? e.message : 'unknown' }),
+      )
     }
   }
 
@@ -231,6 +432,229 @@ export default function PlaylistSection({ platforms, accounts, searchQuery }: Pl
     }
   }
 
+  // --- 跨平台歌单同步 ---
+
+  /** 同步失败条目按稳定 reason 码翻译；平台原始错误直接透传。 */
+  const failedMessage = (f: SyncFailedItem): string => {
+    const title = `${f.query.title}${f.query.artist ? ` - ${f.query.artist}` : ''}`
+    switch (f.reason) {
+      case 'no-match':
+        return t('sync.failedNoMatch', { title })
+      case 'unresolved':
+        return t('sync.failedUnresolved', { title })
+      case 'rate-limited':
+        return t('sync.failedRateLimited')
+      default:
+        return f.message
+    }
+  }
+
+  /** 把所选歌单的歌曲同步到目标平台（完整流程：拉歌 → 建任务 → 进度/选择/结果） */
+  const handleSyncTo = async (targetPlatform: string) => {
+    const selected = playlists.filter((p) => selectedIds.has(p.id))
+    if (selected.length === 0 || syncRunning || pendingConfirm !== null) return
+    const targetMeta = platforms.find((p) => p.id === targetPlatform)
+    if (!targetMeta || accounts[targetPlatform] === null) {
+      notify(
+        'error',
+        t('playlist.targetNotLoggedIn', { platform: targetMeta?.name ?? targetPlatform }),
+      )
+      return
+    }
+    log.info('playlist.sync-to', '从歌单发起跨平台同步', {
+      sourcePlatform: active,
+      targetPlatform,
+      playlistIds: selected.map((p) => p.id),
+    })
+    setSyncRunning(true)
+    setSyncProgress(null)
+    setError('')
+    try {
+      // 拉取所选歌单歌曲并去重
+      const seen = new Set<string>()
+      const queries: MatchQuery[] = []
+      for (const p of selected) {
+        const list = await window.electronAPI.platforms.playlistSongs(active, p.id)
+        for (const s of list) {
+          const key = songDupKey(s)
+          if (seen.has(key)) continue
+          seen.add(key)
+          queries.push({ title: s.title, artist: s.artist })
+        }
+      }
+      if (queries.length === 0) {
+        notify('error', t('playlist.emptySyncSource'))
+        return
+      }
+
+      const taskId = `task-${Date.now()}`
+      const createdAt = formatTime(new Date())
+      const name =
+        selected.length === 1
+          ? selected[0].name
+          : t('playlist.syncNameMultiple', { name: selected[0].name, count: selected.length })
+      const detailRef: SyncItemResult[] = []
+      const baseTask: SyncTaskRecord = {
+        id: taskId,
+        name,
+        targetPlatform,
+        source: 'playlist-import',
+        status: 'running',
+        total: queries.length,
+        added: 0,
+        failed: 0,
+        createdAt,
+        progress: 0,
+        failedDetail: [],
+        detail: [],
+      }
+      onTaskUpdate(baseTask)
+
+      const offProgress = window.electronAPI.platforms.onSyncProgress((p) => {
+        if (p.taskId !== taskId) return
+        setSyncProgress(p)
+        onTaskUpdate({ ...baseTask, progress: p.ratio, detail: [...detailRef] })
+      })
+      const offStep = window.electronAPI.platforms.onSyncStep((step) => {
+        if (step.taskId !== taskId) return
+        const idx = detailRef.findIndex((d) => d.index === step.item.index)
+        if (idx === -1) detailRef.push(step.item)
+        else detailRef[idx] = step.item
+        onTaskUpdate({ ...baseTask, progress: baseTask.progress, detail: [...detailRef] })
+      })
+
+      try {
+        const { taskId: syncTaskId, report: rep } = await window.electronAPI.platforms.syncPlaylist(
+          targetPlatform,
+          taskId,
+          queries,
+          name,
+          formatDate(new Date()),
+        )
+        const finalDetail = rep.items ?? [...detailRef]
+
+        if (rep.status === 'choice-needed') {
+          log.info('playlist.sync-choice-needed', '歌单同步需要手动选择', {
+            targetPlatform,
+            choices: rep.choices.length,
+          })
+          const runningTask: SyncTaskRecord = {
+            ...baseTask,
+            name: rep.playlistName,
+            failed: rep.failed.length,
+            progress: 1,
+            failedDetail: rep.failed.map(failedMessage),
+            detail: finalDetail,
+          }
+          onTaskUpdate(runningTask)
+          onPendingConfirmChange({
+            syncTaskId,
+            task: runningTask,
+            target: targetPlatform,
+            choices: rep.choices,
+          })
+          return
+        }
+
+        if (rep.status === 'stopped') {
+          log.info('playlist.sync-stopped', '歌单同步被用户停止', {
+            targetPlatform,
+            added: rep.added,
+          })
+          onTaskUpdate({
+            ...baseTask,
+            name: rep.playlistName,
+            status: 'stopped',
+            added: rep.added,
+            failed: rep.failed.length,
+            progress: 1,
+            failedDetail: rep.failed.map(failedMessage),
+            detail: finalDetail,
+          })
+          notify(
+            'warning',
+            t('toast.syncStoppedTitle'),
+            t('toast.syncStoppedDetail', { name: rep.playlistName }),
+          )
+          return
+        }
+
+        const ok = rep.playlistId !== ''
+        log.info('playlist.sync-done', '歌单同步结束', {
+          targetPlatform,
+          playlistId: rep.playlistId,
+          added: rep.added,
+          failed: rep.failed.length,
+        })
+        if (ok) {
+          if (rep.failed.length > 0) {
+            notify(
+              'warning',
+              t('toast.syncDoneTitle'),
+              t('toast.syncPartialDetail', {
+                added: rep.added,
+                total: rep.total,
+                name: rep.playlistName,
+                failed: rep.failed.length,
+              }),
+            )
+          } else {
+            notify(
+              'success',
+              t('toast.syncDoneTitle'),
+              t('toast.syncDoneDetail', {
+                added: rep.added,
+                total: rep.total,
+                name: rep.playlistName,
+              }),
+            )
+          }
+        } else {
+          notify(
+            'error',
+            t('toast.syncNoneTitle'),
+            t('toast.syncNoneDetail', { count: rep.failed.length || rep.total }),
+          )
+        }
+        onTaskUpdate({
+          ...baseTask,
+          name: rep.playlistName,
+          status: ok ? 'done' : 'failed',
+          added: rep.added,
+          failed: rep.failed.length,
+          progress: 1,
+          failedDetail: rep.failed.map(failedMessage),
+          detail: finalDetail,
+        })
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : t('sync.failedGeneric')
+        log.error('playlist.sync-failed', '歌单同步失败', e, {
+          sourcePlatform: active,
+          targetPlatform,
+        })
+        notify('error', t('toast.syncFailedTitle'), msg)
+        onTaskUpdate({
+          ...baseTask,
+          status: 'failed',
+          added: 0,
+          failed: queries.length,
+          progress: 1,
+          failedDetail: [msg],
+          detail: [...detailRef],
+        })
+      } finally {
+        offProgress()
+        offStep()
+      }
+    } catch (e) {
+      log.error('playlist.sync-gather-failed', '拉取歌单歌曲失败', e, { sourcePlatform: active })
+      notify('error', t('playlist.fetchSongsFailed'))
+    } finally {
+      setSyncRunning(false)
+      setSyncProgress(null)
+    }
+  }
+
   return (
     <div>
       <div className="flex items-start justify-between">
@@ -256,7 +680,11 @@ export default function PlaylistSection({ platforms, accounts, searchQuery }: Pl
                   : 'text-on-surface-variant hover:text-on-surface'
               }`}
             >
-              <span className="material-symbols-outlined text-base">{p.icon}</span>
+              {PLATFORM_LOGOS[p.id] ? (
+                <img src={PLATFORM_LOGOS[p.id]} alt={p.name} className="h-5 w-5 object-contain" />
+              ) : (
+                <span className="material-symbols-outlined text-base">{p.icon}</span>
+              )}
               {p.name}
             </button>
           ))}
@@ -277,7 +705,7 @@ export default function PlaylistSection({ platforms, accounts, searchQuery }: Pl
         </div>
       ) : (
         <div className="mt-6 flex gap-4">
-          <div className="w-64 shrink-0">
+          <div className="w-72 shrink-0">
             <div className="rounded-lg border border-outline-variant bg-surface-container-low">
               <div className="flex items-center justify-between border-b border-outline-variant px-3 py-2">
                 <div className="flex items-center gap-1.5">
@@ -297,11 +725,26 @@ export default function PlaylistSection({ platforms, accounts, searchQuery }: Pl
                     </span>
                   </button>
                 </div>
-                <span className="font-label-mono text-label-mono text-outline">
-                  {playlists.length}
-                </span>
+                {selectedIds.size > 0 ? (
+                  <div className="flex items-center gap-1">
+                    <span className="font-label-mono text-label-mono text-primary">
+                      {t('playlist.selectedCount', { count: selectedIds.size })}
+                    </span>
+                    <button
+                      onClick={clearSelection}
+                      title={t('playlist.clearSelection')}
+                      className="flex items-center rounded-md p-0.5 text-outline transition-colors hover:bg-surface-container-highest hover:text-on-surface"
+                    >
+                      <span className="material-symbols-outlined text-sm">close</span>
+                    </button>
+                  </div>
+                ) : (
+                  <span className="font-label-mono text-label-mono text-outline">
+                    {playlists.length}
+                  </span>
+                )}
               </div>
-              <ul className="max-h-[32rem] space-y-0.5 overflow-y-auto p-1.5">
+              <ul className="max-h-[32rem] select-none space-y-0.5 overflow-y-auto p-1.5">
                 {loading && playlists.length === 0 && (
                   <li className="px-2 py-2 font-label-md text-label-md text-outline">
                     {t('common.loading')}
@@ -314,28 +757,71 @@ export default function PlaylistSection({ platforms, accounts, searchQuery }: Pl
                 )}
                 {visiblePlaylists.map((p) => (
                   <li key={p.id}>
-                    <button
-                      onClick={() => openPlaylist(p.id)}
-                      className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left transition-colors ${
+                    <div
+                      role="button"
+                      tabIndex={0}
+                      onClick={(e) => {
+                        if (suppressClickRef.current) {
+                          suppressClickRef.current = false
+                          return
+                        }
+                        if (e.metaKey || e.ctrlKey) {
+                          toggleSelect(p.id)
+                          return
+                        }
+                        void openPlaylist(p.id)
+                      }}
+                      onMouseDown={(e) => handleRowMouseDown(e, p.id)}
+                      onMouseEnter={() => handleRowMouseEnter(p.id)}
+                      onContextMenu={(e) => handleRowContextMenu(e, p)}
+                      className={`flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors ${
                         activeId === p.id
                           ? 'bg-primary-container/15 text-primary'
-                          : 'text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface'
+                          : selectedIds.has(p.id)
+                            ? 'bg-primary/10 text-on-surface'
+                            : 'text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface'
                       }`}
                     >
-                      <span className="material-symbols-outlined text-base">
-                        {activeId === p.id ? 'playlist_play' : 'queue_music'}
-                      </span>
+                      <PlaylistCover playlist={p} />
                       <span className="min-w-0 flex-1 truncate font-body-md text-body-md">
                         {p.name}
                       </span>
                       <span className="font-label-mono text-label-mono text-outline">
                         {p.songCount}
                       </span>
-                    </button>
+                    </div>
                   </li>
                 ))}
               </ul>
             </div>
+
+            {syncRunning && (
+              <div className="mt-2 rounded-lg border border-outline-variant bg-surface-container-low p-2">
+                {syncProgress ? (
+                  <>
+                    <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface-container-highest">
+                      <div
+                        className="h-full rounded-full bg-primary transition-all"
+                        style={{ width: `${Math.round(syncProgress.ratio * 100)}%` }}
+                      />
+                    </div>
+                    <p className="mt-1 font-label-sm text-label-sm text-on-surface-variant">
+                      {syncProgress.stage === 'matching'
+                        ? t('textCreator.matching')
+                        : t('textCreator.adding')}{' '}
+                      {Math.round(syncProgress.ratio * 100)}%
+                    </p>
+                  </>
+                ) : (
+                  <p className="flex items-center gap-1.5 font-label-sm text-label-sm text-on-surface-variant">
+                    <span className="material-symbols-outlined animate-spin text-sm">
+                      progress_activity
+                    </span>
+                    {t('playlist.syncGathering')}
+                  </p>
+                )}
+              </div>
+            )}
           </div>
 
           <div className="min-w-0 flex-1 rounded-lg border border-outline-variant bg-surface-container-low">
@@ -460,19 +946,18 @@ export default function PlaylistSection({ platforms, accounts, searchQuery }: Pl
                   </button>
                 </div>
                 {searchResults && (
-                  <ul className="mt-2 max-h-40 divide-y divide-outline-variant overflow-y-auto rounded-md border border-outline-variant">
+                  <div className="mt-2">
                     {searchResults.length === 0 ? (
-                      <li className="px-3 py-2 font-label-sm text-label-sm text-outline">
+                      <p className="rounded-md border border-outline-variant px-3 py-2 font-label-sm text-label-sm text-outline">
                         {t('playlist.noSearchResult')}
-                      </li>
+                      </p>
                     ) : (
-                      searchResults.map((s) => (
-                        <li
-                          key={s.id}
-                          className="flex items-center gap-3 px-3 py-1.5 font-body-md text-body-md"
-                        >
-                          <span className="min-w-0 flex-1 truncate">{s.title}</span>
-                          <span className="truncate text-on-surface-variant">{s.artist}</span>
+                      <SongList
+                        songs={searchResults}
+                        showIndex={false}
+                        maxHeightClass="max-h-64"
+                        className="rounded-md border border-outline-variant"
+                        renderAction={(s) => (
                           <button
                             onClick={() => void handleAddSong(s)}
                             disabled={addingIds.has(s.id)}
@@ -483,44 +968,109 @@ export default function PlaylistSection({ platforms, accounts, searchQuery }: Pl
                             </span>
                             {t('playlist.added')}
                           </button>
-                        </li>
-                      ))
+                        )}
+                      />
                     )}
-                  </ul>
+                  </div>
                 )}
               </div>
             )}
             {!loading && activeId && (
-              <ul className="max-h-[30rem] divide-y divide-outline-variant overflow-y-auto">
-                {songs.map((s, i) => (
-                  <li
-                    key={s.id}
-                    className="group flex items-center gap-3 px-4 py-1.5 font-body-md text-body-md"
-                  >
-                    <span className="w-6 shrink-0 text-right font-label-mono text-label-mono text-outline">
-                      {i + 1}
-                    </span>
-                    <span className="truncate">{s.title}</span>
-                    <span className="truncate text-on-surface-variant">{s.artist}</span>
-                    {canManage && (
-                      <button
-                        onClick={() => void handleRemoveSong(s.id)}
-                        disabled={removingIds.has(s.id)}
-                        title={t('playlist.removeSong')}
-                        className="ml-auto flex shrink-0 items-center rounded-md p-1 text-on-surface-variant opacity-0 transition-all hover:bg-error/10 hover:text-error group-hover:opacity-100 disabled:opacity-50"
+              <SongList
+                songs={songs}
+                maxHeightClass="max-h-[30rem]"
+                renderAction={(s) =>
+                  canManage ? (
+                    <button
+                      onClick={() => void handleRemoveSong(s.id)}
+                      disabled={removingIds.has(s.id)}
+                      title={t('playlist.removeSong')}
+                      className="flex shrink-0 items-center rounded-md p-1 text-on-surface-variant opacity-0 transition-all hover:bg-error/10 hover:text-error group-hover:opacity-100 disabled:opacity-50"
+                    >
+                      <span
+                        className={`material-symbols-outlined text-base ${removingIds.has(s.id) ? 'animate-spin' : ''}`}
                       >
-                        <span
-                          className={`material-symbols-outlined text-base ${removingIds.has(s.id) ? 'animate-spin' : ''}`}
-                        >
-                          {removingIds.has(s.id) ? 'progress_activity' : 'playlist_remove'}
-                        </span>
-                      </button>
-                    )}
-                  </li>
-                ))}
-              </ul>
+                        {removingIds.has(s.id) ? 'progress_activity' : 'playlist_remove'}
+                      </span>
+                    </button>
+                  ) : null
+                }
+              />
             )}
           </div>
+        </div>
+      )}
+
+      {menu && (
+        <div
+          role="menu"
+          onMouseDown={(e) => e.stopPropagation()}
+          style={{ left: menu.x, top: menu.y }}
+          className="fixed z-50 w-56 rounded-lg border border-outline-variant bg-surface-container p-1 shadow-lg shadow-black/40"
+        >
+          {singlePlaylist && canManage && (
+            <button
+              type="button"
+              onClick={() => {
+                setMenu(null)
+                handleMenuRename()
+              }}
+              className={MENU_ITEM}
+            >
+              <span className="material-symbols-outlined text-base">edit</span>
+              {t('playlist.rename')}
+            </button>
+          )}
+          {singlePlaylist && canManage && syncTargets.length > 0 && (
+            <div className="my-1 h-px bg-outline-variant" />
+          )}
+          {syncTargets.map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              onClick={() => {
+                setMenu(null)
+                void handleSyncTo(p.id)
+              }}
+              className={MENU_ITEM}
+            >
+              {PLATFORM_LOGOS[p.id] ? (
+                <img src={PLATFORM_LOGOS[p.id]} alt={p.name} className="h-4 w-4 object-contain" />
+              ) : (
+                <span className="material-symbols-outlined text-base">{p.icon}</span>
+              )}
+              {t('playlist.syncToPlatform', { platform: p.name })}
+            </button>
+          ))}
+          {(singlePlaylist?.appUrl ?? singlePlaylist?.webUrl) && (
+            <div className="my-1 h-px bg-outline-variant" />
+          )}
+          {singlePlaylist?.appUrl && (
+            <button
+              type="button"
+              onClick={() => {
+                setMenu(null)
+                void handleOpenUrl(singlePlaylist.appUrl as string)
+              }}
+              className={MENU_ITEM}
+            >
+              <span className="material-symbols-outlined text-base">open_in_new</span>
+              {t('playlist.openInApp', { platform: sourceName })}
+            </button>
+          )}
+          {singlePlaylist?.webUrl && (
+            <button
+              type="button"
+              onClick={() => {
+                setMenu(null)
+                void handleOpenUrl(singlePlaylist.webUrl as string)
+              }}
+              className={MENU_ITEM}
+            >
+              <span className="material-symbols-outlined text-base">public</span>
+              {t('playlist.openInBrowser')}
+            </button>
+          )}
         </div>
       )}
     </div>

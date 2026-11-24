@@ -1,6 +1,11 @@
 import { describe, it, expect, vi } from 'vitest'
 import { executeSync, planSync, syncPlaylist } from '@core/sync/syncPlaylist'
-import { SearchError, type SyncOptions, type SyncTarget } from '@core/models/sync'
+import {
+  SearchError,
+  SyncAbortedError,
+  type SyncOptions,
+  type SyncTarget,
+} from '@core/models/sync'
 import type { MatchQuery } from '@core/models/match'
 import type { PlatformSong } from '@core/models/platform'
 
@@ -556,5 +561,157 @@ describe('planSync — 映射缓存（SQLite 命中免搜索）', () => {
     })
     await planSync([{ title: '晴天', artist: '周杰伦' }], target, { searchIntervalMs: 0 })
     expect(saved).toEqual(['1'])
+  })
+})
+
+describe('同步引擎 — 介入控制与任务明细（T9）', () => {
+  it('report.items 覆盖全部歌曲：matched/choice/failed 均有明细', async () => {
+    const target = makeTarget({
+      晴天: [song('1', '晴天', '周杰伦')],
+      勇气: [song('2', '勇气', '棉子'), song('3', '勇气', '金志文')],
+    })
+    const report = await run(
+      [
+        { title: '晴天', artist: '周杰伦' },
+        { title: '勇气', artist: '梁静茹' },
+        { title: '不存在的歌', artist: '某人' },
+      ],
+      'x',
+      target,
+    )
+    expect(report.status).toBe('choice-needed')
+    expect(report.items).toHaveLength(3)
+    expect(report.items[0]).toMatchObject({ index: 0, status: 'matched', songId: '1' })
+    expect(report.items[1]).toMatchObject({ index: 1, status: 'choice' })
+    expect(report.items[2]).toMatchObject({ index: 2, status: 'failed', reason: 'no-match' })
+  })
+
+  it('onStep 逐首回调：每次处理一首触发一次且带 index', async () => {
+    const target = makeTarget({
+      晴天: [song('1', '晴天', '周杰伦')],
+      稻香: [song('2', '稻香', '周杰伦')],
+    })
+    const steps: Array<{ index: number; status: string }> = []
+    await run([{ title: '晴天' }, { title: '稻香' }], 'x', target, {
+      onStep: (item) => steps.push({ index: item.index, status: item.status }),
+    })
+    expect(steps).toEqual([
+      { index: 0, status: 'matched' },
+      { index: 1, status: 'matched' },
+    ])
+  })
+
+  it('skipCheck 为真 → 跳过该首记 skipped，不搜索，不中断整体', async () => {
+    const target = makeTarget({
+      晴天: [song('1', '晴天', '周杰伦')],
+      稻香: [song('2', '稻香', '周杰伦')],
+    })
+    // 主进程语义：跳过请求一次性消耗（第一次询问返回 true，后续返回 false）
+    const skipFirst = vi.fn().mockReturnValueOnce(true).mockReturnValue(false)
+    const report = await run(
+      [{ title: '晴天' }, { title: '稻香' }],
+      'x',
+      target,
+      { skipCheck: skipFirst },
+    )
+    expect(skipFirst).toHaveBeenCalledTimes(2)
+    expect(target.searchSongs).not.toHaveBeenCalledWith('晴天', 10)
+    expect(report.added).toBe(1)
+    expect(report.failed).toHaveLength(1)
+    expect(report.failed[0].reason).toBe('skipped')
+    expect(report.items[0]).toMatchObject({ index: 0, status: 'skipped', reason: 'skipped' })
+    expect(report.items[1]).toMatchObject({ index: 1, status: 'matched' })
+  })
+
+  it('signal 中止 → planSync 抛 SyncAbortedError，partial 保留已处理明细', async () => {
+    const target = makeTarget({
+      晴天: [song('1', '晴天', '周杰伦')],
+      稻香: [song('2', '稻香', '周杰伦')],
+    })
+    const ctrl = new AbortController()
+    target.searchSongs = vi.fn(async (keyword: string) => {
+      // 第一首歌搜索完成后请求停止：第二首开始前的检查点应抛错
+      if (keyword === '晴天') ctrl.abort()
+      return keyword === '晴天'
+        ? [song('1', '晴天', '周杰伦')]
+        : [song('2', '稻香', '周杰伦')]
+    })
+    let caught: SyncAbortedError | null = null
+    try {
+      await planSync([{ title: '晴天' }, { title: '稻香' }], target, {
+        searchIntervalMs: 0,
+        signal: ctrl.signal,
+      })
+    } catch (e) {
+      caught = e as SyncAbortedError
+    }
+    expect(caught).toBeInstanceOf(SyncAbortedError)
+    expect(caught?.partial.total).toBe(2)
+    expect(caught?.partial.items.map((i) => i.status)).toEqual(['matched'])
+    expect(caught?.partial.failed).toEqual([])
+  })
+
+  it('executeSync 批次之间中止 → 抛 SyncAbortedError，已写入批次保留', async () => {
+    const target = makeTarget({
+      晴天: [song('1', '晴天', '周杰伦')],
+      稻香: [song('2', '稻香', '周杰伦')],
+    })
+    const plan = await planSync([{ title: '晴天' }, { title: '稻香' }], target, {
+      searchIntervalMs: 0,
+    })
+    const ctrl = new AbortController()
+    target.addSongs = vi.fn(async () => {
+      // 第一批写入后请求停止：下一批开始前的检查点应抛错
+      ctrl.abort()
+    })
+    let caught: SyncAbortedError | null = null
+    try {
+      await executeSync(plan, [], 'x', target, { batchSize: 1, signal: ctrl.signal })
+    } catch (e) {
+      caught = e as SyncAbortedError
+    }
+    expect(caught).toBeInstanceOf(SyncAbortedError)
+    expect(caught?.partial.added).toBe(1)
+    expect(caught?.partial.playlistId).toBe('pl-x')
+    expect(caught?.partial.items).toHaveLength(2)
+  })
+
+  it('executeSync：add-failed 与 unresolved 同步回写明细清单', async () => {
+    const target = makeTarget({
+      晴天: [song('1', '晴天', '周杰伦')],
+      勇气: [song('2', '勇气', '棉子'), song('3', '勇气', '金志文')],
+      稻香: [song('4', '稻香', '周杰伦')],
+    })
+    const plan = await planSync(
+      [{ title: '晴天' }, { title: '勇气' }, { title: '稻香' }],
+      target,
+      { searchIntervalMs: 0 },
+    )
+    expect(plan.choices).toHaveLength(1)
+    let call = 0
+    target.addSongs = vi.fn(async () => {
+      call++
+      if (call === 2) throw new Error('添加失败')
+    })
+    const report = await executeSync(plan, [], 'x', target, { batchSize: 1 })
+    const items = report.items
+    expect(items[0]).toMatchObject({ status: 'matched', songId: '1' })
+    expect(items[1]).toMatchObject({ status: 'failed', reason: 'unresolved' })
+    expect(items[2]).toMatchObject({ status: 'failed', reason: 'add-failed' })
+    expect(report.added).toBe(1)
+  })
+
+  it('建单前中止 → 不建单，partial 无 playlistId', async () => {
+    const target = makeTarget({ 晴天: [song('1', '晴天', '周杰伦')] })
+    const plan = await planSync([{ title: '晴天' }], target, { searchIntervalMs: 0 })
+    const ctrl = new AbortController()
+    ctrl.abort()
+    try {
+      await executeSync(plan, [], 'x', target, { signal: ctrl.signal })
+      throw new Error('应当抛出 SyncAbortedError')
+    } catch (e) {
+      expect(e).toBeInstanceOf(SyncAbortedError)
+      expect(target.createPlaylist).not.toHaveBeenCalled()
+    }
   })
 })

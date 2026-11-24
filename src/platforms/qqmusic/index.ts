@@ -150,12 +150,17 @@ export class QqMusicAdapter extends BasePlatformAdapter {
       .map((p) => asObject(p))
       // dirId >= 200 是「我喜欢」收藏夹与收藏的他人歌单（与包内写入限制一致）
       .filter((item) => Number(item.dirId ?? 0) < 200)
-      .map((item) => ({
-        id: pickString(item.tid, item.id) ?? '',
-        name: pickString(item.dirName, item.title, item.name) ?? '未命名歌单',
-        songCount: Number(item.songNum ?? item.songCnt ?? item.song_count ?? 0),
-        coverUrl: pickString(item.picUrl, item.coverUrl),
-      }))
+      .map((item) => {
+        const id = pickString(item.tid, item.id) ?? ''
+        return {
+          id,
+          name: pickString(item.dirName, item.title, item.name) ?? '未命名歌单',
+          songCount: Number(item.songNum ?? item.songCnt ?? item.song_count ?? 0),
+          coverUrl: pickString(item.picUrl, item.coverUrl),
+          webUrl: `https://y.qq.com/n/ryqq/playlist/${id}`,
+          appUrl: `qqmusic://qq.com/media/playSonglist?p=${id}`,
+        }
+      })
   }
 
   protected async fetchPlaylistSongs(token: string, playlistId: string): Promise<PlatformSong[]> {

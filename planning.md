@@ -311,6 +311,71 @@ tests/
 - TDD：先写 9 项新用例 + 2 项计划内断言演进（红 10 项）→ 实现转绿。全量 207 项测试、lint 通过；本次改动文件 typecheck 无误。
 - 注：typecheck 现存 3 个错误（keepAliveService.ts / platforms/base.ts / App.tsx）来自工作区其他未提交的「凭证保活」改动，与本任务无关，未处理。
 
+### T9 — 同步中心强化：任务详情清单 + 报错原因 + 卡住手动介入 ✅ 编码完成（手工验收待用户执行）
+
+> 需求：同步中心支持查看任务详情（具体歌曲清单、报错原因）；任务长时间卡住时，用户可手动介入「继续往下走（跳过当前歌曲）」或「停止任务」。
+
+**验收标准**
+1. 任务详情：同步中心点击任务可打开详情抽屉，逐首展示清单（已匹配/待选择/失败/已跳过）与失败原因；详情随任务持久化（重启后可见），旧任务无明细时回退展示原失败列表。
+2. 停止任务：运行中任务可一键停止，引擎在下一个检查点（每首歌之间/批次之间/重试等待之间）响应；已建单的部分写入保留；任务状态归为 `stopped`，重启后不再被归为 interrupted。
+3. 跳过当前歌曲：运行中任务可「跳过当前歌曲」，引擎在该曲处理结束后放弃当前曲（记为 `skipped` 失败项）继续下一首，不中断整体任务。
+4. 卡住根因缓解：主进程对平台搜索/写歌单调用加 60s 超时包装（超时抛可重试错误），挂起请求不会永久卡死任务。
+5. 现有全部测试保持通过；新增介入控制与明细的验收用例；typecheck + lint 通过。
+
+**边界情况**：任务在「等待确认选择」阶段不可停止（走原有取消流程）；停止时建单尚未发生则不建单；跳过请求对已开始的歌曲不生效（下一首开始前消耗）；重启残留的 running 任务仍归 interrupted，stopped 任务保持 stopped。
+
+**实现要点**
+- core：`SyncOptions` 新增 `signal`（AbortSignal）/`skipCheck`/`onStep`；`SyncPlan`/`SyncReport` 新增 `items`（逐首明细）；`SyncReport.status` 新增 `stopped`；`SyncFailedItem.reason` 新增 `skipped`；新增 `SyncAbortedError`（携带 partial 明细）；`SyncTaskStatus` 新增 `stopped`；`SyncTaskRecord` 新增 `detail`。
+- 主进程：`runningSyncs` 注册表（AbortController + skip 标志）+ `platform:stop-sync`/`platform:skip-sync`；`sync-playlist` 接收渲染层 taskId（待确认会话与任务记录统一同一 id）；`sync:step` 事件广播逐首明细；SyncAbortedError 收敛为 stopped 报告返回渲染层。
+- 存储：`sync_tasks` 新增 `detail` 列（JSON 明细），旧库 ALTER TABLE 迁移。
+- UI：SyncCenter 卡片新增「跳过当前/停止」按钮（仅真正执行中的任务）与详情抽屉；失败原因按稳定 reason 码翻译，平台原始错误透传。
+
+**实际结果（T9 编码完成 ✅）**
+- core：`SyncOptions` 新增 `signal`/`skipCheck`/`onStep`；`planSync` 每首歌前与重试等待中检查中止信号（抛 `SyncAbortedError`，partial 携带已处理明细），`skipCheck` 命中记 `skipped` 失败项继续下一首；`executeSync` 建单前/批次间检查中止，unresolved/add-failed 回写逐首明细；`SyncPlan`/`SyncReport` 新增 `items`，`SyncReport.status` 新增 `stopped`。
+- 主进程：`runningSyncs` 注册表（AbortController + 一次性 skip 标志）+ `platform:stop-sync`/`platform:skip-sync`；`sync-playlist` 接收渲染层 taskId（待确认会话与任务记录统一 id）；`sync:step` 逐首明细广播；搜索/写歌单调用 60s 超时包装（超时转可重试 SearchError，根除挂起卡死）；`SyncAbortedError` 收敛为 stopped 报告返回渲染层；confirm-sync 执行阶段同样可停止。
+- 存储：`sync_tasks` 新增 `detail` 列（JSON 明细），旧库 `ALTER TABLE` 自动补齐；`finalizeInterrupted` 只归 running 残留，stopped 保持。
+- UI：SyncCenter 任务卡片可打开详情抽屉（汇总 + 逐首清单：已匹配/待选择/已跳过/失败 + 报错原因，旧任务回退 failedDetail 列表）；执行中任务显示「跳过当前/停止」按钮与卡住提示；App 计算 intervenableIds（排除待确认阶段，确认写入中仍可停止）；TextCreator 实时累积 step 明细并落库，stopped 分支正确归因；i18n 中英补齐 15 键。
+- TDD：引擎介入控制与明细 7 项新用例 + store detail 往返/旧库迁移 2 项；既有断言按需求演进更新（makeTask 补 detail 字段，计划内）。全量 241 项测试、typecheck、lint、build 全部通过。
+- 待办：手工验收（运行中大歌单任务 → 同步中心详情抽屉实时清单 → 跳过当前/停止任务 → 重启后 stopped 任务状态与明细保持）。
+
+### T10 — 歌曲列表显示模板 ✅
+- **需求**：定义歌曲列表的统一显示模板，展示歌曲基本信息（序号、封面、歌名、歌手、专辑、时长），供「我的歌单」歌曲列表、搜索结果列表与同步中心任务详情清单复用。
+- **交付物**：`renderer/src/components/SongList.tsx`（可复用模板组件）；`PlaylistSection` 两处列表接入；`SyncCenter` 任务详情分组清单接入。
+- **验收**：
+  - 模板展示基本信息：序号（可隐藏）、封面（缺省或加载失败回退音符图标）、歌名、歌手、专辑（整列缺失时隐藏）、时长（mm:ss，缺失显示 --）
+  - 行尾操作区由调用方注入（`renderAction`），模板不关心具体操作
+  - 歌名下方可选第二行辅助信息（`renderSubtitle`，如同步失败原因）
+  - 我的歌单主列表与搜索结果列表均使用该模板，视觉与交互保持一致（移除按钮 hover 显现等原有行为不变）
+  - 同步中心任务详情：已匹配/待选择/失败（含原因副标题与状态图标）三组清单均用模板渲染，分组标题样式与旧任务 failedDetail 回退不变
+  - 文案走 i18n（封面 alt 中英双语，占位符一致）
+- **边界情况**：coverUrl 缺失/加载失败、album/durationMs 缺失（整列隐藏）、超长标题/歌手/专辑截断、空列表（渲染空容器，空态由调用方展示）、明细项无封面（详情清单 `showCover=false`）
+- **验证命令**：`npm run test -- renderer` + `npm run typecheck`
+- **实际结果**：全量 241 项测试全绿（含 i18n 键一致性与占位符校验）、typecheck、ESLint（改动文件）全部通过；PlaylistSection 两处列表与 SyncCenter 详情三组清单统一走模板，原有交互（添加/移除、hover 显现、失败原因展示）保持不变。
+
+### T11 — 我的歌单页：平台图标统一 + 封面展示 + 多选与右键菜单 ✅
+- **需求**：
+  1. 平台切换标签与其他页面统一使用品牌 logo（`PLATFORM_LOGOS`，缺失回退 material 图标）
+  2. 歌单列表行展示平台封面图（缺失回退图标）
+  3. 歌单列表支持单选/多选（复选框切换，点击行打开歌单不变）
+  4. 右键菜单：多选/单选均可「同步到某个平台」；单选额外含「重命名」「在对应应用打开歌单」「浏览器打开分享链接」
+- **验收**：
+  - `PlatformPlaylist` 新增 `webUrl?`/`appUrl?`，网易云（music.163.com / orpheus://）与 QQ音乐（y.qq.com / qqmusic://）适配器填充；既有 2 项歌单映射测试按新契约更新（计划内需求演进，非改测试过测）
+  - 主进程 `app:open-external` 校验 scheme 白名单（http/https/orpheus/qqmusic），preload 暴露 `openExternal`
+  - 歌单同步：选中歌单 → 右键「同步到 {平台}」→ 拉取源歌单歌曲去重 → 走 `syncPlaylist` 完整流程（progress/choice-needed 会话/stopped/toast），任务 source 记 `playlist-import`（同步中心显示「歌单导入」）
+  - 单选右键：重命名复用头部内联编辑器（目标歌单未激活时先激活）；「在应用中打开」「浏览器打开」调用 openExternal，失败 toast 提示
+  - 多选右键菜单仅含「同步到」各目标平台；目标平台排除源平台、仅 write 能力且已登录
+  - 文案走 i18n 中英双语，占位符一致；现有 241 项测试除上述 2 项映射断言外全部保持通过
+- **边界情况**：右键未选中行（先选中该行再弹菜单）、切平台清空选择、目标未登录提示、空歌单（无歌曲）不发起同步、openExternal 无处理器报错、菜单在窗口边缘定位
+- **验证命令**：`npm run test` + `npm run typecheck` + `npm run lint`
+- **实际结果**：241 项测试全绿（其中 netease/qqmusic 各 1 项歌单映射断言按新契约更新，计划内需求演进）、typecheck、ESLint（改动文件）全部通过。实现要点：`PlatformPlaylist` 新增 `webUrl`/`appUrl`（netease: music.163.com/orpheus://；qqmusic: y.qq.com/qqmusic://）；主进程 `app:open-external`（scheme 白名单 http/https/orpheus/qqmusic）；PlaylistSection 平台标签统一品牌 logo、歌单行封面+复选框选择、行右键自定义菜单（单选：重命名/同步到各平台/应用打开/浏览器打开；多选：同步到各平台），同步走完整 syncPlaylist 流程（progress/choice-needed/stopped/toast），任务 source=playlist-import；SyncCenter 来源显示「歌单导入」。i18n 中英补齐 12 键。
+
+### 修复记录 — 歌单选择交互改为拖拽框选 ✅
+- **需求**：去掉歌单行复选框；单击按住拖拽框选多个（锚点行到当前行范围）；Cmd/Ctrl + 单击切换单行选择。
+- **实现**：行 mousedown 记录锚点，全局 mousemove 超 5px 阈值进入框选（先选中锚点行），行 mouseenter 按「锚点→当前行」重算范围；拖拽结束抑制同源 click 防止误打开歌单；行 onClick 区分 Cmd/Ctrl 切换与普通打开；列表 `select-none` 防拖拽时选中文字；右键、清除选择、选中计数等原有行为不变。
+- **验证**：typecheck、ESLint 通过；全量 241 项测试保持全绿。
+
+---
+
 | 风险 | 缓解 |
 |---|---|
 | 平台 API 变更/风控 | 适配器接口解耦；限速 + 指数退避；文件导入作为降级通道 |

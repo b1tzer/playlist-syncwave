@@ -128,7 +128,14 @@ describe('QqMusicAdapter — serverless HTTP 映射', () => {
     const adapter = new QqMusicAdapter(handler, env)
     const list = await adapter.getUserPlaylists('tok', '123')
     expect(list).toEqual([
-      { id: '111', name: '我的歌单', songCount: 33, coverUrl: 'http://x/y.jpg' },
+      {
+        id: '111',
+        name: '我的歌单',
+        songCount: 33,
+        coverUrl: 'http://x/y.jpg',
+        webUrl: 'https://y.qq.com/n/ryqq/playlist/111',
+        appUrl: 'qqmusic://qq.com/media/playSonglist?p=111',
+      },
     ])
   })
 

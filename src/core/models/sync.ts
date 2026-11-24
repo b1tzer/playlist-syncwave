@@ -22,11 +22,32 @@ export interface SyncTarget {
   saveMapping?(query: MatchQuery, songId: string): void
 }
 
+export type SyncFailedReason =
+  | 'search-failed'
+  | 'add-failed'
+  | 'no-match'
+  | 'rate-limited'
+  | 'unresolved'
+  | 'skipped'
+
 export interface SyncFailedItem {
   query: MatchQuery
-  /** search-failed：搜索失败；add-failed：写入歌单失败；no-match：未匹配；rate-limited：限流；unresolved：未选择 */
-  reason: 'search-failed' | 'add-failed' | 'no-match' | 'rate-limited' | 'unresolved'
+  /** search-failed：搜索失败；add-failed：写入歌单失败；no-match：未匹配；rate-limited：限流；unresolved：未选择；skipped：用户跳过 */
+  reason: SyncFailedReason
   message: string
+}
+
+/** 每首歌的处理明细：同步中心任务详情清单的最小单元 */
+export interface SyncItemResult {
+  /** 输入列表下标（0-based） */
+  index: number
+  query: MatchQuery
+  /** matched：已匹配；choice：同歌不同作者待选择；failed：失败；skipped：用户跳过 */
+  status: 'matched' | 'choice' | 'failed' | 'skipped'
+  reason?: SyncFailedReason
+  message?: string
+  /** 匹配到的平台歌曲 ID（matched 时存在） */
+  songId?: string
 }
 
 /** 同歌不同作者：需要用户手动选择的目标候选 */
@@ -48,13 +69,15 @@ export interface SyncPlan {
   matched: Array<{ query: MatchQuery; songId: string }>
   choices: SyncChoice[]
   failed: SyncFailedItem[]
+  /** 逐首处理明细（含 matched/choice/failed/skipped 全部歌曲） */
+  items: SyncItemResult[]
   /** 第一首歌曲的匹配结果风格（用于自动命名歌单） */
   firstGenre?: string
 }
 
 export interface SyncReport {
-  /** done：已建单完成；choice-needed：存在同歌不同作者，等待手动选择 */
-  status: 'done' | 'choice-needed'
+  /** done：已建单完成；choice-needed：存在同歌不同作者，等待手动选择；stopped：用户主动停止 */
+  status: 'done' | 'choice-needed' | 'stopped'
   /** 歌单名 */
   playlistName: string
   /** 新歌单 ID（未建单时为空串） */
@@ -65,6 +88,8 @@ export interface SyncReport {
   failed: SyncFailedItem[]
   /** status 为 choice-needed 时非空 */
   choices: SyncChoice[]
+  /** 逐首处理明细（详情清单） */
+  items: SyncItemResult[]
   /** 第一首歌曲的匹配结果风格（用于自动命名歌单） */
   firstGenre?: string
 }
@@ -82,6 +107,29 @@ export interface SyncOptions {
   maxSearchesPerSong?: number
   /** 进度回调：0~1 */
   onProgress?: (ratio: number, stage: 'matching' | 'adding') => void
+  /** 中止信号：触发后引擎在下一个检查点停止并抛 SyncAbortedError */
+  signal?: AbortSignal
+  /** 每首歌开始前询问：返回 true 表示用户请求跳过该首（记为 skipped 失败项，不搜索） */
+  skipCheck?: () => boolean
+  /** 逐首明细回调（matched/choice/failed/skipped 各触发一次） */
+  onStep?: (item: SyncItemResult) => void
+}
+
+/** 引擎被中止（用户停止任务）时抛出；partial 携带已产生的明细供收敛为 stopped 报告 */
+export class SyncAbortedError extends Error {
+  constructor(
+    public readonly partial: {
+      items: SyncItemResult[]
+      failed: SyncFailedItem[]
+      total: number
+      matched?: number
+      added?: number
+      playlistId?: string
+    },
+  ) {
+    super('同步任务已停止')
+    this.name = 'SyncAbortedError'
+  }
 }
 
 /** 平台搜索异常（含可重试标记与限流标记，由各平台适配器判定） */
@@ -106,8 +154,9 @@ export type SyncInput = MatchQuery[]
  * - done：已完成
  * - failed：执行异常（匹配/写入失败等）
  * - interrupted：未完成即退出（如等待确认时关闭应用），下次启动归因
+ * - stopped：用户主动停止
  */
-export type SyncTaskStatus = 'running' | 'done' | 'failed' | 'interrupted'
+export type SyncTaskStatus = 'running' | 'done' | 'failed' | 'interrupted' | 'stopped'
 
 export interface SyncTaskRecord {
   id: string
@@ -124,6 +173,8 @@ export interface SyncTaskRecord {
   /** 0-1，运行中更新 */
   progress: number
   failedDetail: string[]
+  /** 逐首处理明细（任务详情清单，旧任务可能为空） */
+  detail: SyncItemResult[]
 }
 
 /**

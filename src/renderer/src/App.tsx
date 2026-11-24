@@ -15,7 +15,7 @@ import { useI18n } from './i18n'
 const log = createRendererLogger('renderer.app')
 
 export default function App() {
-  const { t, formatTime } = useI18n()
+  const { t } = useI18n()
   const [view, setView] = useState<View>('create')
   const [platforms, setPlatforms] = useState<PlatformMeta[]>([])
   const [accounts, setAccounts] = useState<Record<string, PlatformAccount | null>>({})
@@ -145,6 +145,30 @@ export default function App() {
         added: rep.added,
         failed: rep.failed.length,
       })
+
+      if (rep.status === 'stopped') {
+        // 确认后的写入被用户停止：任务归为 stopped，弹窗关闭
+        const { task } = pendingConfirm
+        handleTaskUpdate({
+          ...task,
+          status: 'stopped',
+          added: rep.added,
+          failed: rep.failed.length,
+          progress: 1,
+          failedDetail: rep.failed.map(
+            (f) => `${f.query.title}${f.query.artist ? ` - ${f.query.artist}` : ''}（${f.message}）`,
+          ),
+          detail: rep.items,
+        })
+        resetConfirmSession()
+        notify(
+          'warning',
+          t('toast.syncStoppedTitle'),
+          t('toast.syncStoppedDetail', { name: rep.playlistName }),
+        )
+        return
+      }
+
       setConfirmResult(rep)
       const ok = rep.playlistId !== ''
       if (ok) {
@@ -167,20 +191,19 @@ export default function App() {
           )
         }
       }
+      const { task } = pendingConfirm
       handleTaskUpdate({
-        id: `task-${Date.now()}`,
+        ...task,
         name: rep.playlistName,
-        targetPlatform: target,
-        source: 'text-import',
         status: ok ? 'done' : 'failed',
         total: rep.total,
         added: rep.added,
         failed: rep.failed.length,
-        createdAt: formatTime(new Date()),
         progress: 1,
         failedDetail: rep.failed.map(
           (f) => `${f.query.title}${f.query.artist ? ` - ${f.query.artist}` : ''}（${f.message}）`,
         ),
+        detail: rep.items,
       })
     } catch (e) {
       const msg = e instanceof Error ? e.message : t('sync.failedGeneric')
@@ -210,6 +233,29 @@ export default function App() {
       failedDetail: [...task.failedDetail, '任务已取消：用户放弃手动选择'],
     })
     resetConfirmSession()
+  }
+
+  /** 同步中心：停止运行中的任务（引擎在下一个检查点中止，任务状态由执行方收敛） */
+  const handleStopTask = async (id: string) => {
+    log.info('sync.stop-task', '停止同步任务', { taskId: id })
+    try {
+      await window.electronAPI.platforms.stopSync(id)
+    } catch (e) {
+      log.error('sync.stop-task-failed', '停止任务失败', e, { taskId: id })
+      notify('error', t('toast.syncFailedTitle'), e instanceof Error ? e.message : t('sync.failedGeneric'))
+    }
+  }
+
+  /** 同步中心：请求跳过当前歌曲，从下一首继续 */
+  const handleSkipTask = async (id: string) => {
+    log.info('sync.skip-task', '跳过当前歌曲', { taskId: id })
+    try {
+      await window.electronAPI.platforms.skipSync(id)
+      notify('warning', t('toast.skipRequestedTitle'), t('toast.skipRequestedDetail'))
+    } catch (e) {
+      log.error('sync.skip-task-failed', '跳过请求失败', e, { taskId: id })
+      notify('error', t('toast.syncFailedTitle'), e instanceof Error ? e.message : t('sync.failedGeneric'))
+    }
   }
 
   const handleSearch = (value: string) => {
@@ -251,6 +297,12 @@ export default function App() {
   }, [])
 
   const runningTasks = tasks.filter((t) => t.status === 'running').length
+
+  // 可介入（停止/跳过）的任务：执行中，且不在「等待手动确认选择」阶段（确认弹窗执行写入时也允许停止）
+  const pendingTaskId = pendingConfirm?.syncTaskId ?? null
+  const intervenableIds = tasks
+    .filter((t) => t.status === 'running' && (t.id !== pendingTaskId || confirming))
+    .map((t) => t.id)
 
   return (
     <div className="flex h-full overflow-hidden">
@@ -299,7 +351,14 @@ export default function App() {
               />
             )}
             {view === 'playlists' && (
-              <PlaylistSection platforms={platforms} accounts={accounts} searchQuery={search} />
+              <PlaylistSection
+                platforms={platforms}
+                accounts={accounts}
+                searchQuery={search}
+                onTaskUpdate={handleTaskUpdate}
+                pendingConfirm={pendingConfirm}
+                onPendingConfirmChange={handlePendingConfirmChange}
+              />
             )}
             {view === 'sync' && (
               <SyncCenter
@@ -310,6 +369,9 @@ export default function App() {
                 onClearAll={handleClearAll}
                 pendingChoicesCount={pendingConfirm?.choices.length ?? 0}
                 onGoConfirm={() => setView('create')}
+                intervenableIds={intervenableIds}
+                onStopTask={(id) => void handleStopTask(id)}
+                onSkipTask={(id) => void handleSkipTask(id)}
               />
             )}
             {view === 'accounts' && (

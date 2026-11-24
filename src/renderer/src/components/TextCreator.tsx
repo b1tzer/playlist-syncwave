@@ -2,7 +2,13 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { parseText } from '@core/parser/parseText'
 import { normalize } from '@core/matcher/matchSong'
 import type { FailedLine } from '@core/models/parse'
-import type { PendingConfirmSession, SyncFailedItem, SyncReport, SyncTaskRecord } from '@core/models/sync'
+import type {
+  PendingConfirmSession,
+  SyncFailedItem,
+  SyncItemResult,
+  SyncReport,
+  SyncTaskRecord,
+} from '@core/models/sync'
 import type { PlatformAccount, PlatformMeta } from '@core/models/platform'
 import { createRendererLogger } from '../logging/rendererLogger'
 import { useI18n } from '../i18n'
@@ -213,6 +219,7 @@ export default function TextCreator({
     setProgress({ ratio: 0, stage: 'matching' })
 
     const taskId = `task-${Date.now()}`
+    const createdAt = formatTime(new Date())
     // 创建时自动去重：保留首次出现的歌曲，重复项跳过
     const seen = new Set<string>()
     const queries = result.songs
@@ -228,7 +235,9 @@ export default function TextCreator({
         alternatives: s.candidates?.map((c) => ({ title: c.title, artist: c.artist })),
       }))
 
-    onTaskUpdate({
+    // 逐首明细实时累积（主进程 sync:step 广播），供同步中心详情清单展示
+    const detailRef: SyncItemResult[] = []
+    const baseTask: SyncTaskRecord = {
       id: taskId,
       name: name || autoNameDate,
       targetPlatform: target,
@@ -237,33 +246,38 @@ export default function TextCreator({
       total: queries.length,
       added: 0,
       failed: 0,
-      createdAt: formatTime(new Date()),
+      createdAt,
       progress: 0,
       failedDetail: [],
-    })
+      detail: detailRef,
+    }
 
-    const off = window.electronAPI.platforms.onSyncProgress((p) => {
-      if (p.platform === target) {
+    onTaskUpdate({ ...baseTask, detail: [] })
+
+    const offProgress = window.electronAPI.platforms.onSyncProgress((p) => {
+      if (p.taskId === taskId) {
         setProgress(p)
-        onTaskUpdate({
-          id: taskId,
-          name: name || autoNameDate,
-          targetPlatform: target,
-          source: 'text-import',
-          status: 'running',
-          total: queries.length,
-          added: 0,
-          failed: 0,
-          createdAt: formatTime(new Date()),
-          progress: p.ratio,
-          failedDetail: [],
-        })
+        onTaskUpdate({ ...baseTask, progress: p.ratio, detail: [...detailRef] })
       }
+    })
+    const offStep = window.electronAPI.platforms.onSyncStep((step) => {
+      if (step.taskId !== taskId) return
+      // 同 index 明细覆盖（失败项重试后可能转为成功）
+      const idx = detailRef.findIndex((d) => d.index === step.item.index)
+      if (idx === -1) detailRef.push(step.item)
+      else detailRef[idx] = step.item
+      onTaskUpdate({ ...baseTask, progress: baseTask.progress, detail: [...detailRef] })
     })
 
     try {
-      const { taskId: syncTaskId, report: rep } =
-        await window.electronAPI.platforms.syncPlaylist(target, queries, name, autoNameDate)
+      const { taskId: syncTaskId, report: rep } = await window.electronAPI.platforms.syncPlaylist(
+        target,
+        taskId,
+        queries,
+        name,
+        autoNameDate,
+      )
+      const finalDetail = rep.items ?? [...detailRef]
 
       if (rep.status === 'choice-needed') {
         log.info('sync.choice-needed', '同步需要手动选择', {
@@ -271,17 +285,12 @@ export default function TextCreator({
           choices: rep.choices.length,
         })
         const runningTask: SyncTaskRecord = {
-          id: taskId,
+          ...baseTask,
           name: rep.playlistName,
-          targetPlatform: target,
-          source: 'text-import',
-          status: 'running',
-          total: queries.length,
-          added: 0,
           failed: rep.failed.length,
-          createdAt: formatTime(new Date()),
           progress: 1,
           failedDetail: rep.failed.map(failedMessage),
+          detail: finalDetail,
         }
         onTaskUpdate(runningTask)
         // 会话提升到 App 层：分步确认弹窗接管选择流程
@@ -291,6 +300,26 @@ export default function TextCreator({
           target,
           choices: rep.choices,
         })
+        return
+      }
+
+      if (rep.status === 'stopped') {
+        log.info('sync.stopped', '同步被用户停止', {
+          targetPlatform: target,
+          added: rep.added,
+          failed: rep.failed.length,
+        })
+        onTaskUpdate({
+          ...baseTask,
+          name: rep.playlistName,
+          status: 'stopped',
+          added: rep.added,
+          failed: rep.failed.length,
+          progress: 1,
+          failedDetail: rep.failed.map(failedMessage),
+          detail: finalDetail,
+        })
+        notify('warning', t('toast.syncStoppedTitle'), t('toast.syncStoppedDetail', { name: rep.playlistName }))
         return
       }
 
@@ -335,17 +364,14 @@ export default function TextCreator({
         )
       }
       onTaskUpdate({
-        id: taskId,
+        ...baseTask,
         name: rep.playlistName,
-        targetPlatform: target,
-        source: 'text-import',
         status: ok ? 'done' : 'failed',
-        total: queries.length,
         added: rep.added,
         failed: rep.failed.length,
-        createdAt: formatTime(new Date()),
         progress: 1,
         failedDetail: rep.failed.map(failedMessage),
+        detail: finalDetail,
       })
     } catch (e) {
       const msg = e instanceof Error ? e.message : t('sync.failedGeneric')
@@ -353,20 +379,17 @@ export default function TextCreator({
       setSyncError(msg)
       notify('error', t('toast.syncFailedTitle'), msg)
       onTaskUpdate({
-        id: taskId,
-        name: name || autoNameDate,
-        targetPlatform: target,
-        source: 'text-import',
+        ...baseTask,
         status: 'failed',
-        total: queries.length,
         added: 0,
         failed: queries.length,
-        createdAt: formatTime(new Date()),
         progress: 1,
         failedDetail: [msg],
+        detail: [...detailRef],
       })
     } finally {
-      off()
+      offProgress()
+      offStep()
       setSyncing(false)
       setProgress(null)
     }

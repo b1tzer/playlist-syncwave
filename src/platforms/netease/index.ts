@@ -116,12 +116,17 @@ export class NeteaseAdapter extends BasePlatformAdapter {
       .map((p) => asObject(p))
       // 过滤收藏类特殊歌单：specialType=5 是「我喜欢的音乐」收藏夹
       .filter((item) => Number(item.specialType ?? 0) === 0)
-      .map((item) => ({
-        id: String(item.id),
-        name: pickString(item.name) ?? '未命名歌单',
-        songCount: Number(item.trackCount ?? item.track_count ?? 0),
-        coverUrl: pickString(item.coverImgUrl),
-      }))
+      .map((item) => {
+        const id = String(item.id)
+        return {
+          id,
+          name: pickString(item.name) ?? '未命名歌单',
+          songCount: Number(item.trackCount ?? item.track_count ?? 0),
+          coverUrl: pickString(item.coverImgUrl),
+          webUrl: `https://music.163.com/#/playlist?id=${id}`,
+          appUrl: `orpheus://playlist/${id}`,
+        }
+      })
   }
 
   protected async fetchPlaylistSongs(cookie: string, playlistId: string): Promise<PlatformSong[]> {

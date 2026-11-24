@@ -1,10 +1,14 @@
 import { useState } from 'react'
-import type { PlatformMeta } from '@core/models/platform'
+import type { PlatformMeta, PlatformSong } from '@core/models/platform'
 import { createRendererLogger } from '../logging/rendererLogger'
-import type { SyncTaskRecord } from '@core/models/sync'
+import type { SyncItemResult, SyncTaskRecord } from '@core/models/sync'
 import { useI18n } from '../i18n'
+import type { TranslationKey, TranslateParams } from '../i18n/translations'
+import SongList from './SongList'
 
 const log = createRendererLogger('renderer.sync-center')
+
+type Translate = (key: TranslationKey, params?: TranslateParams) => string
 
 interface SyncCenterProps {
   platforms: PlatformMeta[]
@@ -15,6 +19,232 @@ interface SyncCenterProps {
   /** 待用户手动选择的歌曲数（>0 时显示「去确认」入口） */
   pendingChoicesCount: number
   onGoConfirm: () => void
+  /** 可手动介入（停止/跳过）的任务 id：执行中且不在等待确认阶段 */
+  intervenableIds: string[]
+  onStopTask: (id: string) => void
+  onSkipTask: (id: string) => void
+}
+
+function statusText(t: Translate, task: SyncTaskRecord): string {
+  switch (task.status) {
+    case 'running':
+      return t('syncCenter.statusRunning')
+    case 'done':
+      return t('syncCenter.statusDone')
+    case 'interrupted':
+      return t('syncCenter.statusInterrupted')
+    case 'stopped':
+      return t('syncCenter.statusStopped')
+    default:
+      return t('syncCenter.statusFailed')
+  }
+}
+
+function statusIcon(task: SyncTaskRecord): string {
+  switch (task.status) {
+    case 'running':
+      return 'progress_activity'
+    case 'done':
+      return 'check_circle'
+    case 'interrupted':
+      return 'pause_circle'
+    case 'stopped':
+      return 'stop_circle'
+    default:
+      return 'error_outline'
+  }
+}
+
+function statusColor(task: SyncTaskRecord): string {
+  switch (task.status) {
+    case 'running':
+      return 'text-tertiary'
+    case 'done':
+      return 'text-primary'
+    case 'interrupted':
+    case 'stopped':
+      return 'text-secondary'
+    default:
+      return 'text-error'
+  }
+}
+
+function itemTitle(item: SyncItemResult): string {
+  return `${item.query.title}${item.query.artist ? ` - ${item.query.artist}` : ''}`
+}
+
+/** 失败/跳过项的原因文案（稳定 reason 码翻译，平台原始错误透传） */
+function failedReasonText(t: Translate, item: SyncItemResult): string {
+  const title = itemTitle(item)
+  switch (item.reason) {
+    case 'no-match':
+      return t('sync.failedNoMatch', { title })
+    case 'unresolved':
+      return t('sync.failedUnresolved', { title })
+    case 'rate-limited':
+      return t('sync.failedRateLimited')
+    case 'skipped':
+      return t('syncCenter.itemSkipped')
+    default:
+      return item.message ?? t('sync.failedGeneric')
+  }
+}
+
+/** 明细项在模板中的稳定 id（组内唯一） */
+function itemId(item: SyncItemResult): string {
+  return `${item.status}-${item.index}-${item.songId ?? ''}`
+}
+
+/** 同步明细 → 模板所需的 PlatformSong 视图（明细无封面，其余字段按 query 透传） */
+function toSong(item: SyncItemResult): PlatformSong {
+  return {
+    id: itemId(item),
+    title: item.query.title,
+    artist: item.query.artist ?? '',
+    album: item.query.album,
+    durationMs: item.query.durationMs,
+  }
+}
+
+/** 行内展开的详情清单：分组展示成功/待选择/失败，运行中任务可介入 */
+function TaskDetailSection({
+  task,
+  intervenable,
+  onStop,
+  onSkip,
+}: {
+  task: SyncTaskRecord
+  intervenable: boolean
+  onStop: () => void
+  onSkip: () => void
+}) {
+  const { t } = useI18n()
+  const matched = task.detail.filter((i) => i.status === 'matched')
+  const choices = task.detail.filter((i) => i.status === 'choice')
+  const failedItems = task.detail.filter((i) => i.status === 'failed' || i.status === 'skipped')
+  const failedMeta = new Map(
+    failedItems.map((item) => [
+      itemId(item),
+      { text: failedReasonText(t, item), skipped: item.status === 'skipped' },
+    ]),
+  )
+
+  return (
+    <div className="mt-3 border-t border-outline-variant pt-3">
+      {task.detail.length === 0 ? (
+        task.failedDetail.length > 0 ? (
+          <ul className="space-y-1 font-label-sm text-label-sm text-error">
+            {task.failedDetail.map((f, i) => (
+              <li key={i}>· {f}</li>
+            ))}
+          </ul>
+        ) : (
+          <p className="font-label-sm text-label-sm text-outline">
+            {t('syncCenter.detailEmpty')}
+          </p>
+        )
+      ) : (
+        <div className="max-h-96 space-y-3 overflow-y-auto">
+          {matched.length > 0 && (
+            <section>
+              <p className="flex items-center gap-1.5 font-label-sm text-label-sm font-medium text-primary">
+                <span className="material-symbols-outlined text-sm">check_circle</span>
+                {t('syncCenter.matchedSection', { count: matched.length })}
+              </p>
+              <SongList
+                songs={matched.map(toSong)}
+                showIndex={false}
+                showCover={false}
+                className="mt-1"
+              />
+            </section>
+          )}
+
+          {choices.length > 0 && (
+            <section>
+              <p className="flex items-center gap-1.5 font-label-sm text-label-sm font-medium text-tertiary">
+                <span className="material-symbols-outlined text-sm">help</span>
+                {t('syncCenter.choiceSection', { count: choices.length })}
+              </p>
+              <SongList
+                songs={choices.map(toSong)}
+                showIndex={false}
+                showCover={false}
+                className="mt-1"
+              />
+            </section>
+          )}
+
+          {failedItems.length > 0 && (
+            <section>
+              <p className="flex items-center gap-1.5 font-label-sm text-label-sm font-medium text-error">
+                <span className="material-symbols-outlined text-sm">error_outline</span>
+                {t('syncCenter.failedSection', { count: failedItems.length })}
+              </p>
+              <SongList
+                songs={failedItems.map(toSong)}
+                showIndex={false}
+                showCover={false}
+                className="mt-1"
+                renderSubtitle={(s) => {
+                  const meta = failedMeta.get(s.id)
+                  if (!meta) return null
+                  return (
+                    <span className={meta.skipped ? 'text-secondary' : 'text-error'}>
+                      {meta.text}
+                    </span>
+                  )
+                }}
+                renderAction={(s) => {
+                  const meta = failedMeta.get(s.id)
+                  if (!meta) return null
+                  return (
+                    <span
+                      className={`material-symbols-outlined text-sm ${
+                        meta.skipped ? 'text-secondary' : 'text-error'
+                      }`}
+                    >
+                      {meta.skipped ? 'skip_next' : 'error_outline'}
+                    </span>
+                  )
+                }}
+              />
+            </section>
+          )}
+
+          {intervenable && (
+            <div className="pt-1">
+              <p className="font-label-sm text-label-sm text-on-surface-variant">
+                {t('syncCenter.stuckHint')}
+              </p>
+              <div className="mt-2 flex items-center gap-2">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onSkip()
+                  }}
+                  className="flex items-center gap-1.5 rounded-lg border border-secondary px-3 py-1.5 font-label-md text-label-md text-secondary transition-colors hover:bg-secondary/10"
+                >
+                  <span className="material-symbols-outlined text-base">skip_next</span>
+                  {t('syncCenter.skipCurrent')}
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onStop()
+                  }}
+                  className="flex items-center gap-1.5 rounded-lg border border-error px-3 py-1.5 font-label-md text-label-md text-error transition-colors hover:bg-error/10"
+                >
+                  <span className="material-symbols-outlined text-base">stop</span>
+                  {t('syncCenter.stopTask')}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
 }
 
 export default function SyncCenter({
@@ -25,12 +255,17 @@ export default function SyncCenter({
   onClearAll,
   pendingChoicesCount,
   onGoConfirm,
+  intervenableIds,
+  onStopTask,
+  onSkipTask,
 }: SyncCenterProps) {
   const { t } = useI18n()
+  const [expandedId, setExpandedId] = useState<string | null>(null)
   const running = tasks.filter((task) => task.status === 'running').length
   const done = tasks.filter((task) => task.status === 'done').length
   const failed = tasks.filter((task) => task.status === 'failed').length
   const interrupted = tasks.filter((task) => task.status === 'interrupted').length
+  const stopped = tasks.filter((task) => task.status === 'stopped').length
 
   const handleNewTask = () => {
     log.info('sync.new-task', '新建同步任务')
@@ -78,6 +313,12 @@ export default function SyncCenter({
           {t('syncCenter.interrupted')}{' '}
           <span className="font-medium text-secondary">{interrupted}</span>
         </span>
+        {stopped > 0 && (
+          <span>
+            {t('syncCenter.statusStopped')}{' '}
+            <span className="font-medium text-secondary">{stopped}</span>
+          </span>
+        )}
         <span>
           {t('syncCenter.failed')} <span className="font-medium text-error">{failed}</span>
         </span>
@@ -139,114 +380,139 @@ export default function SyncCenter({
           </div>
         )}
 
-        {tasks.map((task) => (
-          <div
-            key={task.id}
-            className="rounded-lg border border-outline-variant bg-surface-container-low p-4"
-          >
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                {task.status === 'running' && (
-                  <span className="material-symbols-outlined animate-spin text-base text-tertiary">
-                    progress_activity
+        {tasks.map((task) => {
+          const expanded = expandedId === task.id
+          const intervenable = intervenableIds.includes(task.id)
+          return (
+            <div
+              key={task.id}
+              onClick={() => {
+                log.debug('sync.toggle-detail', '展开/收起任务详情', { taskId: task.id })
+                setExpandedId(expanded ? null : task.id)
+              }}
+              className="cursor-pointer rounded-lg border border-outline-variant bg-surface-container-low p-4 transition-colors hover:border-outline"
+            >
+              <div className="flex items-center justify-between">
+                <div className="flex min-w-0 items-center gap-2">
+                  <span
+                    className={`material-symbols-outlined text-base ${statusColor(task)} ${
+                      task.status === 'running' ? 'animate-spin' : ''
+                    }`}
+                  >
+                    {statusIcon(task)}
                   </span>
-                )}
-                {task.status === 'done' && (
-                  <span className="material-symbols-outlined text-base text-primary">
-                    check_circle
+                  <p className="truncate font-body-md text-body-md font-medium">{task.name}</p>
+                  <span className="rounded-full bg-surface-container-highest px-2 py-0.5 font-label-sm text-label-sm text-on-surface-variant">
+                    {statusText(t, task)}
                   </span>
-                )}
-                {task.status === 'interrupted' && (
-                  <span className="material-symbols-outlined text-base text-secondary">
-                    pause_circle
+                  <span className="material-symbols-outlined text-sm text-outline">
+                    {expanded ? 'expand_less' : 'expand_more'}
                   </span>
-                )}
-                {task.status === 'failed' && (
-                  <span className="material-symbols-outlined text-base text-error">
-                    error_outline
-                  </span>
-                )}
-                <p className="font-body-md text-body-md font-medium">{task.name}</p>
-                <span className="rounded-full bg-surface-container-highest px-2 py-0.5 font-label-sm text-label-sm text-on-surface-variant">
-                  {task.status === 'running'
-                    ? t('syncCenter.statusRunning')
-                    : task.status === 'done'
-                      ? t('syncCenter.statusDone')
-                      : task.status === 'interrupted'
-                        ? t('syncCenter.statusInterrupted')
-                        : t('syncCenter.statusFailed')}
-                </span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="font-label-mono text-label-mono text-outline">
-                  {task.createdAt}
-                </span>
-                <button
-                  onClick={() => {
-                    log.info('sync.remove-task', '删除同步任务', { taskId: task.id })
-                    onTaskRemove(task.id)
-                  }}
-                  disabled={task.status === 'running'}
-                  title={t('syncCenter.removeTask')}
-                  className="flex items-center rounded-md p-1 text-on-surface-variant transition-colors hover:bg-surface-container-highest hover:text-error disabled:opacity-40"
-                >
-                  <span className="material-symbols-outlined text-base">delete</span>
-                </button>
-              </div>
-            </div>
-
-            <div className="mt-3 flex items-center gap-2 font-label-sm text-label-sm text-on-surface-variant">
-              <span className="flex items-center gap-1">
-                <span className="material-symbols-outlined text-sm">description</span>
-                {task.source === 'text-import' ? t('syncCenter.sourceTextImport') : task.source}
-              </span>
-              <span className="material-symbols-outlined text-sm text-outline">arrow_forward</span>
-              <span className="flex items-center gap-1">
-                <span className="material-symbols-outlined text-sm">library_music</span>
-                {platforms.find((p) => p.id === task.targetPlatform)?.name ?? task.targetPlatform}
-              </span>
-              {task.status === 'running' && (
-                <span className="ml-auto flex items-center gap-1 text-tertiary">
-                  <span className="material-symbols-outlined text-sm">refresh</span>
-                  {t('syncCenter.matchingProgress', {
-                    current: Math.round(task.progress * task.total),
-                    total: task.total,
-                  })}
-                </span>
-              )}
-              {(task.status === 'done' || task.status === 'failed') && (
-                <span className="ml-auto">
-                  {t('syncCenter.success')} <span className="text-primary">{task.added}</span>
-                  {task.failed > 0 && (
+                </div>
+                <div className="flex items-center gap-2">
+                  {intervenable && (
                     <>
-                      {' '}
-                      {t('syncCenter.failedCount')}{' '}
-                      <span className="text-error">{task.failed}</span>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          log.info('sync.skip-current', '跳过当前歌曲', { taskId: task.id })
+                          onSkipTask(task.id)
+                        }}
+                        title={t('syncCenter.skipCurrent')}
+                        className="flex items-center gap-1 rounded-md border border-secondary px-2 py-1 font-label-sm text-label-sm text-secondary transition-colors hover:bg-secondary/10"
+                      >
+                        <span className="material-symbols-outlined text-sm">skip_next</span>
+                        {t('syncCenter.skipCurrent')}
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          log.info('sync.stop-task', '停止任务', { taskId: task.id })
+                          onStopTask(task.id)
+                        }}
+                        title={t('syncCenter.stopTask')}
+                        className="flex items-center gap-1 rounded-md border border-error px-2 py-1 font-label-sm text-label-sm text-error transition-colors hover:bg-error/10"
+                      >
+                        <span className="material-symbols-outlined text-sm">stop</span>
+                        {t('syncCenter.stopTask')}
+                      </button>
                     </>
                   )}
+                  <span className="font-label-mono text-label-mono text-outline">
+                    {task.createdAt}
+                  </span>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      log.info('sync.remove-task', '删除同步任务', { taskId: task.id })
+                      onTaskRemove(task.id)
+                    }}
+                    disabled={task.status === 'running'}
+                    title={t('syncCenter.removeTask')}
+                    className="flex items-center rounded-md p-1 text-on-surface-variant transition-colors hover:bg-surface-container-highest hover:text-error disabled:opacity-40"
+                  >
+                    <span className="material-symbols-outlined text-base">delete</span>
+                  </button>
+                </div>
+              </div>
+
+              <div className="mt-3 flex items-center gap-2 font-label-sm text-label-sm text-on-surface-variant">
+                <span className="flex items-center gap-1">
+                  <span className="material-symbols-outlined text-sm">description</span>
+                  {task.source === 'text-import'
+                    ? t('syncCenter.sourceTextImport')
+                    : task.source === 'playlist-import'
+                      ? t('syncCenter.sourcePlaylistImport')
+                      : task.source}
                 </span>
+                <span className="material-symbols-outlined text-sm text-outline">arrow_forward</span>
+                <span className="flex items-center gap-1">
+                  <span className="material-symbols-outlined text-sm">library_music</span>
+                  {platforms.find((p) => p.id === task.targetPlatform)?.name ?? task.targetPlatform}
+                </span>
+                {task.status === 'running' && (
+                  <span className="ml-auto flex items-center gap-1 text-tertiary">
+                    <span className="material-symbols-outlined text-sm">refresh</span>
+                    {t('syncCenter.matchingProgress', {
+                      current: Math.round(task.progress * task.total),
+                      total: task.total,
+                    })}
+                  </span>
+                )}
+                {(task.status === 'done' || task.status === 'failed' || task.status === 'stopped') && (
+                  <span className="ml-auto">
+                    {t('syncCenter.success')} <span className="text-primary">{task.added}</span>
+                    {task.failed > 0 && (
+                      <>
+                        {' '}
+                        {t('syncCenter.failedCount')}{' '}
+                        <span className="text-error">{task.failed}</span>
+                      </>
+                    )}
+                  </span>
+                )}
+              </div>
+
+              {task.status === 'running' && (
+                <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-surface-container-highest">
+                  <div
+                    className="h-full rounded-full bg-primary transition-all"
+                    style={{ width: `${Math.round(task.progress * 100)}%` }}
+                  />
+                </div>
+              )}
+
+              {expanded && (
+                <TaskDetailSection
+                  task={task}
+                  intervenable={intervenable}
+                  onStop={() => onStopTask(task.id)}
+                  onSkip={() => onSkipTask(task.id)}
+                />
               )}
             </div>
-
-            {task.status === 'running' && (
-              <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-surface-container-highest">
-                <div
-                  className="h-full rounded-full bg-primary transition-all"
-                  style={{ width: `${Math.round(task.progress * 100)}%` }}
-                />
-              </div>
-            )}
-
-            {(task.status === 'failed' || task.status === 'interrupted') &&
-              task.failedDetail.length > 0 && (
-                <ul className="mt-3 max-h-24 space-y-1 overflow-y-auto font-label-sm text-label-sm text-error">
-                  {task.failedDetail.map((f, i) => (
-                    <li key={i}>· {f}</li>
-                  ))}
-                </ul>
-              )}
-          </div>
-        ))}
+          )
+        })}
       </div>
     </div>
   )

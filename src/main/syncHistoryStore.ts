@@ -1,4 +1,4 @@
-import type { SyncTaskRecord, SyncTaskStatus } from '@core/models/sync'
+import type { SyncItemResult, SyncTaskRecord, SyncTaskStatus } from '@core/models/sync'
 
 /** 数据库访问接口：便于注入 fake 进行测试，主进程用 better-sqlite3 实现 */
 export interface SyncHistoryDb {
@@ -22,15 +22,16 @@ interface TaskRow {
   created_at: string
   progress: number
   failed_detail: string
+  detail: string
 }
 
 const INTERRUPTED_DETAIL = ['任务中断：应用在同步完成前退出']
 
 const UPSERT_SQL = `
 INSERT INTO sync_tasks
-  (id, name, target_platform, source, status, total, added, failed, created_at, progress, failed_detail)
+  (id, name, target_platform, source, status, total, added, failed, created_at, progress, failed_detail, detail)
 VALUES
-  (@id, @name, @targetPlatform, @source, @status, @total, @added, @failed, @createdAt, @progress, @failedDetail)
+  (@id, @name, @targetPlatform, @source, @status, @total, @added, @failed, @createdAt, @progress, @failedDetail, @detail)
 ON CONFLICT(id) DO UPDATE SET
   name = excluded.name,
   target_platform = excluded.target_platform,
@@ -41,17 +42,32 @@ ON CONFLICT(id) DO UPDATE SET
   failed = excluded.failed,
   created_at = excluded.created_at,
   progress = excluded.progress,
-  failed_detail = excluded.failed_detail
+  failed_detail = excluded.failed_detail,
+  detail = excluded.detail
 `
 
-function rowToTask(row: TaskRow): SyncTaskRecord {
-  let failedDetail: string[] = []
+function parseStringArray(raw: string): string[] {
   try {
-    const parsed: unknown = JSON.parse(row.failed_detail)
-    if (Array.isArray(parsed)) failedDetail = parsed as string[]
+    const parsed: unknown = JSON.parse(raw)
+    if (Array.isArray(parsed)) return parsed as string[]
   } catch {
     // 历史脏数据按空处理
   }
+  return []
+}
+
+function parseDetail(raw: string | undefined): SyncItemResult[] {
+  if (!raw) return []
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    if (Array.isArray(parsed)) return parsed as SyncItemResult[]
+  } catch {
+    // 历史脏数据按空处理
+  }
+  return []
+}
+
+function rowToTask(row: TaskRow): SyncTaskRecord {
   return {
     id: row.id,
     name: row.name,
@@ -63,7 +79,8 @@ function rowToTask(row: TaskRow): SyncTaskRecord {
     failed: row.failed,
     createdAt: row.created_at,
     progress: row.progress,
-    failedDetail,
+    failedDetail: parseStringArray(row.failed_detail),
+    detail: parseDetail(row.detail),
   }
 }
 
@@ -80,9 +97,17 @@ CREATE TABLE IF NOT EXISTS sync_tasks (
   failed INTEGER NOT NULL,
   created_at TEXT NOT NULL,
   progress REAL NOT NULL,
-  failed_detail TEXT NOT NULL
+  failed_detail TEXT NOT NULL,
+  detail TEXT NOT NULL DEFAULT '[]'
 )
 `)
+
+  // 旧库升级：T9 之前无 detail 列，ALTER TABLE 补齐（列已存在时静默跳过）
+  try {
+    db.exec(`ALTER TABLE sync_tasks ADD COLUMN detail TEXT NOT NULL DEFAULT '[]'`)
+  } catch {
+    // 列已存在
+  }
 
   return {
     /** 新增或更新一条任务记录 */
@@ -99,6 +124,7 @@ CREATE TABLE IF NOT EXISTS sync_tasks (
         createdAt: task.createdAt,
         progress: task.progress,
         failedDetail: JSON.stringify(task.failedDetail),
+        detail: JSON.stringify(task.detail),
       })
     },
 

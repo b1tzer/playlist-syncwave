@@ -62,7 +62,16 @@ describe('NeteaseAdapter — 映射契约', () => {
       }),
     })
     const list = await new NeteaseAdapter(api).getUserPlaylists('c', '1')
-    expect(list).toEqual([{ id: '1', name: '我的收藏', songCount: 42, coverUrl: undefined }])
+    expect(list).toEqual([
+      {
+        id: '1',
+        name: '我的收藏',
+        songCount: 42,
+        coverUrl: undefined,
+        webUrl: 'https://music.163.com/#/playlist?id=1',
+        appUrl: 'orpheus://playlist/1',
+      },
+    ])
   })
 
   it('歌单列表：过滤「我喜欢的音乐」（specialType=5）', async () => {

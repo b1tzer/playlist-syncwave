@@ -5,7 +5,9 @@ import type { MatchQuery } from '@core/models/match'
 import type { PlatformSong } from '@core/models/platform'
 import {
   SearchError,
+  SyncAbortedError,
   type SyncFailedItem,
+  type SyncItemResult,
   type SyncOptions,
   type SyncPlan,
   type SyncReport,
@@ -47,6 +49,7 @@ export async function planSync(
   const matched: SyncPlan['matched'] = []
   const choices: SyncPlan['choices'] = []
   const failed: SyncFailedItem[] = []
+  const items: SyncItemResult[] = []
   let firstGenre: string | undefined
 
   log.info('plan.start', '开始匹配计划', { total: queries.length, threshold })
@@ -54,11 +57,41 @@ export async function planSync(
   for (let i = 0; i < queries.length; i++) {
     const query = queries[i]
 
+    // 用户停止：下一个检查点立即中止
+    if (options.signal?.aborted) {
+      log.info('plan.aborted', '匹配计划被用户停止', { done: items.length, total: queries.length })
+      throw new SyncAbortedError({ items, failed, total: queries.length })
+    }
+    // 用户请求跳过当前歌曲：记 skipped 后直接下一首
+    if (options.skipCheck?.()) {
+      const skipped: SyncItemResult = {
+        index: i,
+        query,
+        status: 'skipped',
+        reason: 'skipped',
+        message: `已跳过：${query.title}${query.artist ? ` - ${query.artist}` : ''}`,
+      }
+      items.push(skipped)
+      failed.push({ query, reason: 'skipped', message: skipped.message ?? '' })
+      options.onStep?.(skipped)
+      options.onProgress?.((i + 1) / queries.length, 'matching')
+      log.info('plan.item-skipped', '歌曲被用户跳过', { title: query.title })
+      continue
+    }
+
     // 映射缓存：人工确认过的映射直接命中，跳过搜索
     if (target.lookupMapping) {
       const hit = target.lookupMapping(query)
       if (hit?.confirmed) {
         matched.push({ query, songId: hit.songId })
+        const item: SyncItemResult = {
+          index: i,
+          query,
+          status: 'matched',
+          songId: hit.songId,
+        }
+        items.push(item)
+        options.onStep?.(item)
         log.debug('plan.cache-hit', '映射缓存命中，跳过搜索', {
           title: query.title,
           artist: query.artist,
@@ -118,6 +151,10 @@ export async function planSync(
               message: errorMessage(e),
             })
             await sleep(waitMs)
+            // 重试等待期间用户可能已请求停止：立即响应，不再发起下一次请求
+            if (options.signal?.aborted) {
+              throw new SyncAbortedError({ items, failed, total: queries.length })
+            }
           }
         }
 
@@ -162,36 +199,41 @@ export async function planSync(
       // no-match：尝试下一个备选候选
     }
 
+    let step: SyncItemResult
     if (settled === null) {
+      let fail: SyncFailedItem
       if (lastError !== null) {
         // 限流/可重试判定由平台适配器完成（SearchError 标记），主流程不做平台文案匹配
         const isRateLimited = lastError instanceof SearchError && lastError.rateLimited
-        failed.push({
+        fail = {
           query,
           reason: isRateLimited ? 'rate-limited' : 'search-failed',
           message: errorMessage(lastError),
-        })
+        }
         log.warn('plan.item-failed', '歌曲匹配失败', {
           title: query.title,
           artist: query.artist,
-          reason: isRateLimited ? 'rate-limited' : 'search-failed',
-          message: errorMessage(lastError),
+          reason: fail.reason,
+          message: fail.message,
         })
       } else {
-        failed.push({
+        fail = {
           query,
           reason: 'no-match',
           message: `未找到匹配歌曲：${query.title}${query.artist ? ` - ${query.artist}` : ''}`,
-        })
+        }
         log.info('plan.item-no-match', '未找到匹配歌曲', {
           title: query.title,
           artist: query.artist,
         })
       }
+      failed.push(fail)
+      step = { index: i, query, status: 'failed', reason: fail.reason, message: fail.message }
     } else if (settled.type === 'matched') {
       matched.push({ query, songId: settled.songId })
       // 自动匹配结果写入缓存（下次可命中）
       target.saveMapping?.(query, settled.songId)
+      step = { index: i, query, status: 'matched', songId: settled.songId }
       log.debug('plan.item-matched', '歌曲匹配成功', {
         title: query.title,
         artist: query.artist,
@@ -199,12 +241,15 @@ export async function planSync(
       })
     } else {
       choices.push({ query: settled.attempt, candidates: settled.candidates })
+      step = { index: i, query: settled.attempt, status: 'choice' }
       log.info('plan.item-choice', '同歌不同作者，进入手动选择', {
         title: query.title,
         artist: query.artist,
         candidates: settled.candidates.length,
       })
     }
+    items.push(step)
+    options.onStep?.(step)
 
     options.onProgress?.((i + 1) / queries.length, 'matching')
     if (i < queries.length - 1) await sleep(searchIntervalMs)
@@ -217,7 +262,7 @@ export async function planSync(
     failed: failed.length,
   })
 
-  return { total: queries.length, matched, choices, failed, firstGenre }
+  return { total: queries.length, matched, choices, failed, items, firstGenre }
 }
 
 /**
@@ -234,6 +279,7 @@ export async function executeSync(
   const batchSize = options.batchSize ?? 500
   const failed: SyncFailedItem[] = [...plan.failed]
   const pending: Array<{ query: MatchQuery; songId: string }> = [...plan.matched]
+  const items: SyncItemResult[] = plan.items.map((item) => ({ ...item }))
 
   log.info('execute.start', '开始执行同步', {
     playlistName,
@@ -248,17 +294,28 @@ export async function executeSync(
     const candidate = selection
       ? choice.candidates.find((c) => c.id === selection.songId)
       : undefined
+    const item = items.find((it) => it.status === 'choice' && it.query === choice.query)
     if (!candidate) {
-      failed.push({
+      const fail: SyncFailedItem = {
         query: choice.query,
         reason: 'unresolved',
         message: `同歌不同作者，未选择版本：${choice.query.title}${choice.query.artist ? ` - ${choice.query.artist}` : ''}`,
-      })
+      }
+      failed.push(fail)
+      if (item) {
+        item.status = 'failed'
+        item.reason = fail.reason
+        item.message = fail.message
+      }
       log.warn('execute.choice-unresolved', '同歌不同作者，未选择版本', {
         title: choice.query.title,
         artist: choice.query.artist,
       })
       continue
+    }
+    if (item) {
+      item.status = 'matched'
+      item.songId = candidate.id
     }
     pending.push({ query: choice.query, songId: candidate.id })
   }
@@ -271,6 +328,7 @@ export async function executeSync(
     added: 0,
     failed,
     choices: [],
+    items,
     firstGenre: plan.firstGenre,
   }
 
@@ -280,12 +338,34 @@ export async function executeSync(
     return { status: 'done', ...baseReport }
   }
 
+  // 用户停止：建单前最后检查，避免建出空歌单
+  if (options.signal?.aborted) {
+    throw new SyncAbortedError({
+      items,
+      failed,
+      total: plan.total,
+      matched: plan.matched.length,
+      added: 0,
+    })
+  }
+
   const playlistId = await target.createPlaylist(playlistName)
   log.info('execute.playlist-created', '目标歌单已创建', { playlistName, playlistId })
 
   let added = 0
   const batchCount = Math.ceil(pending.length / batchSize)
   for (let b = 0; b < batchCount; b++) {
+    // 用户停止：批次之间响应，已写入的批次保留
+    if (options.signal?.aborted) {
+      throw new SyncAbortedError({
+        items,
+        failed,
+        total: plan.total,
+        matched: plan.matched.length,
+        added,
+        playlistId,
+      })
+    }
     const batch = pending.slice(b * batchSize, (b + 1) * batchSize)
     try {
       await target.addSongs(playlistId, batch.map((m) => m.songId))
@@ -303,8 +383,14 @@ export async function executeSync(
         batch: b + 1,
         count: batch.length,
       })
-      for (const item of batch) {
-        failed.push({ query: item.query, reason: 'add-failed', message })
+      for (const pendingItem of batch) {
+        failed.push({ query: pendingItem.query, reason: 'add-failed', message })
+        const item = items.find((it) => it.query === pendingItem.query)
+        if (item) {
+          item.status = 'failed'
+          item.reason = 'add-failed'
+          item.message = message
+        }
       }
     }
     options.onProgress?.((b + 1) / Math.max(batchCount, 1), 'adding')
@@ -327,6 +413,7 @@ export async function executeSync(
     added,
     failed,
     choices: [],
+    items,
     firstGenre: plan.firstGenre,
   }
 }
@@ -357,6 +444,7 @@ export async function syncPlaylist(
       added: 0,
       failed: plan.failed,
       choices: plan.choices,
+      items: plan.items,
       firstGenre: plan.firstGenre,
     }
   }

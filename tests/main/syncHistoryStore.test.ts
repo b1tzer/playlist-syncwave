@@ -1,7 +1,17 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import Database from 'better-sqlite3'
 import { createSyncHistoryStore } from '../../src/main/syncHistoryStore'
-import type { SyncTaskRecord } from '@core/models/sync'
+import type { SyncItemResult, SyncTaskRecord } from '@core/models/sync'
+
+function makeItem(overrides: Partial<SyncItemResult> = {}): SyncItemResult {
+  return {
+    index: 0,
+    query: { title: '晴天', artist: '周杰伦' },
+    status: 'matched',
+    songId: '1',
+    ...overrides,
+  }
+}
 
 function makeTask(overrides: Partial<SyncTaskRecord> = {}): SyncTaskRecord {
   return {
@@ -16,6 +26,7 @@ function makeTask(overrides: Partial<SyncTaskRecord> = {}): SyncTaskRecord {
     createdAt: '2026-11-24T10:00:00.000Z',
     progress: 1,
     failedDetail: ['未找到匹配歌曲：A', '未找到匹配歌曲：B'],
+    detail: [makeItem({ index: 0 }), makeItem({ index: 1, query: { title: 'A' }, status: 'failed', reason: 'no-match', message: '未找到' })],
     ...overrides,
   }
 }
@@ -96,5 +107,57 @@ describe('syncHistoryStore — SQLite 持久化', () => {
   it('空库查询返回空数组，不抛异常', () => {
     expect(store.listTasks()).toEqual([])
     expect(store.finalizeInterrupted()).toBe(0)
+  })
+
+  it('detail 明细 JSON 往返无损（T9）', () => {
+    const detail = [
+      makeItem({ index: 0, status: 'matched', songId: '1' }),
+      makeItem({
+        index: 1,
+        query: { title: '勇气', artist: '梁静茹' },
+        status: 'failed',
+        reason: 'unresolved',
+        message: '同歌不同作者，未选择版本',
+      }),
+      makeItem({
+        index: 2,
+        query: { title: '坏歌' },
+        status: 'skipped',
+        reason: 'skipped',
+        message: '已跳过：坏歌',
+      }),
+    ]
+    store.upsertTask(makeTask({ id: 'z', detail }))
+    expect(store.listTasks()[0].detail).toEqual(detail)
+  })
+
+  it('旧库（无 detail 列）升级：ALTER TABLE 补齐后可正常读写（T9）', () => {
+    // 模拟 T9 之前的旧表结构
+    db.exec(`
+      DROP TABLE sync_tasks;
+      CREATE TABLE sync_tasks (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        target_platform TEXT NOT NULL,
+        source TEXT NOT NULL,
+        status TEXT NOT NULL,
+        total INTEGER NOT NULL,
+        added INTEGER NOT NULL,
+        failed INTEGER NOT NULL,
+        created_at TEXT NOT NULL,
+        progress REAL NOT NULL,
+        failed_detail TEXT NOT NULL
+      );
+      INSERT INTO sync_tasks VALUES
+        ('old-1', '旧任务', 'netease', '文本导入', 'done', 5, 5, 0, '2026-11-01T00:00:00.000Z', 1, '[]');
+    `)
+    const upgraded = createSyncHistoryStore(db)
+    const tasks = upgraded.listTasks()
+    expect(tasks).toHaveLength(1)
+    expect(tasks[0].id).toBe('old-1')
+    expect(tasks[0].detail).toEqual([])
+    upgraded.upsertTask(makeTask({ id: 'old-1', status: 'stopped', detail: [makeItem()] }))
+    expect(upgraded.listTasks()[0].status).toBe('stopped')
+    expect(upgraded.listTasks()[0].detail).toHaveLength(1)
   })
 })

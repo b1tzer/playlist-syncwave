@@ -8,18 +8,26 @@ import type {
   QrLoginTicket,
 } from '@core/models/platform'
 import type { MatchQuery } from '@core/models/match'
-import type { SyncReport, SyncSelection, SyncTaskRecord } from '@core/models/sync'
+import type { SyncItemResult, SyncReport, SyncSelection, SyncTaskRecord } from '@core/models/sync'
 import type { LogEntry } from '@core/logging'
 
 export interface SyncProgress {
   platform: string
+  taskId: string
   ratio: number
   stage: 'matching' | 'adding'
+}
+
+export interface SyncStep {
+  taskId: string
+  item: SyncItemResult
 }
 
 const api = {
   getVersion: (): Promise<string> => ipcRenderer.invoke('app:get-version'),
   encrypt: (plain: string): Promise<string> => ipcRenderer.invoke('crypto:encrypt', plain),
+  /** 在系统浏览器/平台应用中打开链接（http/https/平台深链白名单） */
+  openExternal: (url: string): Promise<void> => ipcRenderer.invoke('app:open-external', url),
   /** 渲染进程日志上报：主进程校验后写入统一日志管线 */
   log: (entry: LogEntry): void => {
     ipcRenderer.send('log:write', entry)
@@ -53,12 +61,14 @@ const api = {
     ): Promise<void> => ipcRenderer.invoke('platform:playlist-remove-songs', platform, playlistId, songIds),
     syncPlaylist: (
       platform: string,
+      taskId: string,
       queries: MatchQuery[],
       playlistName: string,
       autoNameDate?: string,
       batchSize?: number,
     ): Promise<{ taskId: string; report: SyncReport }> =>
       ipcRenderer.invoke('platform:sync-playlist', platform, {
+        taskId,
         queries,
         playlistName,
         autoNameDate,
@@ -72,10 +82,22 @@ const api = {
       ipcRenderer.invoke('platform:confirm-sync', platform, taskId, selections),
     cancelSync: (taskId: string): Promise<void> =>
       ipcRenderer.invoke('platform:cancel-sync', taskId),
+    /** 停止运行中的同步任务（已完成部分保留） */
+    stopSync: (taskId: string): Promise<void> =>
+      ipcRenderer.invoke('platform:stop-sync', taskId),
+    /** 请求跳过当前正在处理的歌曲，从下一首继续 */
+    skipSync: (taskId: string): Promise<void> =>
+      ipcRenderer.invoke('platform:skip-sync', taskId),
     onSyncProgress: (callback: (progress: SyncProgress) => void): (() => void) => {
       const listener = (_event: unknown, progress: SyncProgress) => callback(progress)
       ipcRenderer.on('sync:progress', listener)
       return () => ipcRenderer.removeListener('sync:progress', listener)
+    },
+    /** 逐首处理明细（任务详情清单实时更新） */
+    onSyncStep: (callback: (step: SyncStep) => void): (() => void) => {
+      const listener = (_event: unknown, step: SyncStep) => callback(step)
+      ipcRenderer.on('sync:step', listener)
+      return () => ipcRenderer.removeListener('sync:step', listener)
     },
     /** 账号状态变化（凭证保活续期/失效清除）时由主进程广播，渲染层重新查询该平台 */
     onAccountsChanged: (callback: (platform: string) => void): (() => void) => {

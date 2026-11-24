@@ -17,6 +17,10 @@ export interface PlatformPlaylist {
   name: string
   songCount: number
   coverUrl?: string
+  /** 浏览器打开的歌单分享链接（平台适配器填充） */
+  webUrl?: string
+  /** 在平台应用中打开歌单的深链（平台适配器填充） */
+  appUrl?: string
 }
 
 export interface PlatformAccount {

@@ -1,10 +1,18 @@
-import { app, BrowserWindow, ipcMain, safeStorage } from 'electron'
+import { app, BrowserWindow, ipcMain, safeStorage, shell } from 'electron'
 import { join } from 'node:path'
 import { platformModules } from '../platforms'
 import { registerPlatform, getPlatform, resolveAdapter, listPlatforms } from './platformRegistry'
 import type { AdapterContext } from '../platforms/meta'
 import { executeSync, planSync } from '@core/sync/syncPlaylist'
-import type { SyncPlan, SyncSelection, SyncTarget } from '@core/models/sync'
+import {
+  SearchError,
+  SyncAbortedError,
+  type SyncItemResult,
+  type SyncPlan,
+  type SyncReport,
+  type SyncSelection,
+  type SyncTarget,
+} from '@core/models/sync'
 import type { MatchQuery } from '@core/models/match'
 import { logCenter } from './logging/logCenter'
 import { upsertSyncTask, listSyncTasks, removeSyncTask, clearSyncTasks } from './syncHistoryService'
@@ -106,6 +114,25 @@ ipcMain.handle('crypto:encrypt', (_event, plain: string) => {
   }
   ipcLog.debug('crypto.encrypt', '加密数据', { length: plain.length })
   return safeStorage.encryptString(plain).toString('base64')
+})
+
+// 浏览器/平台应用深链打开的白名单：拦截未知 scheme 防注入
+const EXTERNAL_SCHEMES = new Set(['http:', 'https:', 'orpheus:', 'qqmusic:'])
+
+ipcMain.handle('app:open-external', async (_event, url: unknown) => {
+  if (typeof url !== 'string' || !url.trim()) throw new Error('无效的链接')
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    throw new Error('无效的链接')
+  }
+  if (!EXTERNAL_SCHEMES.has(parsed.protocol)) {
+    ipcLog.warn('app.open-external', '拦截未知协议的链接', { scheme: parsed.protocol })
+    throw new Error('不允许打开的链接类型')
+  }
+  ipcLog.info('app.open-external', '打开外部链接', { scheme: parsed.protocol })
+  await shell.openExternal(url)
 })
 
 // --- 渲染进程日志通道：校验后转发到统一日志管线 ---
@@ -305,8 +332,42 @@ ipcMain.handle(
 /** 待确认的同步会话：choice-needed 后缓存 plan，等待用户选择 */
 const pendingSyncs = new Map<
   string,
-  { plan: SyncPlan; target: SyncTarget; playlistName: string; batchSize?: number }
+  { platform: string; plan: SyncPlan; target: SyncTarget; playlistName: string; batchSize?: number }
 >()
+
+/** 执行中的同步任务：支持停止（abort）与跳过当前歌曲（skip 标志，一次性消耗） */
+interface RunningSync {
+  abort: AbortController
+  skip: { requested: boolean }
+}
+const runningSyncs = new Map<string, RunningSync>()
+
+/** 平台调用超时包装：请求永久挂起会卡死任务，超时转为可重试错误让引擎放弃当前项 */
+const REQUEST_TIMEOUT_MS = 60_000
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new SearchError(`请求超时（${Math.round(ms / 1000)}s），已放弃等待`, true))
+    }, ms)
+  })
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer))
+}
+
+/** 引擎中止后收敛为 stopped 报告（已完成部分保留，渲染层据此归因任务状态） */
+function stoppedReport(partial: SyncAbortedError['partial'], playlistName: string): SyncReport {
+  return {
+    status: 'stopped',
+    playlistName,
+    playlistId: partial.playlistId ?? '',
+    total: partial.total,
+    matched: partial.matched ?? 0,
+    added: partial.added ?? 0,
+    failed: partial.failed,
+    choices: [],
+    items: partial.items,
+  }
+}
 
 ipcMain.handle(
   'platform:sync-playlist',
@@ -314,6 +375,7 @@ ipcMain.handle(
     event,
     platform: string,
     payload: {
+      taskId: string
       queries: MatchQuery[]
       playlistName: string
       /** 渲染层按当前语言格式化的今日日期：歌单名留空时与第一首歌风格拼成默认名 */
@@ -328,10 +390,13 @@ ipcMain.handle(
         const credential = services.getCredential()
         if (!credential) throw new Error('尚未登录目标平台')
         const adapter = await resolveAdapter(platform)
+        const taskId = payload.taskId || `sync-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
         const target: SyncTarget = {
-          searchSongs: (keyword, limit) => adapter.searchSongs(credential, keyword, limit),
+          searchSongs: (keyword, limit) =>
+            withTimeout(adapter.searchSongs(credential, keyword, limit), REQUEST_TIMEOUT_MS),
           createPlaylist: (name) => adapter.createPlaylist(credential, name),
-          addSongs: (playlistId, songIds) => adapter.addSongsToPlaylist(credential, playlistId, songIds),
+          addSongs: (playlistId, songIds) =>
+            withTimeout(adapter.addSongsToPlaylist(credential, playlistId, songIds), REQUEST_TIMEOUT_MS),
           lookupMapping: (query) => {
             const rows = findMappings(platform, query)
             const confirmed = rows.find((r) => r.confirmed === 1)
@@ -345,65 +410,132 @@ ipcMain.handle(
         }
         const notify = (ratio: number, stage: 'matching' | 'adding') => {
           if (!event.sender.isDestroyed()) {
-            event.sender.send('sync:progress', { platform, ratio, stage })
+            event.sender.send('sync:progress', { platform, taskId, ratio, stage })
           }
         }
+        const ctrl = new AbortController()
+        const skip = { requested: false }
+        runningSyncs.set(taskId, { abort: ctrl, skip })
+        const controlOptions = {
+          signal: ctrl.signal,
+          skipCheck: () => {
+            const requested = skip.requested
+            skip.requested = false
+            return requested
+          },
+          onStep: (item: SyncItemResult) => {
+            if (!event.sender.isDestroyed()) {
+              event.sender.send('sync:step', { taskId, item })
+            }
+          },
+        }
 
-        const plan = await planSync(payload.queries, target, { onProgress: notify })
-
-        // 歌单名留空时自动命名：今日日期 + 第一首歌风格
-        const autoName = [payload.autoNameDate, plan.firstGenre].filter(Boolean).join(' ')
-        const finalName = (payload.playlistName ?? '').trim() || autoName || '未命名歌单'
-
-        if (plan.choices.length > 0) {
-          const taskId = `sync-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-          pendingSyncs.set(taskId, {
-            plan,
-            target,
-            playlistName: finalName,
-            batchSize: payload.batchSize,
+        try {
+          const plan = await planSync(payload.queries, target, {
+            onProgress: notify,
+            ...controlOptions,
           })
-          ipcLog.info('platform.sync-playlist', '同步需要用户确认', {
+
+          // 歌单名留空时自动命名：今日日期 + 第一首歌风格
+          const autoName = [payload.autoNameDate, plan.firstGenre].filter(Boolean).join(' ')
+          const finalName = (payload.playlistName ?? '').trim() || autoName || '未命名歌单'
+
+          if (plan.choices.length > 0) {
+            pendingSyncs.set(taskId, {
+              platform,
+              plan,
+              target,
+              playlistName: finalName,
+              batchSize: payload.batchSize,
+            })
+            ipcLog.info('platform.sync-playlist', '同步需要用户确认', {
+              platform,
+              taskId,
+              playlistName: finalName,
+              total: plan.total,
+              matched: plan.matched.length,
+              choices: plan.choices.length,
+              failed: plan.failed.length,
+            })
+            return {
+              taskId,
+              report: {
+                status: 'choice-needed',
+                playlistName: finalName,
+                playlistId: '',
+                total: plan.total,
+                matched: plan.matched.length,
+                added: 0,
+                failed: plan.failed,
+                choices: plan.choices,
+                items: plan.items,
+                firstGenre: plan.firstGenre,
+              },
+            }
+          }
+
+          const report = await executeSync(plan, [], finalName, target, {
+            batchSize: payload.batchSize,
+            onProgress: notify,
+            ...controlOptions,
+          })
+          ipcLog.info('platform.sync-playlist', '同步完成', {
             platform,
             taskId,
             playlistName: finalName,
-            total: plan.total,
-            matched: plan.matched.length,
-            choices: plan.choices.length,
-            failed: plan.failed.length,
+            playlistId: report.playlistId,
+            total: report.total,
+            added: report.added,
+            failed: report.failed.length,
           })
-          return {
-            taskId,
-            report: {
-              status: 'choice-needed',
-              playlistName: finalName,
-              playlistId: '',
-              total: plan.total,
-              matched: plan.matched.length,
-              added: 0,
-              failed: plan.failed,
-              choices: plan.choices,
-              firstGenre: plan.firstGenre,
-            },
+          return { taskId, report }
+        } catch (e) {
+          if (e instanceof SyncAbortedError) {
+            const fallbackName = (payload.playlistName ?? '').trim() || payload.autoNameDate || '未命名歌单'
+            ipcLog.info('platform.sync-playlist', '同步被用户停止', { platform, taskId })
+            return { taskId, report: stoppedReport(e.partial, fallbackName) }
           }
+          throw e
+        } finally {
+          runningSyncs.delete(taskId)
         }
-
-        const report = await executeSync(plan, [], finalName, target, {
-          batchSize: payload.batchSize,
-          onProgress: notify,
-        })
-        ipcLog.info('platform.sync-playlist', '同步完成', {
-          platform,
-          playlistName: finalName,
-          playlistId: report.playlistId,
-          total: report.total,
-          added: report.added,
-          failed: report.failed.length,
-        })
-        return { taskId: '', report }
       },
-      { platform, playlistName: payload.playlistName, total: payload.queries.length },
+      { platform, taskId: payload.taskId, playlistName: payload.playlistName, total: payload.queries.length },
     ),
+)
+
+/** 停止运行中的同步任务：引擎在下一个检查点中止，已完成部分保留 */
+ipcMain.handle('platform:stop-sync', (_event, taskId: string) =>
+  ipcLog.time(
+    'platform.stop-sync',
+    async () => {
+      const running = runningSyncs.get(taskId)
+      if (running) {
+        running.abort.abort()
+        ipcLog.info('platform.stop-sync', '已请求停止同步任务', { taskId })
+      }
+      // 待确认会话也允许停止（等同放弃选择）
+      if (pendingSyncs.delete(taskId)) {
+        ipcLog.info('platform.stop-sync', '待确认同步会话已放弃', { taskId })
+      }
+    },
+    { taskId },
+  ),
+)
+
+/** 跳过当前歌曲：引擎在该曲处理结束后放弃当前曲，从下一首继续 */
+ipcMain.handle('platform:skip-sync', (_event, taskId: string) =>
+  ipcLog.time(
+    'platform.skip-sync',
+    async () => {
+      const running = runningSyncs.get(taskId)
+      if (running) {
+        running.skip.requested = true
+        ipcLog.info('platform.skip-sync', '已请求跳过当前歌曲', { taskId })
+      }
+    },
+    { taskId },
+  ),
 )
 
 // --- 同步历史（SQLite 持久化）---
@@ -539,14 +671,38 @@ ipcMain.handle(
             saveConfirmedMapping(platform, choice, selection.songId)
           }
         }
-        return executeSync(pending.plan, selections, pending.playlistName, pending.target, {
-          batchSize: pending.batchSize,
-          onProgress: (ratio, stage) => {
-            if (!event.sender.isDestroyed()) {
-              event.sender.send('sync:progress', { platform, ratio, stage })
-            }
-          },
-        })
+        const ctrl = new AbortController()
+        const skip = { requested: false }
+        runningSyncs.set(taskId, { abort: ctrl, skip })
+        try {
+          return await executeSync(pending.plan, selections, pending.playlistName, pending.target, {
+            batchSize: pending.batchSize,
+            signal: ctrl.signal,
+            skipCheck: () => {
+              const requested = skip.requested
+              skip.requested = false
+              return requested
+            },
+            onStep: (item) => {
+              if (!event.sender.isDestroyed()) {
+                event.sender.send('sync:step', { taskId, item })
+              }
+            },
+            onProgress: (ratio, stage) => {
+              if (!event.sender.isDestroyed()) {
+                event.sender.send('sync:progress', { platform, taskId, ratio, stage })
+              }
+            },
+          })
+        } catch (e) {
+          if (e instanceof SyncAbortedError) {
+            ipcLog.info('platform.confirm-sync', '写入被用户停止', { platform, taskId })
+            return stoppedReport(e.partial, pending.playlistName)
+          }
+          throw e
+        } finally {
+          runningSyncs.delete(taskId)
+        }
       },
       { platform, taskId, selections: selections.length },
     ),
