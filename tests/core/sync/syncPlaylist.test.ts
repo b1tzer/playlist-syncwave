@@ -4,10 +4,11 @@ import { SearchError, type SyncOptions, type SyncTarget } from '@core/models/syn
 import type { MatchQuery } from '@core/models/match'
 import type { PlatformSong } from '@core/models/platform'
 
-const song = (id: string, title: string, artist: string): PlatformSong => ({
+const song = (id: string, title: string, artist: string, genre?: string): PlatformSong => ({
   id,
   title,
   artist,
+  genre,
 })
 
 function makeTarget(
@@ -171,7 +172,8 @@ describe('syncPlaylist — 单向同步引擎（T4）', () => {
   it('风控错误（405 操作频繁）→ 分类为 rate-limited', async () => {
     const target = makeTarget({})
     target.searchSongs = vi.fn(async () => {
-      throw new SearchError('操作频繁，请稍候再试', true)
+      // rateLimited 标记由平台适配器判定（模拟网易云 405 风控）
+      throw new SearchError('操作频繁，请稍候再试', true, true)
     })
     const report = await run([{ title: '晴天' }], 'x', target, { searchRetries: 0 })
     expect(report.failed[0].reason).toBe('rate-limited')
@@ -380,14 +382,11 @@ describe('planSync — 备选候选搜索验证（T6.4 闭环）', () => {
     expect(plan.choices[0].candidates.map((c) => c.id)).toEqual(['2', '3'])
   })
 
-  it('主候选精确匹配 → 不触发备选搜索', async () => {
-    const target = makeTarget({
-      'Hidden Place': [song('1', 'Hidden Place', 'Björk')],
-    })
+  it('组合关键词（歌名+歌手）精确命中 → 只搜索一次，不触发降级', async () => {
+    const target = makeTarget({})
     target.searchSongs = vi.fn(async (keyword: string) => {
-      if (keyword === 'Hidden Place') return [song('1', 'Hidden Place', 'Björk')]
-      if (keyword === 'Björk') throw new Error('不应搜索备选')
-      return []
+      if (keyword === 'Hidden Place Björk') return [song('1', 'Hidden Place', 'Björk')]
+      throw new Error(`不应搜索：${keyword}`)
     })
     const plan = await planSync(
       [
@@ -401,7 +400,36 @@ describe('planSync — 备选候选搜索验证（T6.4 闭环）', () => {
       { searchIntervalMs: 0 },
     )
     expect(plan.matched).toHaveLength(1)
+    expect(plan.matched[0].songId).toBe('1')
     expect(target.searchSongs).toHaveBeenCalledTimes(1)
+    expect(target.searchSongs).toHaveBeenCalledWith('Hidden Place Björk', 10)
+  })
+
+  it('组合关键词无命中 → 降级纯歌名搜索并命中，不触发备选候选', async () => {
+    const target = makeTarget({
+      'Hidden Place': [song('1', 'Hidden Place', 'Björk')],
+    })
+    target.searchSongs = vi.fn(async (keyword: string) => {
+      if (keyword === 'Hidden Place Björk') return []
+      if (keyword === 'Hidden Place') return [song('1', 'Hidden Place', 'Björk')]
+      throw new Error(`不应搜索：${keyword}`)
+    })
+    const plan = await planSync(
+      [
+        {
+          title: 'Hidden Place',
+          artist: 'Björk',
+          alternatives: [{ title: 'Björk', artist: 'Hidden Place' }],
+        },
+      ],
+      target,
+      { searchIntervalMs: 0 },
+    )
+    expect(plan.matched).toHaveLength(1)
+    expect(plan.matched[0].songId).toBe('1')
+    expect(target.searchSongs).toHaveBeenCalledTimes(2)
+    expect(target.searchSongs).toHaveBeenNthCalledWith(1, 'Hidden Place Björk', 10)
+    expect(target.searchSongs).toHaveBeenNthCalledWith(2, 'Hidden Place', 10)
   })
 
   it('主备均无匹配 → no-match 失败', async () => {
@@ -419,6 +447,36 @@ describe('planSync — 备选候选搜索验证（T6.4 闭环）', () => {
     )
     expect(plan.failed).toHaveLength(1)
     expect(plan.failed[0].reason).toBe('no-match')
+  })
+})
+
+describe('syncPlaylist — 第一首歌曲风格（自动命名）', () => {
+  it('完全匹配：报告携带第一首歌曲的风格', async () => {
+    const target = makeTarget({
+      '晴天 周杰伦': [song('1', '晴天', '周杰伦', '流行')],
+      '稻香 周杰伦': [song('2', '稻香', '周杰伦', '流行')],
+    })
+    const report = await run(
+      [{ title: '晴天', artist: '周杰伦' }, { title: '稻香', artist: '周杰伦' }],
+      'x',
+      target,
+    )
+    expect(report.firstGenre).toBe('流行')
+  })
+
+  it('同歌不同作者：firstGenre 取第一候选的风格', async () => {
+    const target = makeTarget({
+      '勇气 梁静茹': [song('1', '勇气', '棉子', '民谣'), song('2', '勇气', '金志文', '流行')],
+    })
+    const report = await run([{ title: '勇气', artist: '梁静茹' }], 'x', target)
+    expect(report.status).toBe('choice-needed')
+    expect(report.firstGenre).toBe('民谣')
+  })
+
+  it('搜索结果无风格字段 → firstGenre 为 undefined', async () => {
+    const target = makeTarget({ '晴天 周杰伦': [song('1', '晴天', '周杰伦')] })
+    const report = await run([{ title: '晴天', artist: '周杰伦' }], 'x', target)
+    expect(report.firstGenre).toBeUndefined()
   })
 })
 

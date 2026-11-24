@@ -24,7 +24,8 @@ export interface SyncTarget {
 
 export interface SyncFailedItem {
   query: MatchQuery
-  reason: 'search-failed' | 'no-match' | 'rate-limited' | 'unresolved'
+  /** search-failed：搜索失败；add-failed：写入歌单失败；no-match：未匹配；rate-limited：限流；unresolved：未选择 */
+  reason: 'search-failed' | 'add-failed' | 'no-match' | 'rate-limited' | 'unresolved'
   message: string
 }
 
@@ -47,6 +48,8 @@ export interface SyncPlan {
   matched: Array<{ query: MatchQuery; songId: string }>
   choices: SyncChoice[]
   failed: SyncFailedItem[]
+  /** 第一首歌曲的匹配结果风格（用于自动命名歌单） */
+  firstGenre?: string
 }
 
 export interface SyncReport {
@@ -62,6 +65,8 @@ export interface SyncReport {
   failed: SyncFailedItem[]
   /** status 为 choice-needed 时非空 */
   choices: SyncChoice[]
+  /** 第一首歌曲的匹配结果风格（用于自动命名歌单） */
+  firstGenre?: string
 }
 
 export interface SyncOptions {
@@ -77,11 +82,13 @@ export interface SyncOptions {
   onProgress?: (ratio: number, stage: 'matching' | 'adding') => void
 }
 
-/** 平台搜索异常（含可重试标记） */
+/** 平台搜索异常（含可重试标记与限流标记，由各平台适配器判定） */
 export class SearchError extends Error {
   constructor(
     message: string,
     public readonly retryable: boolean,
+    /** 操作频繁被限流（平台风控），重试前需等待更长时间 */
+    public readonly rateLimited = false,
   ) {
     super(message)
     this.name = 'SearchError'
@@ -91,8 +98,14 @@ export class SearchError extends Error {
 /** 同步输入：解析器输出的歌单请求（歌名+歌手） */
 export type SyncInput = MatchQuery[]
 
-/** 同步任务状态（同步中心展示 + SQLite 持久化共用） */
-export type SyncTaskStatus = 'running' | 'done' | 'failed'
+/**
+ * 同步任务状态（同步中心展示 + SQLite 持久化共用）
+ * - running：执行中（含等待用户确认选择）
+ * - done：已完成
+ * - failed：执行异常（匹配/写入失败等）
+ * - interrupted：未完成即退出（如等待确认时关闭应用），下次启动归因
+ */
+export type SyncTaskStatus = 'running' | 'done' | 'failed' | 'interrupted'
 
 export interface SyncTaskRecord {
   id: string
@@ -109,4 +122,19 @@ export interface SyncTaskRecord {
   /** 0-1，运行中更新 */
   progress: number
   failedDetail: string[]
+}
+
+/**
+ * 等待用户手动选择的同步会话（渲染进程状态）。
+ * 由 App 层持有：切换视图不卸载，选择面板与已选状态跨视图保留。
+ */
+export interface PendingConfirmSession {
+  /** 主进程待确认会话 id（confirm-sync / cancel-sync 使用） */
+  syncTaskId: string
+  /** 发起同步时的任务记录快照（取消会话时用于归因） */
+  task: SyncTaskRecord
+  /** 目标平台 id */
+  target: string
+  /** 同歌不同作者、待手动选择的候选项 */
+  choices: SyncChoice[]
 }

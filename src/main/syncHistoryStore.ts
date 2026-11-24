@@ -24,6 +24,8 @@ interface TaskRow {
   failed_detail: string
 }
 
+const INTERRUPTED_DETAIL = ['任务中断：应用在同步完成前退出']
+
 const UPSERT_SQL = `
 INSERT INTO sync_tasks
   (id, name, target_platform, source, status, total, added, failed, created_at, progress, failed_detail)
@@ -118,11 +120,19 @@ CREATE TABLE IF NOT EXISTS sync_tasks (
       db.prepare('DELETE FROM sync_tasks').run()
     },
 
-    /** 把「running」残留状态（上次异常退出）归为 failed */
+    /** 把「running」残留状态（上次异常退出）归为 interrupted，并写入中断原因 */
     finalizeInterrupted(): number {
       const result = db
-        .prepare("UPDATE sync_tasks SET status = 'failed' WHERE status = 'running'")
-        .run()
+        .prepare(
+          `UPDATE sync_tasks
+             SET status = 'interrupted',
+                 failed_detail = CASE
+                   WHEN failed_detail = '[]' THEN ?
+                   ELSE failed_detail
+                 END
+           WHERE status = 'running'`,
+        )
+        .run(JSON.stringify(INTERRUPTED_DETAIL))
       return result.changes
     },
   }

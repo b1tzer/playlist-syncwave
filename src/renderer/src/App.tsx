@@ -5,21 +5,29 @@ import TextCreator from './components/TextCreator'
 import PlaylistSection from './components/PlaylistSection'
 import LoginSection from './components/LoginSection'
 import SyncCenter from './components/SyncCenter'
-import type { SyncTaskRecord } from '@core/models/sync'
+import type { PendingConfirmSession, SyncReport, SyncTaskRecord } from '@core/models/sync'
 import SettingsView from './components/SettingsView'
+import ConfirmSyncDialog from './components/ConfirmSyncDialog'
 import { createRendererLogger } from './logging/rendererLogger'
 import { useI18n } from './i18n'
 
 const log = createRendererLogger('renderer.app')
 
 export default function App() {
-  const { t } = useI18n()
+  const { t, formatTime } = useI18n()
   const [view, setView] = useState<View>('create')
   const [platforms, setPlatforms] = useState<PlatformMeta[]>([])
   const [accounts, setAccounts] = useState<Record<string, PlatformAccount | null>>({})
   const [tasks, setTasks] = useState<SyncTaskRecord[]>([])
   const [search, setSearch] = useState('')
   const searchRef = useRef<HTMLInputElement>(null)
+
+  // 待确认同步会话提升到 App 层：分步确认弹窗挂载于此，切换视图不丢失
+  const [pendingConfirm, setPendingConfirm] = useState<PendingConfirmSession | null>(null)
+  const [confirmSelections, setConfirmSelections] = useState<Record<number, string>>({})
+  const [confirming, setConfirming] = useState(false)
+  const [confirmError, setConfirmError] = useState('')
+  const [confirmResult, setConfirmResult] = useState<SyncReport | null>(null)
 
   useEffect(() => {
     window.electronAPI.platforms
@@ -65,6 +73,107 @@ export default function App() {
     window.electronAPI.syncHistory.upsert(t).catch((e) => {
       log.warn('sync.history-persist-failed', '同步历史落库失败', e)
     })
+  }
+
+  const handleTaskRemove = (id: string) => {
+    setTasks((prev) => prev.filter((x) => x.id !== id))
+    window.electronAPI.syncHistory
+      .remove(id)
+      .then(() => log.info('sync.remove-task-done', '同步任务已删除', { taskId: id }))
+      .catch((e) => log.error('sync.remove-task-failed', '删除同步任务失败', e, { taskId: id }))
+  }
+
+  const handleClearAll = () => {
+    setTasks([])
+    window.electronAPI.syncHistory
+      .clear()
+      .then(() => log.info('sync.clear-all-done', '同步历史已清空'))
+      .catch((e) => log.error('sync.clear-all-failed', '清空同步历史失败', e))
+  }
+
+  // --- 待确认会话：新会话建立时重置选择与结果状态 ---
+
+  const handlePendingConfirmChange = (session: PendingConfirmSession | null) => {
+    setPendingConfirm(session)
+    setConfirmSelections({})
+    setConfirmResult(null)
+    setConfirmError('')
+  }
+
+  const resetConfirmSession = () => {
+    setPendingConfirm(null)
+    setConfirmSelections({})
+    setConfirmResult(null)
+    setConfirmError('')
+  }
+
+  /** 弹窗确认：全部选择完成后调用主进程完成同步 */
+  const handleConfirmSync = async () => {
+    if (!pendingConfirm || confirming) return
+    const { syncTaskId, target, choices } = pendingConfirm
+    const sel = choices
+      .map((_, i) => ({ choiceIndex: i, songId: confirmSelections[i] }))
+      .filter((s) => typeof s.songId === 'string')
+    if (sel.length < choices.length) return
+
+    log.info('sync.confirm', '确认手动选择并继续同步', {
+      targetPlatform: target,
+      selections: sel.length,
+    })
+    setConfirming(true)
+    setConfirmError('')
+    try {
+      const rep = await window.electronAPI.platforms.confirmSync(target, syncTaskId, sel)
+      log.info('sync.confirm-done', '确认同步完成', {
+        targetPlatform: target,
+        playlistId: rep.playlistId,
+        added: rep.added,
+        failed: rep.failed.length,
+      })
+      setConfirmResult(rep)
+      const ok = rep.playlistId !== ''
+      handleTaskUpdate({
+        id: `task-${Date.now()}`,
+        name: rep.playlistName,
+        targetPlatform: target,
+        source: 'text-import',
+        status: ok ? 'done' : 'failed',
+        total: rep.total,
+        added: rep.added,
+        failed: rep.failed.length,
+        createdAt: formatTime(new Date()),
+        progress: 1,
+        failedDetail: rep.failed.map(
+          (f) => `${f.query.title}${f.query.artist ? ` - ${f.query.artist}` : ''}（${f.message}）`,
+        ),
+      })
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : t('sync.failedGeneric')
+      log.error('sync.confirm-failed', '确认同步失败', e, { targetPlatform: target })
+      setConfirmError(msg)
+    } finally {
+      setConfirming(false)
+    }
+  }
+
+  /** 弹窗取消：主进程放弃会话，任务归为已中断 */
+  const handleCancelPending = async () => {
+    if (!pendingConfirm) return
+    log.info('sync.cancel-pending', '取消待确认同步', { taskId: pendingConfirm.syncTaskId })
+    try {
+      await window.electronAPI.platforms.cancelSync(pendingConfirm.syncTaskId)
+    } catch (e) {
+      log.error('sync.cancel-pending-failed', '放弃同步会话失败', e, {
+        taskId: pendingConfirm.syncTaskId,
+      })
+    }
+    const { task } = pendingConfirm
+    handleTaskUpdate({
+      ...task,
+      status: 'interrupted',
+      failedDetail: [...task.failedDetail, '任务已取消：用户放弃手动选择'],
+    })
+    resetConfirmSession()
   }
 
   const handleSearch = (value: string) => {
@@ -140,22 +249,32 @@ export default function App() {
             )}
             <span className="shrink-0 font-label-mono text-label-mono text-outline">⌘K</span>
           </div>
-          <div className="ml-auto flex items-center gap-2 font-label-mono text-label-mono text-outline">
-            <span className="material-symbols-outlined text-sm">security</span>
-            {t('app.securityNote')}
-          </div>
         </header>
 
         <main className="flex-1 overflow-y-auto">
           <div className="mx-auto max-w-5xl px-6 py-6">
             {view === 'create' && (
-              <TextCreator platforms={platforms} accounts={accounts} onTaskUpdate={handleTaskUpdate} />
+              <TextCreator
+                platforms={platforms}
+                accounts={accounts}
+                onTaskUpdate={handleTaskUpdate}
+                pendingConfirm={pendingConfirm}
+                onPendingConfirmChange={handlePendingConfirmChange}
+              />
             )}
             {view === 'playlists' && (
               <PlaylistSection platforms={platforms} accounts={accounts} searchQuery={search} />
             )}
             {view === 'sync' && (
-              <SyncCenter platforms={platforms} tasks={tasks} onNewTask={() => setView('create')} />
+              <SyncCenter
+                platforms={platforms}
+                tasks={tasks}
+                onNewTask={() => setView('create')}
+                onTaskRemove={handleTaskRemove}
+                onClearAll={handleClearAll}
+                pendingChoicesCount={pendingConfirm?.choices.length ?? 0}
+                onGoConfirm={() => setView('create')}
+              />
             )}
             {view === 'accounts' && (
               <LoginSection
@@ -168,6 +287,21 @@ export default function App() {
           </div>
         </main>
       </div>
+
+      {/* 分步确认弹窗：App 层挂载，切换视图不丢失 */}
+      {pendingConfirm && (
+        <ConfirmSyncDialog
+          session={pendingConfirm}
+          selections={confirmSelections}
+          onSelect={(index, songId) => setConfirmSelections((prev) => ({ ...prev, [index]: songId }))}
+          onConfirm={() => void handleConfirmSync()}
+          onCancel={() => void handleCancelPending()}
+          onDone={resetConfirmSession}
+          confirming={confirming}
+          confirmError={confirmError}
+          confirmResult={confirmResult}
+        />
+      )}
     </div>
   )
 }

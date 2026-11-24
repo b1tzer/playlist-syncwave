@@ -1,5 +1,6 @@
 import { defaultLevelFromEnv } from './format'
 import { LOG_LEVELS, meetsLevel, parseLogLevel } from './levels'
+import { LOG_MESSAGE_EN } from './messages'
 import { sanitizeContext } from './redact'
 import { ConsoleTransport, isTestEnv } from './transports'
 import type {
@@ -21,6 +22,20 @@ let defaultTransports: LogTransport[] | null = null
 
 /** 全局默认传输未初始化时的兜底控制台输出（单例复用） */
 const consoleFallback: ConsoleTransport = new ConsoleTransport()
+
+/** 日志消息语言（随应用语言设置变化，默认中文源消息） */
+let logLocale: 'zh-CN' | 'en-US' = 'zh-CN'
+
+/** 设置日志消息语言：en 开头视为英文，其余保持中文源消息 */
+export function setLogLocale(locale: string): void {
+  logLocale = locale.toLowerCase().startsWith('en') ? 'en-US' : 'zh-CN'
+}
+
+/** 按当前语言渲染日志消息；目录中缺失的消息原样输出 */
+function translateMessage(message: string): string {
+  if (logLocale !== 'en-US') return message
+  return LOG_MESSAGE_EN[message] ?? message
+}
 
 export function setDefaultTransports(transports: LogTransport[]): void {
   defaultTransports = transports
@@ -45,7 +60,22 @@ function extractErrorInfo(error: unknown): LogErrorInfo | undefined {
       stack: error.stack,
     }
   }
-  return { name: 'Error', message: String(error) }
+  if (typeof error === 'string') return { name: 'Error', message: error }
+  // 对象异常（如平台接口抛出的 { body: { code, message } }）：
+  // 序列化记录真实内容（脱敏），避免被吞成 [object Object]
+  try {
+    const json = JSON.stringify(sanitizeContext(error as Record<string, unknown>))
+    if (json !== undefined) {
+      return { name: 'ObjectError', message: json.slice(0, 500) }
+    }
+  } catch {
+    // 不可序列化对象走兜底
+  }
+  try {
+    return { name: 'ObjectError', message: String(error).slice(0, 500) }
+  } catch {
+    return { name: 'ObjectError', message: '[unserializable error]' }
+  }
 }
 
 class LoggerImpl implements Logger {
@@ -91,7 +121,7 @@ class LoggerImpl implements Logger {
       level,
       module: this.base.module,
       event,
-      message,
+      message: translateMessage(message),
       durationMs: extra?.durationMs,
       error: extra?.error,
       process: this.base.process,

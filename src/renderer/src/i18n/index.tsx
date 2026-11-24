@@ -14,6 +14,7 @@ import {
   type TranslationKey,
   type TranslateParams,
 } from './translations'
+import { setLogLocale } from '@core/logging'
 import { createRendererLogger } from '../logging/rendererLogger'
 
 const log = createRendererLogger('renderer.i18n')
@@ -50,6 +51,8 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     document.documentElement.lang = locale
     document.title = translate(locale, 'app.title')
+    // 日志消息语言跟随界面语言
+    setLogLocale(locale)
   }, [locale])
 
   const setLocale = useCallback((next: Locale) => {

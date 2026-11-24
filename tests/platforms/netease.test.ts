@@ -13,9 +13,9 @@ function makeApi(overrides: Partial<NcmApi> = {}): NcmApi {
     }),
     user_playlist: async () => ({ body: { playlist: [] } }),
     playlist_detail: async () => ({ body: { playlist: { tracks: [] } } }),
-    search: async () => ({ body: { result: { songs: [] } } }),
+    cloudsearch: async () => ({ body: { result: { songs: [] } } }),
     playlist_create: async () => ({ body: { playlist: { id: 1 } } }),
-    playlist_track_add: async () => ({ body: { code: 200 } }),
+    playlist_tracks: async () => ({ body: { code: 200 } }),
     ...overrides,
   }
 }
@@ -81,9 +81,9 @@ describe('NeteaseAdapter — 映射契约', () => {
     expect(list[0].id).toBe('1')
   })
 
-  it('搜索风控（405）→ 抛可重试 SearchError', async () => {
+  it('搜索风控（405）→ 抛可重试且带限流标记的 SearchError', async () => {
     const api = makeApi({
-      search: async () => {
+      cloudsearch: async () => {
         const e = { status: 405, body: { code: 405, message: '操作频繁，请稍候再试' } }
         throw e
       },
@@ -91,6 +91,7 @@ describe('NeteaseAdapter — 映射契约', () => {
     await expect(new NeteaseAdapter(api).searchSongs('c', '晴天')).rejects.toMatchObject({
       message: '操作频繁，请稍候再试',
       retryable: true,
+      rateLimited: true,
     })
   })
 
@@ -126,9 +127,38 @@ describe('NeteaseAdapter — 映射契约', () => {
 
   it('搜索映射与 limit 透传', async () => {
     const fn = vi.fn(async () => ({ body: { result: { songs: [] } } }))
-    const api = makeApi({ search: fn })
+    const api = makeApi({ cloudsearch: fn })
     await new NeteaseAdapter(api).searchSongs('c', '晴天', 10)
     expect(fn).toHaveBeenCalledWith({ keywords: '晴天', type: 1, limit: 10, cookie: 'c' })
+  })
+
+  it('搜索映射：提取专辑与封面 URL', async () => {
+    const api = makeApi({
+      cloudsearch: async () => ({
+        body: {
+          result: {
+            songs: [
+              {
+                id: 3,
+                name: 'Golden',
+                ar: [{ name: 'Cory Wong' }],
+                al: { name: 'Wong Notes', picUrl: 'https://example.com/cover.jpg' },
+                dt: 210000,
+              },
+            ],
+          },
+        },
+      }),
+    })
+    const songs = await new NeteaseAdapter(api).searchSongs('c', 'Golden')
+    expect(songs[0]).toMatchObject({
+      id: '3',
+      title: 'Golden',
+      artist: 'Cory Wong',
+      album: 'Wong Notes',
+      coverUrl: 'https://example.com/cover.jpg',
+      durationMs: 210000,
+    })
   })
 
   it('空响应不抛异常，返回空数组', async () => {
@@ -152,19 +182,30 @@ describe('NeteaseAdapter — 映射契约', () => {
 
   it('添加歌曲：ids 逗号拼接透传', async () => {
     const fn = vi.fn(async () => ({ body: { code: 200 } }))
-    const api = makeApi({ playlist_track_add: fn })
+    const api = makeApi({ playlist_tracks: fn })
     await new NeteaseAdapter(api).addSongsToPlaylist('c', '99', ['1', '2', '3'])
-    expect(fn).toHaveBeenCalledWith({ op: 'add', pid: '99', ids: '1,2,3', cookie: 'c' })
+    expect(fn).toHaveBeenCalledWith({ op: 'add', pid: '99', tracks: '1,2,3', cookie: 'c' })
+  })
+
+  it('添加歌曲：NCM 对象异常转为带真实原因的 Error', async () => {
+    const api = makeApi({
+      playlist_tracks: async () => {
+        throw { body: { code: 405, message: '操作频繁，请稍后重试' } }
+      },
+    })
+    await expect(new NeteaseAdapter(api).addSongsToPlaylist('c', '99', ['1'])).rejects.toThrow(
+      '网易云接口错误 code=405：操作频繁，请稍后重试',
+    )
   })
 
   it('添加歌曲：code 非 200 抛异常，空列表跳过', async () => {
     const bad = new NeteaseAdapter(
-      makeApi({ playlist_track_add: async () => ({ body: { code: 502 } }) }),
+      makeApi({ playlist_tracks: async () => ({ body: { code: 502 } }) }),
     )
     await expect(bad.addSongsToPlaylist('c', '99', ['1'])).rejects.toThrow()
 
     const fn = vi.fn()
-    const api = makeApi({ playlist_track_add: fn })
+    const api = makeApi({ playlist_tracks: fn })
     await new NeteaseAdapter(api).addSongsToPlaylist('c', '99', [])
     expect(fn).not.toHaveBeenCalled()
   })
@@ -183,14 +224,14 @@ describe('NeteaseAdapter — 映射契约', () => {
     expect(fn).toHaveBeenCalledWith({ id: '99', cookie: 'c' })
   })
 
-  it('移除歌曲：ids 逗号拼接透传，空列表跳过', async () => {
+  it('移除歌曲：tracks 逗号拼接透传，空列表跳过', async () => {
     const fn = vi.fn(async () => ({ body: { code: 200 } }))
-    const api = makeApi({ playlist_track_delete: fn })
+    const api = makeApi({ playlist_tracks: fn })
     await new NeteaseAdapter(api).removeSongsFromPlaylist('c', '99', ['1', '2', '3'])
-    expect(fn).toHaveBeenCalledWith({ id: '99', ids: '1,2,3', cookie: 'c' })
+    expect(fn).toHaveBeenCalledWith({ op: 'del', pid: '99', tracks: '1,2,3', cookie: 'c' })
 
     const fn2 = vi.fn()
-    const api2 = makeApi({ playlist_track_delete: fn2 })
+    const api2 = makeApi({ playlist_tracks: fn2 })
     await new NeteaseAdapter(api2).removeSongsFromPlaylist('c', '99', [])
     expect(fn2).not.toHaveBeenCalled()
   })

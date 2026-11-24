@@ -7,9 +7,11 @@ import {
   isLogLevel,
   sanitizeContext,
   setDefaultTransports,
+  setLogLocale,
 } from '@core/logging'
 import type { LogEntry, LogLevel, Logger, LogProcess, LogTransport } from '@core/logging'
 import { FileLogTransport } from './fileTransport'
+import { getDatabase } from '../appDatabase'
 
 const RENDERER_MAX_BYTES = 32 * 1024
 const STRING_MAX_LENGTH = 400
@@ -91,6 +93,13 @@ class LogCenter {
     file.init()
     this.transports = [new ConsoleTransport(), file]
     setDefaultTransports(this.transports)
+    // 日志消息语言跟随应用设置（数据库未就绪时回退默认中文）
+    try {
+      const language = getDatabase().settings.get('language', 'zh-CN')
+      setLogLocale(String(language))
+    } catch {
+      // 保持默认 locale
+    }
     this.initialized = true
   }
 

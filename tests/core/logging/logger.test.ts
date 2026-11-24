@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   createLogger,
   setDefaultTransports,
+  setLogLocale,
   type LogEntry,
   type LogTransport,
 } from '@core/logging'
@@ -164,5 +165,30 @@ describe('日志核心 - 脱敏', () => {
     const auth = memory.entries[0].context!['auth'] as Record<string, unknown>
     expect(auth['cookie']).toContain('****')
     expect(auth['userId']).toBe('u1')
+  })
+})
+
+describe('日志核心 - 国际化', () => {
+  it('英文语言下按目录翻译日志消息，缺失消息回退中文', () => {
+    const memory = setup()
+    setLogLocale('en-US')
+    const log = createLogger({ module: 'test.i18n' })
+
+    log.info('app.startup', '应用启动')
+    log.info('custom.event', '自定义消息无翻译')
+
+    expect(memory.entries[0].message).toBe('App started')
+    expect(memory.entries[1].message).toBe('自定义消息无翻译')
+    setLogLocale('zh-CN')
+  })
+
+  it('中文语言下消息原样输出', () => {
+    const memory = setup()
+    setLogLocale('zh-CN')
+    const log = createLogger({ module: 'test.i18n' })
+
+    log.info('app.startup', '应用启动')
+
+    expect(memory.entries[0].message).toBe('应用启动')
   })
 })

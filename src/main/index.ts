@@ -306,7 +306,17 @@ const pendingSyncs = new Map<
 
 ipcMain.handle(
   'platform:sync-playlist',
-  (event, platform: string, payload: { queries: MatchQuery[]; playlistName: string; batchSize?: number }) =>
+  (
+    event,
+    platform: string,
+    payload: {
+      queries: MatchQuery[]
+      playlistName: string
+      /** 渲染层按当前语言格式化的今日日期：歌单名留空时与第一首歌风格拼成默认名 */
+      autoNameDate?: string
+      batchSize?: number
+    },
+  ) =>
     ipcLog.time(
       'platform.sync-playlist',
       async () => {
@@ -337,18 +347,22 @@ ipcMain.handle(
 
         const plan = await planSync(payload.queries, target, { onProgress: notify })
 
+        // 歌单名留空时自动命名：今日日期 + 第一首歌风格
+        const autoName = [payload.autoNameDate, plan.firstGenre].filter(Boolean).join(' ')
+        const finalName = (payload.playlistName ?? '').trim() || autoName || '未命名歌单'
+
         if (plan.choices.length > 0) {
           const taskId = `sync-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
           pendingSyncs.set(taskId, {
             plan,
             target,
-            playlistName: payload.playlistName,
+            playlistName: finalName,
             batchSize: payload.batchSize,
           })
           ipcLog.info('platform.sync-playlist', '同步需要用户确认', {
             platform,
             taskId,
-            playlistName: payload.playlistName,
+            playlistName: finalName,
             total: plan.total,
             matched: plan.matched.length,
             choices: plan.choices.length,
@@ -358,24 +372,25 @@ ipcMain.handle(
             taskId,
             report: {
               status: 'choice-needed',
-              playlistName: payload.playlistName,
+              playlistName: finalName,
               playlistId: '',
               total: plan.total,
               matched: plan.matched.length,
               added: 0,
               failed: plan.failed,
               choices: plan.choices,
+              firstGenre: plan.firstGenre,
             },
           }
         }
 
-        const report = await executeSync(plan, [], payload.playlistName, target, {
+        const report = await executeSync(plan, [], finalName, target, {
           batchSize: payload.batchSize,
           onProgress: notify,
         })
         ipcLog.info('platform.sync-playlist', '同步完成', {
           platform,
-          playlistName: payload.playlistName,
+          playlistName: finalName,
           playlistId: report.playlistId,
           total: report.total,
           added: report.added,
@@ -484,6 +499,19 @@ ipcMain.handle('mappings:clear', (_event, platform: string) =>
 
 ipcMain.handle('mappings:stats', () =>
   ipcLog.time('mappings.stats', async () => mappingStats(), undefined, 'debug'),
+)
+
+ipcMain.handle('platform:cancel-sync', (_event, taskId: string) =>
+  ipcLog.time(
+    'platform.cancel-sync',
+    async () => {
+      // 幂等：会话不存在（已完成/已过期）也视为取消成功
+      if (pendingSyncs.delete(taskId)) {
+        ipcLog.info('platform.cancel-sync', '待确认同步会话已放弃', { taskId })
+      }
+    },
+    { taskId },
+  ),
 )
 
 ipcMain.handle(

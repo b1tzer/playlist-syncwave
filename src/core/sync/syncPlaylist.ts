@@ -19,7 +19,15 @@ const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
 
 function errorMessage(e: unknown): string {
   if (e instanceof Error) return e.message
-  return typeof e === 'string' ? e : '搜索失败'
+  if (typeof e === 'string') return e
+  // 对象异常兜底：序列化记录真实内容，避免吞成 [object Object]
+  try {
+    const json = JSON.stringify(e)
+    if (json !== undefined && json !== '{}') return `接口错误：${json.slice(0, 200)}`
+  } catch {
+    // 不可序列化对象继续兜底
+  }
+  return '操作失败'
 }
 
 /**
@@ -39,6 +47,7 @@ export async function planSync(
   const matched: SyncPlan['matched'] = []
   const choices: SyncPlan['choices'] = []
   const failed: SyncFailedItem[] = []
+  let firstGenre: string | undefined
 
   log.info('plan.start', '开始匹配计划', { total: queries.length, threshold })
 
@@ -73,49 +82,80 @@ export async function planSync(
     let lastError: unknown = null
 
     for (const attempt of attempts) {
-      let candidates: Awaited<ReturnType<SyncTarget['searchSongs']>> | null = null
+      // 搜索关键词策略：优先「歌名 + 歌手」提高召回精度；无精确命中时降级纯歌名
+      const keywords = attempt.artist
+        ? [`${attempt.title} ${attempt.artist}`, attempt.title]
+        : [attempt.title]
 
-      for (let retry = 0; retry <= searchRetries && candidates === null; retry++) {
-        try {
-          candidates = await target.searchSongs(attempt.title, 10)
-        } catch (e) {
-          lastError = e
-          const retryable = e instanceof SearchError ? e.retryable : false
-          if (!retryable || retry === searchRetries) break
-          const waitMs = Math.min(1000 * 2 ** retry, 5000)
-          log.warn('plan.search-retry', '搜索失败，准备重试', {
+      let searchFailed = false
+      for (let k = 0; k < keywords.length && settled === null; k++) {
+        const keyword = keywords[k]
+        let candidates: Awaited<ReturnType<SyncTarget['searchSongs']>> | null = null
+
+        for (let retry = 0; retry <= searchRetries && candidates === null; retry++) {
+          try {
+            candidates = await target.searchSongs(keyword, 10)
+          } catch (e) {
+            lastError = e
+            const retryable = e instanceof SearchError ? e.retryable : false
+            if (!retryable || retry === searchRetries) break
+            const waitMs = Math.min(1000 * 2 ** retry, 5000)
+            log.warn('plan.search-retry', '搜索失败，准备重试', {
+              title: attempt.title,
+              keyword,
+              attempt: retry + 1,
+              waitMs,
+              message: errorMessage(e),
+            })
+            await sleep(waitMs)
+          }
+        }
+
+        // 搜索失败不降级：网络错误时换关键词再发请求无意义
+        if (candidates === null) {
+          searchFailed = true
+          break
+        }
+
+        const disposition = classifyCandidates(attempt, candidates)
+        if (disposition.kind === 'exact') {
+          settled = { type: 'matched', songId: disposition.songId }
+          if (i === 0 && firstGenre === undefined) {
+            firstGenre = candidates.find((c) => c.id === disposition.songId)?.genre
+          }
+        } else if (disposition.kind === 'title-only') {
+          settled = { type: 'choice', attempt, candidates: disposition.candidates }
+          if (i === 0 && firstGenre === undefined) {
+            firstGenre = disposition.candidates[0]?.genre
+          }
+        } else {
+          const best = findBestMatch(attempt, candidates, { threshold })
+          if (best && best.matched) {
+            settled = { type: 'matched', songId: best.candidate.id }
+            if (i === 0 && firstGenre === undefined) {
+              firstGenre = best.candidate.genre
+            }
+          }
+        }
+
+        // 组合关键词无精确命中：降级纯歌名再搜一次
+        if (settled === null && k < keywords.length - 1) {
+          log.debug('plan.keyword-fallback', '组合关键词无精确命中，降级纯歌名搜索', {
             title: attempt.title,
-            attempt: retry + 1,
-            waitMs,
-            message: errorMessage(e),
+            artist: attempt.artist,
+            keyword,
           })
-          await sleep(waitMs)
         }
       }
 
-      if (candidates === null) break
-
-      const disposition = classifyCandidates(attempt, candidates)
-      if (disposition.kind === 'exact') {
-        settled = { type: 'matched', songId: disposition.songId }
-        break
-      }
-      if (disposition.kind === 'title-only') {
-        settled = { type: 'choice', attempt, candidates: disposition.candidates }
-        break
-      }
-      const best = findBestMatch(attempt, candidates, { threshold })
-      if (best && best.matched) {
-        settled = { type: 'matched', songId: best.candidate.id }
-        break
-      }
+      if (settled !== null || searchFailed) break
       // no-match：尝试下一个备选候选
     }
 
     if (settled === null) {
       if (lastError !== null) {
-        const isRateLimited =
-          lastError instanceof SearchError && /频繁|405/i.test(lastError.message)
+        // 限流/可重试判定由平台适配器完成（SearchError 标记），主流程不做平台文案匹配
+        const isRateLimited = lastError instanceof SearchError && lastError.rateLimited
         failed.push({
           query,
           reason: isRateLimited ? 'rate-limited' : 'search-failed',
@@ -167,7 +207,7 @@ export async function planSync(
     failed: failed.length,
   })
 
-  return { total: queries.length, matched, choices, failed }
+  return { total: queries.length, matched, choices, failed, firstGenre }
 }
 
 /**
@@ -221,6 +261,7 @@ export async function executeSync(
     added: 0,
     failed,
     choices: [],
+    firstGenre: plan.firstGenre,
   }
 
   // 全部未匹配/未确认时不创建空歌单，避免污染用户账号
@@ -253,7 +294,7 @@ export async function executeSync(
         count: batch.length,
       })
       for (const item of batch) {
-        failed.push({ query: item.query, reason: 'search-failed', message })
+        failed.push({ query: item.query, reason: 'add-failed', message })
       }
     }
     options.onProgress?.((b + 1) / Math.max(batchCount, 1), 'adding')
@@ -276,6 +317,7 @@ export async function executeSync(
     added,
     failed,
     choices: [],
+    firstGenre: plan.firstGenre,
   }
 }
 
@@ -305,6 +347,7 @@ export async function syncPlaylist(
       added: 0,
       failed: plan.failed,
       choices: plan.choices,
+      firstGenre: plan.firstGenre,
     }
   }
 

@@ -235,10 +235,6 @@ export default function PlaylistSection({ platforms, accounts, searchQuery }: Pl
     <div>
       <div className="flex items-start justify-between">
         <div>
-          <div className="flex items-center gap-2 font-label-mono text-label-mono text-primary">
-            <span className="material-symbols-outlined text-sm">library_music</span>
-            <span>MODULE://PLAYLIST_BROWSER</span>
-          </div>
           <h1 className="mt-1 font-headline-lg text-headline-lg font-semibold">
             {t('playlist.title')}
           </h1>

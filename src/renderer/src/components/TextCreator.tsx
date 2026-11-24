@@ -1,10 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import { parseText } from '@core/parser/parseText'
 import type { FailedLine, ParseResult } from '@core/models/parse'
-import type { SyncChoice, SyncFailedItem, SyncReport } from '@core/models/sync'
+import type { PendingConfirmSession, SyncFailedItem, SyncReport, SyncTaskRecord } from '@core/models/sync'
 import type { PlatformAccount, PlatformMeta } from '@core/models/platform'
 import { createRendererLogger } from '../logging/rendererLogger'
-import type { SyncTaskRecord } from '@core/models/sync'
 import { useI18n } from '../i18n'
 import type { TranslationKey } from '../i18n/translations'
 
@@ -21,6 +20,9 @@ interface TextCreatorProps {
   platforms: PlatformMeta[]
   accounts: Record<string, PlatformAccount | null>
   onTaskUpdate: (task: SyncTaskRecord) => void
+  /** 待确认会话（App 层持有，选择流程由 ConfirmSyncDialog 完成） */
+  pendingConfirm: PendingConfirmSession | null
+  onPendingConfirmChange: (session: PendingConfirmSession | null) => void
 }
 
 const FORMATS: Array<{ icon: string; titleKey: TranslationKey; exampleKey: TranslationKey }> = [
@@ -56,7 +58,13 @@ const FORMATS: Array<{ icon: string; titleKey: TranslationKey; exampleKey: Trans
   },
 ]
 
-export default function TextCreator({ platforms, accounts, onTaskUpdate }: TextCreatorProps) {
+export default function TextCreator({
+  platforms,
+  accounts,
+  onTaskUpdate,
+  pendingConfirm,
+  onPendingConfirmChange,
+}: TextCreatorProps) {
   const { t, formatTime, formatDate } = useI18n()
   const [text, setText] = useState('')
   const [result, setResult] = useState<ParseResult | null>(null)
@@ -67,9 +75,11 @@ export default function TextCreator({ platforms, accounts, onTaskUpdate }: TextC
   const [report, setReport] = useState<SyncReport | null>(null)
   const [syncError, setSyncError] = useState<string>('')
   const [showFormats, setShowFormats] = useState(false)
-  const [pendingTaskId, setPendingTaskId] = useState<string | null>(null)
-  const [pendingChoices, setPendingChoices] = useState<SyncChoice[] | null>(null)
-  const [selections, setSelections] = useState<Record<number, string>>({})
+
+  // 输入即解析：无需手动点击「解析歌曲」，输入内容直接进入创建流程
+  useEffect(() => {
+    setResult(parseText(text))
+  }, [text])
 
   /** 可作为同步目标的平台（声明 write 能力） */
   const targetPlatforms = useMemo(
@@ -114,13 +124,6 @@ export default function TextCreator({ platforms, accounts, onTaskUpdate }: TextC
     }
   }
 
-  const handleParse = () => {
-    log.info('parse.click', '点击解析歌曲', { chars: text.length })
-    setResult(parseText(text))
-    setReport(null)
-    setSyncError('')
-  }
-
   const applyCandidate = (index: number, title: string, artist?: string) => {
     log.debug('parse.apply-candidate', '点选候选修正字段顺序', { index, title, artist })
     setResult((prev) => {
@@ -138,9 +141,12 @@ export default function TextCreator({ platforms, accounts, onTaskUpdate }: TextC
 
   const handleSync = async () => {
     if (!result || result.songs.length === 0) return
+    const autoNameDate = formatDate(new Date())
+    // 留空则由主进程按「今日日期 + 第一首歌风格」自动命名
+    const name = playlistName.trim()
     log.info('sync.start', '开始同步', {
       targetPlatform: target,
-      playlistName: playlistName.trim() || '(自动命名)',
+      playlistName: name || '(自动命名)',
       total: result.songs.length,
     })
     setSyncing(true)
@@ -148,8 +154,6 @@ export default function TextCreator({ platforms, accounts, onTaskUpdate }: TextC
     setReport(null)
     setProgress({ ratio: 0, stage: 'matching' })
 
-    const name =
-      playlistName.trim() || t('textCreator.defaultPlaylistName', { date: formatDate(new Date()) })
     const taskId = `task-${Date.now()}`
     const queries = result.songs.map((s) => ({
       title: s.title,
@@ -159,7 +163,7 @@ export default function TextCreator({ platforms, accounts, onTaskUpdate }: TextC
 
     onTaskUpdate({
       id: taskId,
-      name,
+      name: name || autoNameDate,
       targetPlatform: target,
       source: 'text-import',
       status: 'running',
@@ -176,7 +180,7 @@ export default function TextCreator({ platforms, accounts, onTaskUpdate }: TextC
         setProgress(p)
         onTaskUpdate({
           id: taskId,
-          name,
+          name: name || autoNameDate,
           targetPlatform: target,
           source: 'text-import',
           status: 'running',
@@ -192,19 +196,16 @@ export default function TextCreator({ platforms, accounts, onTaskUpdate }: TextC
 
     try {
       const { taskId: syncTaskId, report: rep } =
-        await window.electronAPI.platforms.syncPlaylist(target, queries, name)
+        await window.electronAPI.platforms.syncPlaylist(target, queries, name, autoNameDate)
 
       if (rep.status === 'choice-needed') {
         log.info('sync.choice-needed', '同步需要手动选择', {
           targetPlatform: target,
           choices: rep.choices.length,
         })
-        setPendingTaskId(syncTaskId)
-        setPendingChoices(rep.choices)
-        setSelections({})
-        onTaskUpdate({
+        const runningTask: SyncTaskRecord = {
           id: taskId,
-          name,
+          name: rep.playlistName,
           targetPlatform: target,
           source: 'text-import',
           status: 'running',
@@ -214,6 +215,14 @@ export default function TextCreator({ platforms, accounts, onTaskUpdate }: TextC
           createdAt: formatTime(new Date()),
           progress: 1,
           failedDetail: rep.failed.map(failedMessage),
+        }
+        onTaskUpdate(runningTask)
+        // 会话提升到 App 层：分步确认弹窗接管选择流程
+        onPendingConfirmChange({
+          syncTaskId,
+          task: runningTask,
+          target,
+          choices: rep.choices,
         })
         return
       }
@@ -228,7 +237,7 @@ export default function TextCreator({ platforms, accounts, onTaskUpdate }: TextC
       })
       onTaskUpdate({
         id: taskId,
-        name,
+        name: rep.playlistName,
         targetPlatform: target,
         source: 'text-import',
         status: ok ? 'done' : 'failed',
@@ -245,7 +254,7 @@ export default function TextCreator({ platforms, accounts, onTaskUpdate }: TextC
       setSyncError(msg)
       onTaskUpdate({
         id: taskId,
-        name,
+        name: name || autoNameDate,
         targetPlatform: target,
         source: 'text-import',
         status: 'failed',
@@ -263,72 +272,12 @@ export default function TextCreator({ platforms, accounts, onTaskUpdate }: TextC
     }
   }
 
-  const handleConfirm = async () => {
-    if (!pendingTaskId || !pendingChoices) return
-    const sel = pendingChoices
-      .map((_, i) => ({ choiceIndex: i, songId: selections[i] }))
-      .filter((s) => typeof s.songId === 'string')
-    if (sel.length < pendingChoices.length) return
-
-    log.info('sync.confirm', '确认手动选择并继续同步', {
-      targetPlatform: target,
-      selections: sel.length,
-    })
-    setSyncing(true)
-    setSyncError('')
-    setReport(null)
-    setProgress({ ratio: 0, stage: 'adding' })
-
-    const off = window.electronAPI.platforms.onSyncProgress((p) => {
-      if (p.platform === target) setProgress(p)
-    })
-
-    try {
-      const rep = await window.electronAPI.platforms.confirmSync(target, pendingTaskId, sel)
-      log.info('sync.confirm-done', '确认同步完成', {
-        targetPlatform: target,
-        playlistId: rep.playlistId,
-        added: rep.added,
-        failed: rep.failed.length,
-      })
-      setReport(rep)
-      setPendingTaskId(null)
-      setPendingChoices(null)
-      setSelections({})
-      const ok = rep.playlistId !== ''
-      onTaskUpdate({
-        id: `task-${Date.now()}`,
-        name: rep.playlistName,
-        targetPlatform: target,
-        source: 'text-import',
-        status: ok ? 'done' : 'failed',
-        total: rep.total,
-        added: rep.added,
-        failed: rep.failed.length,
-        createdAt: formatTime(new Date()),
-        progress: 1,
-        failedDetail: rep.failed.map(failedMessage),
-      })
-    } catch (e) {
-      log.error('sync.confirm-failed', '确认同步失败', e, { targetPlatform: target })
-      setSyncError(e instanceof Error ? e.message : t('sync.failedGeneric'))
-    } finally {
-      off()
-      setSyncing(false)
-      setProgress(null)
-    }
-  }
-
   const failedCount = result?.failedLines.length ?? 0
 
   return (
     <div>
       <div className="flex items-start justify-between">
         <div>
-          <div className="flex items-center gap-2 font-label-mono text-label-mono text-primary">
-            <span className="material-symbols-outlined text-sm">data_object</span>
-            <span>MODULE://TEXT_IMPORT PARSER_CORE_V2.1</span>
-          </div>
           <h1 className="mt-1 font-headline-lg text-headline-lg font-semibold">
             {t('textCreator.title')}
           </h1>
@@ -341,7 +290,6 @@ export default function TextCreator({ platforms, accounts, onTaskUpdate }: TextC
             onClick={() => {
               log.info('parse.load-example', '载入示例数据')
               setText(EXAMPLE)
-              setResult(null)
             }}
             className="flex items-center gap-1.5 rounded-lg border border-outline-variant px-3 py-2 font-label-md text-label-md text-on-surface-variant transition-colors hover:bg-surface-container-high hover:text-on-surface"
           >
@@ -397,18 +345,9 @@ export default function TextCreator({ platforms, accounts, onTaskUpdate }: TextC
           />
           <div className="mt-2 flex items-center gap-2">
             <button
-              onClick={handleParse}
-              disabled={!text.trim() || syncing}
-              className="flex items-center gap-1.5 rounded-lg bg-primary px-4 py-2 font-label-md text-label-md font-medium text-on-primary transition-colors hover:bg-primary/85 disabled:opacity-40"
-            >
-              <span className="material-symbols-outlined text-base">manage_search</span>
-              {t('textCreator.parse')}
-            </button>
-            <button
               onClick={() => {
                 log.info('parse.clear', '清空输入')
                 setText('')
-                setResult(null)
                 setReport(null)
                 setSyncError('')
               }}
@@ -448,7 +387,7 @@ export default function TextCreator({ platforms, accounts, onTaskUpdate }: TextC
               />
               <button
                 onClick={handleSync}
-                disabled={syncing || pendingChoices !== null || !result || result.songs.length === 0}
+                disabled={syncing || pendingConfirm !== null || !result || result.songs.length === 0}
                 className="mt-1 flex w-full items-center justify-center gap-1.5 rounded-lg bg-primary px-4 py-2 font-label-md text-label-md font-medium text-on-primary transition-colors hover:bg-primary/85 disabled:opacity-40"
               >
                 <span className="material-symbols-outlined text-base">
@@ -612,73 +551,6 @@ export default function TextCreator({ platforms, accounts, onTaskUpdate }: TextC
               {t('textCreator.ignoredLines', { count: result.ignoredLines.length })}
             </p>
           )}
-        </div>
-      )}
-
-      {pendingChoices && pendingChoices.length > 0 && (
-        <div className="mt-4 rounded-lg border border-tertiary bg-surface-container-low p-4">
-          <div className="flex items-center gap-2">
-            <span className="material-symbols-outlined text-tertiary">playlist_add_check</span>
-            <p className="font-body-md text-body-md font-medium">
-              {t('textCreator.choiceTitle', { count: pendingChoices.length })}
-            </p>
-            <span className="ml-auto font-label-sm text-label-sm text-on-surface-variant">
-              {t('textCreator.choiceHint')}
-            </span>
-          </div>
-          <ul className="mt-3 space-y-2">
-            {pendingChoices.map((choice, i) => (
-              <li
-                key={i}
-                className="rounded-lg border border-outline-variant bg-surface-container-lowest p-3"
-              >
-                <p className="font-label-md text-label-md text-on-surface">
-                  {choice.query.title}
-                  {choice.query.artist && (
-                    <span className="ml-1 text-on-surface-variant">- {choice.query.artist}</span>
-                  )}
-                </p>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {choice.candidates.map((c) => {
-                    const selected = selections[i] === c.id
-                    const duration = c.durationMs
-                      ? ` · ${Math.floor(c.durationMs / 60_000)}:${String(
-                          Math.floor((c.durationMs % 60_000) / 1000),
-                        ).padStart(2, '0')}`
-                      : ''
-                    return (
-                      <button
-                        key={c.id}
-                        onClick={() => setSelections((prev) => ({ ...prev, [i]: c.id }))}
-                        className={
-                          selected
-                            ? 'flex items-center gap-1 rounded-lg border border-primary bg-primary px-3 py-1.5 font-label-sm text-label-sm text-on-primary'
-                            : 'flex items-center gap-1 rounded-lg border border-outline-variant bg-surface-container-low px-3 py-1.5 font-label-sm text-label-sm text-on-surface transition-colors hover:border-primary'
-                        }
-                      >
-                        <span className="font-medium">{c.artist}</span>
-                        {c.album && <span className="opacity-70">{c.album}</span>}
-                        {duration}
-                      </button>
-                    )
-                  })}
-                </div>
-              </li>
-            ))}
-          </ul>
-          <button
-            onClick={handleConfirm}
-            disabled={
-              syncing || Object.keys(selections).length < pendingChoices.length
-            }
-            className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-lg bg-primary px-4 py-2 font-label-md text-label-md font-medium text-on-primary transition-colors hover:bg-primary/85 disabled:opacity-40"
-          >
-            <span className="material-symbols-outlined text-base">
-              {syncing ? 'progress_activity' : 'task_alt'}
-            </span>
-            {syncing ? t('textCreator.writing') : t('textCreator.confirmAndCreate')}
-          </button>
-          {syncError && <p className="mt-2 font-label-sm text-label-sm text-error">{syncError}</p>}
         </div>
       )}
     </div>

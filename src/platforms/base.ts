@@ -5,8 +5,11 @@ import type {
   QrLoginResult,
   QrLoginTicket,
 } from '@core/models/platform'
+import { createLogger, type Logger } from '@core/logging'
 
-/** 各音乐平台适配器需要实现的统一接口。core 层只依赖此接口。 */
+/**
+ * 各音乐平台适配器需要实现的统一接口。core 层只依赖此接口。
+ */
 export interface PlatformAdapter {
   readonly platform: string
 
@@ -48,55 +51,227 @@ function unsupported(platform: string, method: string): Error {
   return new Error(`平台 ${platform} 不支持操作：${method}`)
 }
 
+/** 扫码轮询原始状态：code 语义与各平台一致（800 过期 / 802 已扫 / 803 成功） */
+export interface QrCheckRaw {
+  code: number | undefined
+  /** 状态为 803 时的登录 cookie */
+  cookie?: string
+}
+
+/** 登录状态原始字段（字段缺失时骨架返回 null / 使用默认昵称） */
+export interface LoginStatusRaw {
+  userId?: string
+  nickname?: string
+}
+
 /**
- * 平台适配器基类：所有方法默认抛「不支持」错误。
- * 新增平台只需继承本类并 override 实际支持的能力
- * （配合 PlatformMeta.capabilities 声明，渲染层不会调用未声明的能力）。
+ * 平台适配器基类（模板方法模式）：
+ *
+ * 模板方法（public）定义跨平台一致的流程骨架——
+ * 扫码状态机（800/802/803）、错误提示、耗时统计与统一日志，
+ * 各平台只需实现平台差异的「原语」（protected abstract 方法）：
+ * 接口调用方式、响应字段路径与领域模型映射。
+ *
+ * 写能力原语默认抛「不支持」，按 PlatformMeta.capabilities 声明覆写即可。
  */
 export abstract class BasePlatformAdapter implements PlatformAdapter {
+  /** 平台唯一 id（与 PlatformMeta.id 一致） */
   abstract readonly platform: string
 
-  createQrLogin(_channel?: string): Promise<QrLoginTicket> {
-    return Promise.reject(unsupported(this.platform, 'createQrLogin'))
+  /** 平台中文名：用于错误提示前缀 */
+  protected abstract readonly platformLabel: string
+
+  private _log?: Logger
+
+  /** 实例级日志（module = platform.<id>，懒创建） */
+  protected get log(): Logger {
+    if (!this._log) this._log = createLogger({ module: `platform.${this.platform}` })
+    return this._log
   }
 
-  checkQrLogin(_key: string): Promise<QrLoginResult> {
-    return Promise.reject(unsupported(this.platform, 'checkQrLogin'))
+  // ==============================
+  // 模板方法（流程骨架固定，勿覆写）
+  // ==============================
+
+  async createQrLogin(channel?: string): Promise<QrLoginTicket> {
+    return this.log.time('login.qr.create', async () => {
+      const key = await this.qrCreateKey(channel)
+      const qrBase64 = await this.qrBuildImage(key)
+      if (!qrBase64) throw new Error(`${this.platformLabel}：生成二维码失败`)
+      this.log.info('login.qr.create', '二维码票据生成成功', channel ? { key, channel } : { key })
+      return { key, qrBase64 }
+    })
   }
 
-  getLoginStatus(_cookie: string): Promise<PlatformAccount | null> {
-    return Promise.reject(unsupported(this.platform, 'getLoginStatus'))
+  async checkQrLogin(key: string): Promise<QrLoginResult> {
+    // 轮询接口高频调用，完成日志降为 debug，仅在状态变化时记录 info/warn
+    return this.log.time(
+      'login.qr.check',
+      async () => {
+        const raw = await this.qrCheckStatus(key)
+        switch (raw.code) {
+          case 800:
+            this.log.warn('login.qr.check', '二维码已过期', { key })
+            return { status: 'expired' }
+          case 802:
+            return { status: 'scanned' }
+          case 803:
+            this.log.info('login.qr.check', '扫码确认成功', { key })
+            return { status: 'success', cookie: raw.cookie }
+          default:
+            return { status: 'waiting' }
+        }
+      },
+      undefined,
+      'debug',
+    )
   }
 
-  getUserPlaylists(_cookie: string, _userId: string): Promise<PlatformPlaylist[]> {
-    return Promise.reject(unsupported(this.platform, 'getUserPlaylists'))
+  async getLoginStatus(credential: string): Promise<PlatformAccount | null> {
+    return this.log.time('login.status', async () => {
+      const raw = await this.fetchLoginStatus(credential)
+      if (!raw.userId) return null
+      const nickname = raw.nickname ?? '未知用户'
+      this.log.debug('login.status', '查询登录状态', { userId: raw.userId, nickname })
+      return { platform: this.platform, userId: raw.userId, nickname }
+    })
   }
 
-  getPlaylistSongs(_cookie: string, _playlistId: string): Promise<PlatformSong[]> {
-    return Promise.reject(unsupported(this.platform, 'getPlaylistSongs'))
+  async getUserPlaylists(credential: string, userId: string): Promise<PlatformPlaylist[]> {
+    return this.log.time('playlist.list', async () => {
+      const playlists = await this.fetchPlaylists(credential, userId)
+      this.log.info('playlist.list', '拉取歌单列表', { userId, count: playlists.length })
+      return playlists
+    })
   }
 
-  searchSongs(_cookie: string, _keyword: string, _limit?: number): Promise<PlatformSong[]> {
-    return Promise.reject(unsupported(this.platform, 'searchSongs'))
+  async getPlaylistSongs(credential: string, playlistId: string): Promise<PlatformSong[]> {
+    return this.log.time('playlist.songs', async () => {
+      const songs = await this.fetchPlaylistSongs(credential, playlistId)
+      this.log.info('playlist.songs', '拉取歌单歌曲', { playlistId, count: songs.length })
+      return songs
+    })
   }
 
-  createPlaylist(_cookie: string, _name: string): Promise<string> {
+  async searchSongs(credential: string, keyword: string, limit = 30): Promise<PlatformSong[]> {
+    // 同步过程中逐首高频调用，完成日志降为 debug
+    return this.log.time(
+      'search.songs',
+      async () => {
+        const songs = await this.doSearch(credential, keyword, limit)
+        this.log.debug('search.songs', '搜索结果', { keyword, count: songs.length })
+        return songs
+      },
+      undefined,
+      'debug',
+    )
+  }
+
+  async createPlaylist(credential: string, name: string): Promise<string> {
+    return this.log.time('playlist.create', async () => {
+      const id = await this.doCreatePlaylist(credential, name)
+      if (!id) throw new Error(`${this.platformLabel}：创建歌单失败`)
+      this.log.info('playlist.create', '创建歌单成功', { playlistId: id, name })
+      return id
+    })
+  }
+
+  async addSongsToPlaylist(credential: string, playlistId: string, songIds: string[]): Promise<void> {
+    return this.log.time('playlist.add-songs', async () => {
+      if (songIds.length === 0) return
+      await this.doAddSongs(credential, playlistId, songIds)
+      this.log.info('playlist.add-songs', '批量添加歌曲成功', { playlistId, count: songIds.length })
+    })
+  }
+
+  async renamePlaylist(credential: string, playlistId: string, name: string): Promise<void> {
+    return this.log.time('playlist.rename', async () => {
+      await this.doRenamePlaylist(credential, playlistId, name)
+      this.log.info('playlist.rename', '重命名歌单成功', { playlistId, name })
+    })
+  }
+
+  async deletePlaylist(credential: string, playlistId: string): Promise<void> {
+    return this.log.time('playlist.delete', async () => {
+      await this.doDeletePlaylist(credential, playlistId)
+      this.log.info('playlist.delete', '删除歌单成功', { playlistId })
+    })
+  }
+
+  async removeSongsFromPlaylist(
+    credential: string,
+    playlistId: string,
+    songIds: string[],
+  ): Promise<void> {
+    return this.log.time('playlist.remove-songs', async () => {
+      if (songIds.length === 0) return
+      await this.doRemoveSongs(credential, playlistId, songIds)
+      this.log.info('playlist.remove-songs', '移除歌曲成功', { playlistId, count: songIds.length })
+    })
+  }
+
+  // ==============================
+  // 读能力原语（abstract，各平台必须实现）
+  // ==============================
+
+  /** 获取二维码登录 key；失败抛平台错误 */
+  protected abstract qrCreateKey(channel?: string): Promise<string>
+
+  /** 用 key 生成二维码图片（base64）；返回 undefined 表示生成失败 */
+  protected abstract qrBuildImage(key: string): Promise<string | undefined>
+
+  /** 轮询一次扫码状态，返回原始 code 与（成功时）cookie */
+  protected abstract qrCheckStatus(key: string): Promise<QrCheckRaw>
+
+  /** 查询账号信息；未登录时 userId 缺失 */
+  protected abstract fetchLoginStatus(credential: string): Promise<LoginStatusRaw>
+
+  /** 拉取并过滤、映射歌单列表（特殊收藏夹过滤等平台规则在此实现） */
+  protected abstract fetchPlaylists(credential: string, userId: string): Promise<PlatformPlaylist[]>
+
+  /** 拉取并映射歌单歌曲 */
+  protected abstract fetchPlaylistSongs(credential: string, playlistId: string): Promise<PlatformSong[]>
+
+  /** 执行平台搜索并映射为领域模型（平台错误分类/可重试判定在此实现） */
+  protected abstract doSearch(
+    credential: string,
+    keyword: string,
+    limit: number,
+  ): Promise<PlatformSong[]>
+
+  // ==============================
+  // 写能力原语（默认不支持，按 capabilities 覆写）
+  // ==============================
+
+  protected doCreatePlaylist(_credential: string, _name: string): Promise<string> {
     return Promise.reject(unsupported(this.platform, 'createPlaylist'))
   }
 
-  addSongsToPlaylist(_cookie: string, _playlistId: string, _songIds: string[]): Promise<void> {
+  protected doAddSongs(
+    _credential: string,
+    _playlistId: string,
+    _songIds: string[],
+  ): Promise<void> {
     return Promise.reject(unsupported(this.platform, 'addSongsToPlaylist'))
   }
 
-  renamePlaylist(_cookie: string, _playlistId: string, _name: string): Promise<void> {
+  protected doRenamePlaylist(
+    _credential: string,
+    _playlistId: string,
+    _name: string,
+  ): Promise<void> {
     return Promise.reject(unsupported(this.platform, 'renamePlaylist'))
   }
 
-  deletePlaylist(_cookie: string, _playlistId: string): Promise<void> {
+  protected doDeletePlaylist(_credential: string, _playlistId: string): Promise<void> {
     return Promise.reject(unsupported(this.platform, 'deletePlaylist'))
   }
 
-  removeSongsFromPlaylist(_cookie: string, _playlistId: string, _songIds: string[]): Promise<void> {
+  protected doRemoveSongs(
+    _credential: string,
+    _playlistId: string,
+    _songIds: string[],
+  ): Promise<void> {
     return Promise.reject(unsupported(this.platform, 'removeSongsFromPlaylist'))
   }
 }

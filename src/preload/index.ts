@@ -55,15 +55,23 @@ const api = {
       platform: string,
       queries: MatchQuery[],
       playlistName: string,
+      autoNameDate?: string,
       batchSize?: number,
     ): Promise<{ taskId: string; report: SyncReport }> =>
-      ipcRenderer.invoke('platform:sync-playlist', platform, { queries, playlistName, batchSize }),
+      ipcRenderer.invoke('platform:sync-playlist', platform, {
+        queries,
+        playlistName,
+        autoNameDate,
+        batchSize,
+      }),
     confirmSync: (
       platform: string,
       taskId: string,
       selections: SyncSelection[],
     ): Promise<SyncReport> =>
       ipcRenderer.invoke('platform:confirm-sync', platform, taskId, selections),
+    cancelSync: (taskId: string): Promise<void> =>
+      ipcRenderer.invoke('platform:cancel-sync', taskId),
     onSyncProgress: (callback: (progress: SyncProgress) => void): (() => void) => {
       const listener = (_event: unknown, progress: SyncProgress) => callback(progress)
       ipcRenderer.on('sync:progress', listener)

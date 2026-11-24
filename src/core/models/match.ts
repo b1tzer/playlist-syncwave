@@ -5,6 +5,8 @@ export interface CandidateSong {
   artist: string
   album?: string
   durationMs?: number
+  /** 歌曲风格（流派），平台搜索结果提供；缺失时为 undefined */
+  genre?: string
 }
 
 export interface MatchQuery {

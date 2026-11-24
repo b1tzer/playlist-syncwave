@@ -4,16 +4,14 @@ import { join } from 'node:path'
 import { createRequire } from 'node:module'
 import { createServer } from 'node:net'
 import type {
-  PlatformAccount,
   PlatformPlaylist,
   PlatformSong,
-  QrLoginResult,
-  QrLoginTicket,
 } from '@core/models/platform'
+import { SearchError } from '@core/models/sync'
 import { createLogger } from '@core/logging'
-import type { PlatformAdapter } from '../base'
-import type { HttpHandler } from '../httpHandler'
 import type { PlatformModule } from '../meta'
+import type { HttpHandler } from '../httpHandler'
+import { BasePlatformAdapter, type LoginStatusRaw, type QrCheckRaw } from '../base'
 
 const log = createLogger({ module: 'platform.qqmusic' })
 
@@ -35,6 +33,15 @@ function asArray(v: unknown): unknown[] {
   return Array.isArray(v) ? v : []
 }
 
+/** 提取歌曲封面：优先直接 URL 字段，其次用专辑图片 mid 拼图床 URL */
+function coverOf(item: JsonObject, album: JsonObject): string | undefined {
+  const direct = pickString(album.picUrl, album.albumPic, item.albumPic, item.picUrl, item.coverUrl)
+  if (direct) return direct
+  const pmid = pickString(album.pmid, item.pmid)
+  if (pmid) return `https://y.gtimg.cn/music/photo_new/T002R500x500M000${pmid}.jpg`
+  return undefined
+}
+
 function extractSessionToken(setCookie: string | null): string | undefined {
   if (!setCookie) return undefined
   const entry = setCookie.split(',').find((c) => c.includes('qqmusic_session='))
@@ -45,14 +52,21 @@ function extractSessionToken(setCookie: string | null): string | undefined {
 /** QQ 音乐登录通道：qqmusic=QQ音乐App 扫码，wechat=微信扫码，qq=手机QQ扫码 */
 export type QqLoginChannel = 'qqmusic' | 'wechat' | 'qq'
 
-/** QQ 音乐适配器：基于 @yakult-green-tea/qq-music-api（Node 模式本地服务或注入 handler） */
-export class QqMusicAdapter implements PlatformAdapter {
+/**
+ * QQ 音乐适配器：基于 @yakult-green-tea/qq-music-api（Node 模式本地服务或注入 handler）。
+ * 仅实现平台差异原语（本地服务接口调用与字段映射），
+ * 流程骨架（扫码状态机/耗时统计/统一日志）由 BasePlatformAdapter 模板方法提供。
+ */
+export class QqMusicAdapter extends BasePlatformAdapter {
   readonly platform = 'qqmusic'
+  protected readonly platformLabel = 'QQ音乐'
 
   constructor(
     private readonly handle: HttpHandler,
     private readonly env: Record<string, string>,
-  ) {}
+  ) {
+    super()
+  }
 
   private async call(
     method: string,
@@ -79,7 +93,7 @@ export class QqMusicAdapter implements PlatformAdapter {
     }
     const durationMs = Date.now() - start
     if (res.status >= 400 || (typeof parsed.code === 'number' && parsed.code >= 400)) {
-      log.error(
+      this.log.error(
         'http.call',
         'QQ音乐请求失败',
         undefined,
@@ -87,164 +101,154 @@ export class QqMusicAdapter implements PlatformAdapter {
       )
       throw new Error(pickString(parsed.message, parsed.msg) ?? `QQ音乐请求失败 (${res.status})`)
     }
-    log.debug('http.call', 'QQ音乐请求成功', { method, path, status: res.status, durationMs })
+    this.log.debug('http.call', 'QQ音乐请求成功', { method, path, status: res.status, durationMs })
     return parsed
   }
 
-  async createQrLogin(channel: string = 'qqmusic'): Promise<QrLoginTicket> {
-    return log.time('login.qr.create', async () => {
-      const keyRes = await this.call(
-        'GET',
-        `/login/qr/key?channel=${encodeURIComponent(channel)}`,
-        '',
-      )
-      const key = pickString(asObject(keyRes.data).unikey)
-      if (!key) throw new Error('QQ音乐：获取二维码 key 失败')
+  // --- 读原语 ---
 
-      const qrRes = await this.call('GET', `/login/qr/create?key=${encodeURIComponent(key)}`, '')
-      const qrBase64 = pickString(asObject(qrRes.data).qrimg)
-      if (!qrBase64) throw new Error('QQ音乐：生成二维码失败')
-
-      log.info('login.qr.create', '二维码票据生成成功', { key, channel })
-      return { key, qrBase64 }
-    })
-  }
-
-  async checkQrLogin(key: string): Promise<QrLoginResult> {
-    // 轮询接口高频调用，完成日志降为 debug，仅在状态变化时记录 info/warn
-    return log.time(
-      'login.qr.check',
-      async () => {
-        // 轮询接口的 session token 在 set-cookie 头返回，单独处理
-        const url = new URL(`/login/qr/check?key=${encodeURIComponent(key)}`, 'http://local')
-        const res = await this.handle(new Request(url, { method: 'GET' }), this.env)
-        const body = asObject(JSON.parse((await res.text()) || '{}') as JsonObject)
-        switch (body.code) {
-          case 800:
-            log.warn('login.qr.check', '二维码已过期', { key })
-            return { status: 'expired' }
-          case 802:
-            return { status: 'scanned' }
-          case 803:
-            log.info('login.qr.check', '扫码确认成功', { key })
-            return {
-              status: 'success',
-              cookie: extractSessionToken(res.headers.get('set-cookie')),
-            }
-          default:
-            return { status: 'waiting' }
-        }
-      },
-      undefined,
-      'debug',
+  protected async qrCreateKey(channel: string = 'qqmusic'): Promise<string> {
+    const keyRes = await this.call(
+      'GET',
+      `/login/qr/key?channel=${encodeURIComponent(channel)}`,
+      '',
     )
+    const key = pickString(asObject(keyRes.data).unikey)
+    if (!key) throw new Error('QQ音乐：获取二维码 key 失败')
+    return key
   }
 
-  async getLoginStatus(token: string): Promise<PlatformAccount | null> {
-    return log.time('login.status', async () => {
-      const res = await this.call('GET', '/login/status', token)
-      const profile = asObject(asObject(res.data).profile)
-      const userId = pickString(profile.musicid, profile.str_musicid, profile.encryptUin)
-      if (!userId) return null
-      const nickname = pickString(profile.nickname, profile.nick) ?? '未知用户'
-      log.debug('login.status', '查询登录状态', { userId, nickname })
+  protected async qrBuildImage(key: string): Promise<string | undefined> {
+    const qrRes = await this.call('GET', `/login/qr/create?key=${encodeURIComponent(key)}`, '')
+    return pickString(asObject(qrRes.data).qrimg)
+  }
+
+  protected async qrCheckStatus(key: string): Promise<QrCheckRaw> {
+    // 轮询接口的 session token 在 set-cookie 头返回，单独处理
+    const url = new URL(`/login/qr/check?key=${encodeURIComponent(key)}`, 'http://local')
+    const res = await this.handle(new Request(url, { method: 'GET' }), this.env)
+    const body = asObject(JSON.parse((await res.text()) || '{}') as JsonObject)
+    return {
+      code: body.code as number | undefined,
+      cookie: extractSessionToken(res.headers.get('set-cookie')),
+    }
+  }
+
+  protected async fetchLoginStatus(token: string): Promise<LoginStatusRaw> {
+    const res = await this.call('GET', '/login/status', token)
+    const profile = asObject(asObject(res.data).profile)
+    return {
+      userId: pickString(profile.musicid, profile.str_musicid, profile.encryptUin),
+      nickname: pickString(profile.nickname, profile.nick),
+    }
+  }
+
+  protected async fetchPlaylists(token: string, userId: string): Promise<PlatformPlaylist[]> {
+    const res = await this.call('GET', `/user/playlist?uid=${encodeURIComponent(userId)}`, token)
+    const list = asArray(res.playlist)
+    return list
+      .map((p) => asObject(p))
+      // dirId >= 200 是「我喜欢」收藏夹与收藏的他人歌单（与包内写入限制一致）
+      .filter((item) => Number(item.dirId ?? 0) < 200)
+      .map((item) => ({
+        id: pickString(item.tid, item.id) ?? '',
+        name: pickString(item.dirName, item.title, item.name) ?? '未命名歌单',
+        songCount: Number(item.songNum ?? item.songCnt ?? item.song_count ?? 0),
+        coverUrl: pickString(item.picUrl, item.coverUrl),
+      }))
+  }
+
+  protected async fetchPlaylistSongs(token: string, playlistId: string): Promise<PlatformSong[]> {
+    const res = await this.call(
+      'GET',
+      `/user/playlist-detail?tid=${encodeURIComponent(playlistId)}&limit=100`,
+      token,
+    )
+    const songs = asArray(res.songs)
+    return songs.map((s) => {
+      const item = asObject(s)
+      const singers = asArray(item.singer ?? item.singers)
       return {
-        platform: this.platform,
-        userId,
-        nickname,
+        id: pickString(item.songid, item.id, item.songmid) ?? '',
+        title: pickString(item.songname, item.name, item.title) ?? '未知歌曲',
+        artist: singers
+          .map((x) => pickString(asObject(x).name))
+          .filter((n): n is string => Boolean(n))
+          .join(' / '),
+        album: pickString(item.albumname, asObject(item.album).name),
+        durationMs:
+          typeof item.interval === 'number' ? item.interval * 1000 : undefined,
       }
     })
   }
 
-  async getUserPlaylists(token: string, userId: string): Promise<PlatformPlaylist[]> {
-    return log.time('playlist.list', async () => {
-      const res = await this.call('GET', `/user/playlist?uid=${encodeURIComponent(userId)}`, token)
-      const list = asArray(res.playlist)
-      const playlists = list
-        .map((p) => asObject(p))
-        // dirId >= 200 是「我喜欢」收藏夹与收藏的他人歌单（与包内写入限制一致）
-        .filter((item) => Number(item.dirId ?? 0) < 200)
-        .map((item) => ({
-          id: pickString(item.tid, item.id) ?? '',
-          name: pickString(item.dirName, item.title, item.name) ?? '未命名歌单',
-          songCount: Number(item.songNum ?? item.songCnt ?? item.song_count ?? 0),
-          coverUrl: pickString(item.picUrl, item.coverUrl),
-        }))
-      log.info('playlist.list', '拉取歌单列表', { userId, count: playlists.length })
-      return playlists
+  protected async doSearch(token: string, keyword: string, limit: number): Promise<PlatformSong[]> {
+    try {
+      return await this.searchRaw(token, keyword, limit)
+    } catch (e) {
+      // 平台错误分类：405 限流、5xx/网络错误可重试（判定逻辑归属平台适配器）
+      const message = e instanceof Error ? e.message : '搜索请求失败'
+      const statusMatch = message.match(/\((\d+)\)/)
+      const status = statusMatch ? Number(statusMatch[1]) : undefined
+      const rateLimited = status === 405
+      const retryable = rateLimited || status === undefined || status >= 500
+      this.log.warn('search.songs', '搜索请求失败', { keyword, status, retryable, message })
+      throw new SearchError(message, retryable, rateLimited)
+    }
+  }
+
+  private async searchRaw(token: string, keyword: string, limit: number): Promise<PlatformSong[]> {
+    const res = await this.call(
+      'GET',
+      `/search?keyword=${encodeURIComponent(keyword)}&type=song&limit=${limit}`,
+      token,
+    )
+    const items = asArray(res.items)
+    return items.map((s) => {
+      const item = asObject(s)
+      const singers = asArray(item.singer)
+      const album = asObject(item.album)
+      return {
+        id: pickString(item.id, item.mid) ?? '',
+        title: pickString(item.name, item.title) ?? '未知歌曲',
+        artist: singers
+          .map((x) => pickString(asObject(x).name))
+          .filter((n): n is string => Boolean(n))
+          .join(' / '),
+        album: pickString(album.name),
+        coverUrl: coverOf(item, album),
+        durationMs:
+          typeof item.interval === 'number' ? item.interval * 1000 : undefined,
+        genre: pickString(item.genre),
+      }
     })
   }
 
-  async getPlaylistSongs(token: string, playlistId: string): Promise<PlatformSong[]> {
-    return log.time('playlist.songs', async () => {
-      const res = await this.call(
-        'GET',
-        `/user/playlist-detail?tid=${encodeURIComponent(playlistId)}&limit=100`,
-        token,
-      )
-      const songs = asArray(res.songs)
-      const mapped = songs.map((s) => {
-        const item = asObject(s)
-        const singers = asArray(item.singer ?? item.singers)
-        return {
-          id: pickString(item.songid, item.id, item.songmid) ?? '',
-          title: pickString(item.songname, item.name, item.title) ?? '未知歌曲',
-          artist: singers
-            .map((x) => pickString(asObject(x).name))
-            .filter((n): n is string => Boolean(n))
-            .join(' / '),
-          album: pickString(item.albumname, asObject(item.album).name),
-          durationMs:
-            typeof item.interval === 'number' ? item.interval * 1000 : undefined,
-        }
-      })
-      log.info('playlist.songs', '拉取歌单歌曲', { playlistId, count: mapped.length })
-      return mapped
+  // --- 写原语 ---
+
+  protected async doCreatePlaylist(token: string, name: string): Promise<string> {
+    const res = await this.call('POST', '/user/playlist/create', token, { name })
+    const data = asObject(res.data)
+    return pickString(data.tid, data.id) ?? ''
+  }
+
+  protected async doAddSongs(token: string, playlistId: string, songIds: string[]): Promise<void> {
+    await this.updatePlaylistTracks(token, playlistId, 'add', songIds, 'playlist.add-songs')
+  }
+
+  protected async doRemoveSongs(token: string, playlistId: string, songIds: string[]): Promise<void> {
+    await this.updatePlaylistTracks(token, playlistId, 'del', songIds, 'playlist.remove-songs')
+  }
+
+  protected async doRenamePlaylist(token: string, playlistId: string, name: string): Promise<void> {
+    await this.call('POST', '/user/playlist/rename', token, {
+      tid: Number(playlistId),
+      name,
     })
   }
 
-  async searchSongs(token: string, keyword: string, limit = 30): Promise<PlatformSong[]> {
-    // 同步过程中逐首高频调用，完成日志降为 debug
-    return log.time('search.songs', async () => {
-      const res = await this.call(
-        'GET',
-        `/search?keyword=${encodeURIComponent(keyword)}&type=song&limit=${limit}`,
-        token,
-      )
-      const items = asArray(res.items)
-      const mapped = items.map((s) => {
-        const item = asObject(s)
-        const singers = asArray(item.singer)
-        return {
-          id: pickString(item.id, item.mid) ?? '',
-          title: pickString(item.name, item.title) ?? '未知歌曲',
-          artist: singers
-            .map((x) => pickString(asObject(x).name))
-            .filter((n): n is string => Boolean(n))
-            .join(' / '),
-          album: pickString(asObject(item.album).name),
-          durationMs:
-            typeof item.interval === 'number' ? item.interval * 1000 : undefined,
-        }
-      })
-      log.debug('search.songs', '搜索结果', { keyword, count: mapped.length })
-      return mapped
-    }, undefined, 'debug')
-  }
-
-  async createPlaylist(token: string, name: string): Promise<string> {
-    return log.time('playlist.create', async () => {
-      const res = await this.call('POST', '/user/playlist/create', token, { name })
-      const data = asObject(res.data)
-      const id = pickString(data.tid, data.id)
-      if (!id) throw new Error('QQ音乐：创建歌单失败')
-      log.info('playlist.create', '创建歌单成功', { playlistId: id, name })
-      return id
-    })
-  }
-
-  async addSongsToPlaylist(token: string, playlistId: string, songIds: string[]): Promise<void> {
-    await this.updatePlaylistTracks(token, playlistId, 'add', songIds, 'playlist.add-songs', '批量添加歌曲成功')
+  protected async doDeletePlaylist(token: string, playlistId: string): Promise<void> {
+    await this.call('POST', '/user/playlist/delete', token, { tid: Number(playlistId) })
   }
 
   /** 歌曲批量增删共用的分批写入（接口限制每批 ≤100 首） */
@@ -254,49 +258,17 @@ export class QqMusicAdapter implements PlatformAdapter {
     op: 'add' | 'del',
     songIds: string[],
     event: string,
-    doneMessage: string,
   ): Promise<void> {
-    return log.time(event, async () => {
-      if (songIds.length === 0) return
-      let changed = 0
-      for (let i = 0; i < songIds.length; i += 100) {
-        const batch = songIds.slice(i, i + 100)
-        const payload = {
-          tid: Number(playlistId),
-          op,
-          songs: batch.map((id) => ({ id: Number(id), type: 0 })),
-        }
-        await this.call('POST', '/user/playlist/tracks', token, payload)
-        changed += batch.length
-        log.debug(event, '写入一批歌曲', { playlistId, batch: batch.length })
-      }
-      log.info(event, doneMessage, { playlistId, count: changed })
-    })
-  }
-
-  async renamePlaylist(token: string, playlistId: string, name: string): Promise<void> {
-    return log.time('playlist.rename', async () => {
-      await this.call('POST', '/user/playlist/rename', token, {
+    for (let i = 0; i < songIds.length; i += 100) {
+      const batch = songIds.slice(i, i + 100)
+      const payload = {
         tid: Number(playlistId),
-        name,
-      })
-      log.info('playlist.rename', '重命名歌单成功', { playlistId, name })
-    })
-  }
-
-  async deletePlaylist(token: string, playlistId: string): Promise<void> {
-    return log.time('playlist.delete', async () => {
-      await this.call('POST', '/user/playlist/delete', token, { tid: Number(playlistId) })
-      log.info('playlist.delete', '删除歌单成功', { playlistId })
-    })
-  }
-
-  async removeSongsFromPlaylist(
-    token: string,
-    playlistId: string,
-    songIds: string[],
-  ): Promise<void> {
-    await this.updatePlaylistTracks(token, playlistId, 'del', songIds, 'playlist.remove-songs', '移除歌曲成功')
+        op,
+        songs: batch.map((id) => ({ id: Number(id), type: 0 })),
+      }
+      await this.call('POST', '/user/playlist/tracks', token, payload)
+      this.log.debug(event, '写入一批歌曲', { playlistId, batch: batch.length })
+    }
   }
 }
 

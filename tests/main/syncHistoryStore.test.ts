@@ -69,14 +69,28 @@ describe('syncHistoryStore — SQLite 持久化', () => {
     expect(store.listTasks()).toHaveLength(0)
   })
 
-  it('finalizeInterrupted 把残留 running 归为 failed', () => {
+  it('finalizeInterrupted 把残留 running 归为 interrupted', () => {
     store.upsertTask(makeTask({ id: 'a', status: 'running' }))
     store.upsertTask(makeTask({ id: 'b', status: 'done' }))
     const changes = store.finalizeInterrupted()
     expect(changes).toBe(1)
     const tasks = store.listTasks()
-    expect(tasks.find((t) => t.id === 'a')?.status).toBe('failed')
+    expect(tasks.find((t) => t.id === 'a')?.status).toBe('interrupted')
     expect(tasks.find((t) => t.id === 'b')?.status).toBe('done')
+  })
+
+  it('finalizeInterrupted 为无详情的中断任务写入失败原因', () => {
+    store.upsertTask(makeTask({ id: 'a', status: 'running', failedDetail: [] }))
+    store.finalizeInterrupted()
+    const task = store.listTasks().find((t) => t.id === 'a')
+    expect(task?.failedDetail).toEqual(['任务中断：应用在同步完成前退出'])
+  })
+
+  it('finalizeInterrupted 保留已有失败详情', () => {
+    store.upsertTask(makeTask({ id: 'a', status: 'running', failedDetail: ['已有原因'] }))
+    store.finalizeInterrupted()
+    const task = store.listTasks().find((t) => t.id === 'a')
+    expect(task?.failedDetail).toEqual(['已有原因'])
   })
 
   it('空库查询返回空数组，不抛异常', () => {

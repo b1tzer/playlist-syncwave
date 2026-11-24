@@ -237,6 +237,16 @@ tests/
   - TDD：先写 6 项适配器测试（netease 3 + qqmusic 3）红 → 实现转绿；全量 177 项测试、typecheck、lint、build 全部通过。
 - **待办**：手工验收（双平台歌单重命名/删除/移除歌曲/搜索添加歌曲）。
 
+### 快速创建页精修：一步创建 + 风格自动命名 ✅
+- **需求**：去掉「解析歌曲」按钮（输入即解析、直接创建）；歌单名留空时默认「今日日期 + 第一首歌曲风格」；去掉顶部「本地优先 · 凭证经系统钥匙串加密」文案与页面模块装饰标签。
+- **实现**：
+  - `PlatformSong` 新增 `genre?`；网易云/QQ音乐搜索结果映射提取 `item.genre`（上游不返回时为空）。
+  - 同步引擎：`SyncPlan`/`SyncReport` 新增 `firstGenre`（planSync 记录第一首匹配/候选的风格并随报告返回）。
+  - 主进程 `platform:sync-playlist` 接收 `autoNameDate`（渲染层按当前语言格式化的今日日期），歌单名留空时拼「日期 + 风格」为最终名，建单与 choice-needed 会话均使用最终名。
+  - UI（TextCreator）：textarea 输入实时解析（useEffect），删除「解析歌曲」按钮与 `handleParse`；任务记录名使用报告返回的最终名。App 头部删除 securityNote 区块；两处 `MODULE://` 装饰标签删除；i18n 清理 `app.securityNote`/`textCreator.parse`/`textCreator.defaultPlaylistName` 中英 3 键。
+- **测试**：新增 firstGenre 传播 3 项（完全匹配/choice 取第一候选/无风格 undefined）。
+- **待办**：手工验收（粘贴文本即时出预览、留空歌单名后建单名为「日期 + 风格」；上游不返回风格时仅日期）。
+
 | 风险 | 缓解 |
 |---|---|
 | 平台 API 变更/风控 | 适配器接口解耦；限速 + 指数退避；文件导入作为降级通道 |
