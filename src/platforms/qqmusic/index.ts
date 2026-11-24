@@ -227,9 +227,15 @@ export class QqMusicAdapter extends BasePlatformAdapter {
   // --- 写原语 ---
 
   protected async doCreatePlaylist(token: string, name: string): Promise<string> {
-    const res = await this.call('POST', '/user/playlist/create', token, { name })
+    // QQ 音乐歌单名上限 20 个字符（按码点计），超长提前给出明确提示，避免撞上平台 400
+    const trimmed = name.trim()
+    if ([...trimmed].length > 20) {
+      throw new Error('QQ音乐：歌单名最多 20 个字符，请缩短后重试')
+    }
+    const res = await this.call('POST', '/user/playlist/create', token, { name: trimmed })
     const data = asObject(res.data)
-    return pickString(data.tid, data.id) ?? ''
+    // 3.3.5+ 新协议 tid 在响应顶层；旧协议在 data.tid/data.id，两者都兼容
+    return pickString(res.tid, data.tid, data.id) ?? ''
   }
 
   protected async doAddSongs(token: string, playlistId: string, songIds: string[]): Promise<void> {

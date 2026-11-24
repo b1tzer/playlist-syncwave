@@ -8,6 +8,7 @@ import SyncCenter from './components/SyncCenter'
 import type { PendingConfirmSession, SyncReport, SyncTaskRecord } from '@core/models/sync'
 import SettingsView from './components/SettingsView'
 import ConfirmSyncDialog from './components/ConfirmSyncDialog'
+import { ToastHost, notify } from './components/toast'
 import { createRendererLogger } from './logging/rendererLogger'
 import { useI18n } from './i18n'
 
@@ -146,6 +147,26 @@ export default function App() {
       })
       setConfirmResult(rep)
       const ok = rep.playlistId !== ''
+      if (ok) {
+        // 右上角通知：给用户明确的执行结果
+        if (rep.failed.length > 0) {
+          notify(
+            'warning',
+            t('toast.confirmDoneTitle'),
+            t('toast.confirmPartialDetail', {
+              added: rep.added,
+              name: rep.playlistName,
+              failed: rep.failed.length,
+            }),
+          )
+        } else {
+          notify(
+            'success',
+            t('toast.confirmDoneTitle'),
+            t('toast.confirmDoneDetail', { added: rep.added, name: rep.playlistName }),
+          )
+        }
+      }
       handleTaskUpdate({
         id: `task-${Date.now()}`,
         name: rep.playlistName,
@@ -165,6 +186,7 @@ export default function App() {
       const msg = e instanceof Error ? e.message : t('sync.failedGeneric')
       log.error('sync.confirm-failed', '确认同步失败', e, { targetPlatform: target })
       setConfirmError(msg)
+      notify('error', t('toast.syncFailedTitle'), msg)
     } finally {
       setConfirming(false)
     }
@@ -316,6 +338,9 @@ export default function App() {
           confirmResult={confirmResult}
         />
       )}
+
+      {/* 右上角全局通知 */}
+      <ToastHost />
     </div>
   )
 }

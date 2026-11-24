@@ -6,6 +6,8 @@ import type { PendingConfirmSession, SyncFailedItem, SyncReport, SyncTaskRecord 
 import type { PlatformAccount, PlatformMeta } from '@core/models/platform'
 import { createRendererLogger } from '../logging/rendererLogger'
 import { useI18n } from '../i18n'
+import { PLATFORM_LOGOS } from './platformLogos'
+import { notify } from './toast'
 
 const log = createRendererLogger('renderer.text-creator')
 
@@ -300,6 +302,38 @@ export default function TextCreator({
         added: rep.added,
         failed: rep.failed.length,
       })
+      // 右上角通知：给用户明确的执行结果
+      if (ok) {
+        if (rep.failed.length > 0) {
+          notify(
+            'warning',
+            t('toast.syncDoneTitle'),
+            t('toast.syncPartialDetail', {
+              added: rep.added,
+              total: rep.total,
+              name: rep.playlistName,
+              failed: rep.failed.length,
+            }),
+          )
+        } else {
+          notify(
+            'success',
+            t('toast.syncDoneTitle'),
+            t('toast.syncDoneDetail', {
+              added: rep.added,
+              total: rep.total,
+              name: rep.playlistName,
+            }),
+          )
+        }
+      } else {
+        // 一首都没匹配上：歌单未创建，明确告知并提示检查输入
+        notify(
+          'error',
+          t('toast.syncNoneTitle'),
+          t('toast.syncNoneDetail', { count: rep.failed.length || rep.total }),
+        )
+      }
       onTaskUpdate({
         id: taskId,
         name: rep.playlistName,
@@ -317,6 +351,7 @@ export default function TextCreator({
       const msg = e instanceof Error ? e.message : t('sync.failedGeneric')
       log.error('sync.failed', '同步失败', e, { targetPlatform: target })
       setSyncError(msg)
+      notify('error', t('toast.syncFailedTitle'), msg)
       onTaskUpdate({
         id: taskId,
         name: name || autoNameDate,
@@ -368,23 +403,56 @@ export default function TextCreator({
 
   return (
     <div>
-      <div>
-        <h1 className="mt-1 font-headline-lg text-headline-lg font-semibold">
-          {t('textCreator.title')}
-        </h1>
-        <p className="mt-1 max-w-xl font-body-md text-body-md text-on-surface-variant">
-          {t('textCreator.subtitle')}
-        </p>
-      </div>
+      <h1 className="font-headline-lg text-headline-lg font-semibold">
+        {t('textCreator.title')}
+      </h1>
+      <p className="mt-1 font-body-md text-body-md text-on-surface-variant">
+        {t('textCreator.subtitle')}
+      </p>
 
-      <div className="mt-4 flex gap-4">
-        <div className="min-w-0 flex-1">
-          <div
-            onClick={() => {
-              if (editingIdx === null) draftRef.current?.focus()
-            }}
-            className="flex min-h-52 w-full cursor-text flex-wrap content-start items-center gap-1.5 rounded-lg border border-outline-variant bg-surface-container-low p-3 font-body-md text-body-md text-on-surface transition-colors focus-within:border-primary"
-          >
+      <div className="mt-4 rounded-lg border border-outline-variant bg-surface-container-low">
+        {/* 顶部工具行：歌单名（左上）+ 目标平台图标（右上，选中高亮未选置灰） */}
+        <div className="flex items-center justify-between gap-3 border-b border-outline-variant px-3 py-2">
+          <input
+            value={playlistName}
+            onChange={(e) => setPlaylistName(e.target.value)}
+            placeholder={t('textCreator.playlistNamePlaceholder')}
+            className="w-64 rounded-lg border border-outline-variant bg-surface px-3 py-1.5 font-body-md text-body-md text-on-surface outline-none placeholder:text-outline focus:border-primary"
+          />
+          <div className="flex items-center gap-1.5">
+            {targetPlatforms.map((p) => {
+              const selected = p.id === target
+              return (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => setTarget(p.id)}
+                  title={p.name}
+                  className={
+                    selected
+                      ? 'flex items-center gap-1.5 rounded-lg border border-primary/40 bg-primary/10 px-2.5 py-1 font-label-sm text-label-sm text-primary'
+                      : 'flex items-center gap-1.5 rounded-lg border border-outline-variant px-2.5 py-1 font-label-sm text-label-sm text-on-surface-variant opacity-40 transition-colors hover:opacity-80'
+                  }
+                >
+                  {PLATFORM_LOGOS[p.id] ? (
+                    <img src={PLATFORM_LOGOS[p.id]} alt={p.name} className="h-5 w-5 object-contain" />
+                  ) : (
+                    <span className="material-symbols-outlined text-base">{p.icon}</span>
+                  )}
+                  {p.name}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+
+        {/* TAG 流输入区 */}
+        <div
+          onClick={() => {
+            if (editingIdx === null) draftRef.current?.focus()
+          }}
+          className="flex min-h-52 w-full cursor-text flex-wrap content-start items-center gap-1.5 p-3 font-body-md text-body-md text-on-surface transition-colors focus-within:border-primary"
+        >
             {lines.map((raw, idx) => {
               const lineNo = idx + 1
               const isEditing = editingIdx === idx
@@ -673,119 +741,97 @@ export default function TextCreator({
               className="min-w-48 flex-1 bg-transparent px-1 py-1.5 font-mono text-body-md text-on-surface outline-none placeholder:text-outline"
             />
           </div>
-          <div className="mt-2 flex items-center gap-2">
+
+          {/* 底部条：清空与登录提示（左），创建歌单按钮（右下角） */}
+          <div className="flex items-center justify-between gap-3 border-t border-outline-variant px-3 py-2">
+            <div className="flex min-w-0 items-center gap-2">
+              <button
+                onClick={() => {
+                  log.info('parse.clear', '清空输入')
+                  setLines([])
+                  setDraft('')
+                  setEditingIdx(null)
+                  setRemovedExtra(new Set())
+                  setReport(null)
+                  setSyncError('')
+                }}
+                disabled={syncing}
+                className="flex shrink-0 items-center gap-1.5 rounded-lg border border-outline-variant px-3 py-1.5 font-label-md text-label-md text-on-surface-variant transition-colors hover:bg-surface-container-high hover:text-on-surface disabled:opacity-40"
+              >
+                <span className="material-symbols-outlined text-base">delete_sweep</span>
+                {t('textCreator.clear')}
+              </button>
+              {!loggedIn && (
+                <span className="flex min-w-0 items-center gap-1 truncate font-label-sm text-label-sm text-on-surface-variant">
+                  <span className="material-symbols-outlined text-sm">switch_account</span>
+                  <span className="truncate">
+                    {t('textCreator.loginFirst')}{' '}
+                    {targetPlatforms.find((p) => p.id === target)?.name ?? ''}
+                  </span>
+                </span>
+              )}
+            </div>
             <button
-              onClick={() => {
-                log.info('parse.clear', '清空输入')
-                setLines([])
-                setDraft('')
-                setEditingIdx(null)
-                setRemovedExtra(new Set())
-                setReport(null)
-                setSyncError('')
-              }}
-              disabled={syncing}
-              className="flex items-center gap-1.5 rounded-lg border border-outline-variant px-4 py-2 font-label-md text-label-md text-on-surface-variant transition-colors hover:bg-surface-container-high hover:text-on-surface disabled:opacity-40"
+              onClick={handleSync}
+              disabled={syncing || pendingConfirm !== null || !loggedIn || result.songs.length === 0}
+              className="flex shrink-0 items-center justify-center gap-1.5 rounded-lg bg-primary px-4 py-2 font-label-md text-label-md font-medium text-on-primary transition-colors hover:bg-primary/85 disabled:opacity-40"
             >
-              <span className="material-symbols-outlined text-base">delete_sweep</span>
-              {t('textCreator.clear')}
+              <span className="material-symbols-outlined text-base">
+                {syncing ? 'progress_activity' : 'rocket_launch'}
+              </span>
+              {syncing ? t('textCreator.syncing') : t('textCreator.create')}
             </button>
           </div>
         </div>
 
-        <div className="w-72 shrink-0">
-          {loggedIn ? (
-            <div className="flex flex-col gap-2 rounded-lg border border-outline-variant bg-surface-container-low p-3">
-              <p className="font-label-mono text-label-mono text-outline">SYNC TARGET</p>
-              <select
-                value={target}
-                onChange={(e) => setTarget(e.target.value)}
-                className="w-full rounded-lg border border-outline-variant bg-surface px-3 py-2 font-body-md text-body-md text-on-surface outline-none focus:border-primary"
-              >
-                {targetPlatforms.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {t('textCreator.syncTo', { name: p.name })}
-                  </option>
-                ))}
-              </select>
-              <input
-                value={playlistName}
-                onChange={(e) => setPlaylistName(e.target.value)}
-                placeholder={t('textCreator.playlistNamePlaceholder')}
-                className="w-full rounded-lg border border-outline-variant bg-surface px-3 py-2 font-body-md text-body-md text-on-surface outline-none placeholder:text-outline focus:border-primary"
+        {/* 进度与结果（输入块下方） */}
+        {syncing && progress && (
+          <div className="mt-3">
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface-container-highest">
+              <div
+                className="h-full rounded-full bg-primary transition-all"
+                style={{ width: `${Math.round(progress.ratio * 100)}%` }}
               />
-              <button
-                onClick={handleSync}
-                disabled={syncing || pendingConfirm !== null || result.songs.length === 0}
-                className="mt-1 flex w-full items-center justify-center gap-1.5 rounded-lg bg-primary px-4 py-2 font-label-md text-label-md font-medium text-on-primary transition-colors hover:bg-primary/85 disabled:opacity-40"
-              >
-                <span className="material-symbols-outlined text-base">
-                  {syncing ? 'progress_activity' : 'rocket_launch'}
-                </span>
-                {syncing ? t('textCreator.syncing') : t('textCreator.createAndSync')}
-              </button>
-
-              {syncing && progress && (
-                <div className="mt-1">
-                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface-container-highest">
-                    <div
-                      className="h-full rounded-full bg-primary transition-all"
-                      style={{ width: `${Math.round(progress.ratio * 100)}%` }}
-                    />
-                  </div>
-                  <p className="mt-1 font-label-sm text-label-sm text-on-surface-variant">
-                    {progress.stage === 'matching'
-                      ? t('textCreator.matching')
-                      : t('textCreator.adding')}{' '}
-                    {Math.round(progress.ratio * 100)}%
-                  </p>
-                </div>
-              )}
-
-              {syncError && (
-                <p className="font-label-sm text-label-sm text-error">{syncError}</p>
-              )}
-
-              {report && (
-                <div className="space-y-1 font-label-sm text-label-sm">
-                  {report.playlistId ? (
-                    <p className="text-on-surface">
-                      <span className="font-medium text-primary">{t('textCreator.syncDone')}</span>
-                      {t('textCreator.syncDoneDetail', {
-                        added: report.added,
-                        total: report.total,
-                        name: report.playlistName,
-                      })}
-                    </p>
-                  ) : (
-                    <p className="text-on-surface">
-                      <span className="font-medium text-tertiary">
-                        {t('textCreator.noPlaylist')}
-                      </span>
-                      {t('textCreator.noPlaylistDetail')}
-                    </p>
-                  )}
-                  {report.failed.length > 0 && (
-                    <ul className="max-h-24 space-y-1 overflow-y-auto text-error">
-                      {report.failed.map((f, i) => (
-                        <li key={i}>· {failedMessage(f)}</li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-              )}
             </div>
-          ) : (
-            <div className="rounded-lg border border-dashed border-outline-variant p-4 text-center">
-              <span className="material-symbols-outlined text-3xl text-outline">switch_account</span>
-              <p className="mt-2 font-label-sm text-label-sm text-on-surface-variant">
-                {t('textCreator.loginFirst')}{' '}
-                {targetPlatforms.find((p) => p.id === target)?.name ?? ''}
+            <p className="mt-1 font-label-sm text-label-sm text-on-surface-variant">
+              {progress.stage === 'matching'
+                ? t('textCreator.matching')
+                : t('textCreator.adding')}{' '}
+              {Math.round(progress.ratio * 100)}%
+            </p>
+          </div>
+        )}
+
+        {syncError && <p className="mt-2 font-label-sm text-label-sm text-error">{syncError}</p>}
+
+        {report && (
+          <div className="mt-2 space-y-1 font-label-sm text-label-sm">
+            {report.playlistId ? (
+              <p className="text-on-surface">
+                <span className="font-medium text-primary">{t('textCreator.syncDone')}</span>
+                {t('textCreator.syncDoneDetail', {
+                  added: report.added,
+                  total: report.total,
+                  name: report.playlistName,
+                })}
               </p>
-            </div>
-          )}
-        </div>
-      </div>
+            ) : (
+              <p className="text-on-surface">
+                <span className="font-medium text-tertiary">
+                  {t('textCreator.noPlaylist')}
+                </span>
+                {t('textCreator.noPlaylistDetail')}
+              </p>
+            )}
+            {report.failed.length > 0 && (
+              <ul className="max-h-24 space-y-1 overflow-y-auto text-error">
+                {report.failed.map((f, i) => (
+                  <li key={i}>· {failedMessage(f)}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
     </div>
   )
 }

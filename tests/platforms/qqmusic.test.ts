@@ -181,16 +181,44 @@ describe('QqMusicAdapter — serverless HTTP 映射', () => {
     expect(calls[0].headers.get('x-qq-session')).toBe('tok')
   })
 
-  it('创建歌单：POST body { name }，返回新歌单 ID', async () => {
+  it('创建歌单：POST body { name }，新协议顶层 tid 返回新歌单 ID', async () => {
     const { handler, calls } = makeHandler((method, url, body) => {
       expect(method).toBe('POST')
       expect(url.pathname).toBe('/user/playlist/create')
       expect(body).toEqual({ name: '测试歌单' })
-      return json({ code: 200, data: { tid: 222, dirId: 12 } })
+      // 3.3.5+ 新协议成功响应：tid 在顶层
+      return json({ code: 200, tid: 222, dirId: 12, name: '测试歌单', verified: true })
     })
     const adapter = new QqMusicAdapter(handler, env)
     expect(await adapter.createPlaylist('tok', '测试歌单')).toBe('222')
     expect(calls[0].headers.get('x-qq-session')).toBe('tok')
+  })
+
+  it('创建歌单：兼容旧协议 data.tid 响应', async () => {
+    const { handler } = makeHandler(() => json({ code: 200, data: { tid: 333 } }))
+    const adapter = new QqMusicAdapter(handler, env)
+    expect(await adapter.createPlaylist('tok', '旧协议')).toBe('333')
+  })
+
+  it('创建歌单：名称超过 20 字符 → 明确报错且不发请求', async () => {
+    const { handler, calls } = makeHandler(() => {
+      throw new Error('unexpected')
+    })
+    const adapter = new QqMusicAdapter(handler, env)
+    await expect(adapter.createPlaylist('tok', '一二三四五六七八九十一二三四五六七八九十多')).rejects.toThrow(
+      '歌单名最多 20 个字符',
+    )
+    expect(calls).toHaveLength(0)
+  })
+
+  it('创建歌单：名称首尾空白去除后提交', async () => {
+    const { handler, calls } = makeHandler((_method, _url, body) => {
+      expect(body).toEqual({ name: '去空白' })
+      return json({ code: 200, tid: 444 })
+    })
+    const adapter = new QqMusicAdapter(handler, env)
+    expect(await adapter.createPlaylist('tok', '  去空白  ')).toBe('444')
+    expect(calls).toHaveLength(1)
   })
 
   it('添加歌曲：songs 数组为 {id, type:0}，每批 ≤100', async () => {

@@ -76,6 +76,29 @@
   }
 }
 
+/* 右上角通知进出场动画 */
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateX(16px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
+@keyframes toast-out {
+  from {
+    opacity: 1;
+    transform: translateX(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateX(16px);
+  }
+}
+
 @layer components {
   /* Material Symbols 图标基线 */
   .material-symbols-outlined {
@@ -95,5 +118,12 @@
   }
   .material-symbols-outlined.fill {
     font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+  }
+  /* Toast 卡片动画状态 */
+  .toast-enter {
+    animation: toast-in 0.25s cubic-bezier(0.2, 0.8, 0.3, 1) both;
+  }
+  .toast-leave {
+    animation: toast-out 0.2s ease-in both;
   }
 }
