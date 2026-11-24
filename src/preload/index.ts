@@ -56,6 +56,9 @@ const api = {
   /** 打开文件选择器导入歌单文本文件（m3u/m3u8/csv/txt/lrc/json），取消返回 null */
   openTextFile: (): Promise<{ name: string; content: string } | null> =>
     ipcRenderer.invoke('app:open-text-file'),
+  /** 导出文本文件：选择保存位置后写入，返回保存路径（取消返回 null） */
+  saveTextFile: (defaultName: string, content: string, extension: string): Promise<string | null> =>
+    ipcRenderer.invoke('app:save-text-file', defaultName, content, extension),
   /** 渲染进程日志上报：主进程校验后写入统一日志管线 */
   log: (entry: LogEntry): void => {
     ipcRenderer.send('log:write', entry)

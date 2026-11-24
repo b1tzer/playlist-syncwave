@@ -3,6 +3,8 @@ import type { LocalPlaylist, LocalPlaylistSong } from '@core/models/localPlaylis
 import type { MatchQuery } from '@core/models/match'
 import type { PlatformAccount, PlatformMeta, PlatformSong } from '@core/models/platform'
 import type { PendingConfirmSession, SyncTaskRecord } from '@core/models/sync'
+import { toM3u } from '@core/export/toM3u'
+import { toCsv } from '@core/export/toCsv'
 import { createRendererLogger } from '../logging/rendererLogger'
 import { useI18n } from '../i18n'
 import { useSyncRunner } from '../sync/useSyncRunner'
@@ -45,6 +47,8 @@ export default function LocalPlaylistPanel({
 
   // 同步目标平台选择
   const [syncPicker, setSyncPicker] = useState(false)
+  // 导出格式选择
+  const [exportPicker, setExportPicker] = useState(false)
 
   // 添加歌曲：搜索已登录平台
   const [searchPlatform, setSearchPlatform] = useState('')
@@ -200,6 +204,27 @@ export default function LocalPlaylistPanel({
         next.delete(song.id)
         return next
       })
+    }
+  }
+
+  /** 导出当前歌单为 m3u/csv 文件 */
+  const handleExport = async (format: 'm3u' | 'csv') => {
+    if (!activePlaylist || songs.length === 0) return
+    setExportPicker(false)
+    const exportSongs = songs.map((s) => ({
+      title: s.title,
+      artist: s.artist || undefined,
+      album: s.album,
+      durationMs: s.durationMs,
+    }))
+    const content = format === 'm3u' ? toM3u(exportSongs) : toCsv(exportSongs)
+    try {
+      const saved = await window.electronAPI.saveTextFile(activePlaylist.name, content, format)
+      log.info('local-playlist.exported', '歌单已导出', { id: activeId, format, saved })
+      if (saved) notify('success', t('localPlaylist.exported'), saved)
+    } catch (e) {
+      log.error('local-playlist.export-failed', '导出失败', e, { id: activeId })
+      notify('error', t('localPlaylist.exportFailed'))
     }
   }
 
@@ -362,7 +387,37 @@ export default function LocalPlaylistPanel({
               </button>
               <div className="relative">
                 <button
-                  onClick={() => setSyncPicker((v) => !v)}
+                  onClick={() => {
+                    setExportPicker((v) => !v)
+                    setSyncPicker(false)
+                  }}
+                  disabled={songs.length === 0}
+                  title={t('localPlaylist.export')}
+                  className="flex items-center rounded-md border border-outline-variant p-1.5 text-on-surface-variant transition-colors hover:bg-surface-container-highest hover:text-primary disabled:opacity-40"
+                >
+                  <span className="material-symbols-outlined text-base">download</span>
+                </button>
+                {exportPicker && (
+                  <div className="absolute right-0 top-full z-20 mt-1 w-32 rounded-lg border border-outline-variant bg-surface-container-high p-1 shadow-lg">
+                    {(['m3u', 'csv'] as const).map((format) => (
+                      <button
+                        key={format}
+                        onClick={() => void handleExport(format)}
+                        className="flex w-full items-center justify-between rounded-md px-2.5 py-1.5 font-label-md text-label-md text-on-surface transition-colors hover:bg-surface-container-highest"
+                      >
+                        {format.toUpperCase()}
+                        <span className="material-symbols-outlined text-sm text-outline">download</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div className="relative">
+                <button
+                  onClick={() => {
+                    setSyncPicker((v) => !v)
+                    setExportPicker(false)
+                  }}
                   disabled={syncRunning || pendingConfirm !== null || songs.length === 0}
                   title={t('localPlaylist.syncTo')}
                   className="flex items-center gap-1 rounded-md border border-outline-variant px-2.5 py-1.5 font-label-md text-label-md text-primary transition-colors hover:bg-primary/10 disabled:opacity-40"

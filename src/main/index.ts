@@ -8,7 +8,7 @@ import {
   type IpcMainInvokeEvent,
 } from 'electron'
 import { join, basename } from 'node:path'
-import { readFileSync, statSync } from 'node:fs'
+import { readFileSync, writeFileSync, statSync } from 'node:fs'
 import { platformModules } from '../platforms'
 import { registerPlatform, getPlatform, resolveAdapter, listPlatforms } from './platformRegistry'
 import type { AdapterContext } from '../platforms/meta'
@@ -200,6 +200,8 @@ ipcMain.handle('app:set-auto-launch', (_event, enabled: unknown) => {
 
 /** 文件导入大小上限 */
 const MAX_IMPORT_BYTES = 5 * 1024 * 1024
+/** 导出内容大小上限 */
+const MAX_EXPORT_BYTES = 20 * 1024 * 1024
 
 /** 打开文件选择器读取歌单文本文件（m3u/m3u8/csv/txt/lrc/json），取消返回 null */
 ipcMain.handle('app:open-text-file', async () => {
@@ -232,6 +234,33 @@ ipcMain.handle('app:open-text-file', async () => {
     throw e
   }
 })
+
+/** 保存文本文件（歌单导出）：选择保存位置后写入，取消返回 null */
+ipcMain.handle(
+  'app:save-text-file',
+  async (_event, defaultName: unknown, content: unknown, extension: unknown) => {
+    if (typeof defaultName !== 'string' || typeof content !== 'string' || typeof extension !== 'string') {
+      throw new Error('无效的导出参数')
+    }
+    if (content.length > MAX_EXPORT_BYTES) throw new Error('导出内容过大')
+    const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
+    if (!win) return null
+    const zh = getSetting<string>('language', 'zh-CN') !== 'en-US'
+    const safeName = defaultName.replace(/[\\/:*?"<>|]/g, '_').slice(0, 80) || 'playlist'
+    const result = await dialog.showSaveDialog(win, {
+      title: zh ? '导出歌单' : 'Export playlist',
+      defaultPath: `${safeName}.${extension}`,
+      filters: [
+        { name: extension.toUpperCase(), extensions: [extension] },
+        { name: zh ? '所有文件' : 'All files', extensions: ['*'] },
+      ],
+    })
+    if (result.canceled || !result.filePath) return null
+    writeFileSync(result.filePath, content, 'utf-8')
+    ipcLog.info('app.save-text-file', '导出文件已保存', { name: basename(result.filePath) })
+    return result.filePath
+  },
+)
 
 ipcMain.handle('crypto:encrypt', (_event, plain: string) => {
   if (!safeStorage.isEncryptionAvailable()) {

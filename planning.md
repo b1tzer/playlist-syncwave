@@ -403,7 +403,7 @@ tests/
 - **B7 系统通知 ✅**：`main/notifications.ts` 系统通知模块（仅窗口失焦时发送，点击聚焦窗口，中英双语随语言设置）；接入同步完成/部分完成/全部未匹配/停止、账号凭证失效、新版本下载就绪四类事件。typecheck、lint、264 项测试通过。
 - **B8 本地歌单库 ✅**：SQLite 新表 `local_playlists`/`local_playlist_songs`（`localPlaylistStore` 事务化整单替换/追加/按位删除重排）+ `localPlaylistService` 校验 + 7 项 `local-playlist:*` IPC；「我的歌单」页新增「本地」标签（`LocalPlaylistPanel`：列表/详情/新建/重命名/两步删除/删歌/平台搜索添加/同步到目标平台走现有 syncPlaylist 流程）；快速创建页新增「保存到本地」按钮（去重后写入，无需登录）。`SqliteDb` 增加可选 `transaction` 接口 + `withTransaction`（fake db 退化直执行）。typecheck、lint、271 项测试（+7）、build 通过。
 - **B9 文件导入 ✅**：主进程 `app:open-text-file`（dialog 文件选择，m3u/m3u8/csv/txt/lrc/json，5MB 上限，去 BOM），快速创建页「导入文件」按钮把内容按行追加进标签流，复用现有全自动解析管线。typecheck、lint、271 项测试通过。
-- **B10 歌单导出（待实施）**：导出 m3u/csv。
+- **B10 歌单导出 ✅**：core 新增 `export/toM3u.ts`/`toCsv.ts` 纯函数（+4 测试）；主进程 `app:save-text-file`（保存对话框 + 文件名清洗 + 20MB 上限）；本地歌单与平台歌单详情头部均新增导出按钮（m3u/csv 下拉）。typecheck、lint、275 项测试、build 通过。
 - **B11 匹配/同步设置项（待实施）**：阈值、重试次数、限速等参数可配置化。
 - **B12 代理设置（待实施）**：HTTP 代理配置应用到平台请求。
 - **B13 CSP 与 sandbox 加固（待实施）**：渲染层 CSP、评估 sandbox 开启。

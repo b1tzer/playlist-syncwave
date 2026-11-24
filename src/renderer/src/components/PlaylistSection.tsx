@@ -14,6 +14,8 @@ import type {
 import type { MatchQuery } from '@core/models/match'
 import type { PendingConfirmSession, SyncTaskRecord } from '@core/models/sync'
 import { MANUAL_REFRESH_MIN_INTERVAL_MS } from '@core/cachePolicy'
+import { toM3u } from '@core/export/toM3u'
+import { toCsv } from '@core/export/toCsv'
 import { createRendererLogger } from '../logging/rendererLogger'
 import { useI18n } from '../i18n'
 import { useSyncRunner } from '../sync/useSyncRunner'
@@ -170,6 +172,7 @@ export default function PlaylistSection({
   const [searching, setSearching] = useState(false)
   const [searchResults, setSearchResults] = useState<PlatformSong[] | null>(null)
   const [addingIds, setAddingIds] = useState<Set<string>>(new Set())
+  const [exportPicker, setExportPicker] = useState(false)
 
   const loggedIn = active !== '' && active !== 'local' && accounts[active] !== null
   const keyword = searchQuery.trim().toLowerCase()
@@ -466,6 +469,27 @@ export default function PlaylistSection({
     setRenameDraft(activePlaylist.name)
     setRenaming(true)
     setConfirmDelete(false)
+  }
+
+  /** 导出当前平台歌单为 m3u/csv 文件 */
+  const handleExport = async (format: 'm3u' | 'csv') => {
+    if (!activePlaylist || songs.length === 0) return
+    setExportPicker(false)
+    const exportSongs = songs.map((s) => ({
+      title: s.title,
+      artist: s.artist || undefined,
+      album: s.album,
+      durationMs: s.durationMs,
+    }))
+    const content = format === 'm3u' ? toM3u(exportSongs) : toCsv(exportSongs)
+    try {
+      const saved = await window.electronAPI.saveTextFile(activePlaylist.name, content, format)
+      log.info('playlist.exported', '歌单已导出', { platform: active, format, saved })
+      if (saved) notify('success', t('playlist.exported'), saved)
+    } catch (e) {
+      log.error('playlist.export-failed', '导出失败', e, { platform: active })
+      notify('error', t('playlist.exportFailed'))
+    }
   }
 
   const handleRename = async () => {
@@ -903,6 +927,32 @@ export default function PlaylistSection({
                   </span>
                 )}
               </div>
+              {activeId && (
+                <div className="relative flex shrink-0 items-center gap-2">
+                  <button
+                    onClick={() => setExportPicker((v) => !v)}
+                    disabled={songs.length === 0}
+                    title={t('playlist.export')}
+                    className="flex items-center rounded-md p-1 text-on-surface-variant transition-colors hover:bg-surface-container-highest hover:text-primary disabled:opacity-50"
+                  >
+                    <span className="material-symbols-outlined text-base">download</span>
+                  </button>
+                  {exportPicker && (
+                    <div className="absolute right-0 top-full z-20 mt-1 w-32 rounded-lg border border-outline-variant bg-surface-container-high p-1 shadow-lg">
+                      {(['m3u', 'csv'] as const).map((format) => (
+                        <button
+                          key={format}
+                          onClick={() => void handleExport(format)}
+                          className="flex w-full items-center justify-between rounded-md px-2.5 py-1.5 font-label-md text-label-md text-on-surface transition-colors hover:bg-surface-container-highest"
+                        >
+                          {format.toUpperCase()}
+                          <span className="material-symbols-outlined text-sm text-outline">download</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
               {activeId && canManage && (
                 <div className="flex shrink-0 items-center gap-2">
                   <button
