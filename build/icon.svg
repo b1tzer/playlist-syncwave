@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1e1f25"/>
+      <stop offset="1" stop-color="#0d0e13"/>
+    </linearGradient>
+    <linearGradient id="note" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#6ef2bd"/>
+      <stop offset="1" stop-color="#10b981"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#4edea3" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#4edea3" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="512" height="512" rx="116" fill="url(#bg)"/>
+  <circle cx="256" cy="256" r="196" fill="url(#glow)"/>
+  <!-- 声波条：同步/波浪语义 -->
+  <rect x="96" y="216" width="26" height="80" rx="13" fill="#4edea3" opacity="0.45"/>
+  <rect x="140" y="186" width="26" height="140" rx="13" fill="#4edea3" opacity="0.7"/>
+  <rect x="184" y="156" width="26" height="200" rx="13" fill="#4edea3"/>
+  <!-- 音符（Material music_note，viewBox 0 0 24 24） -->
+  <g transform="translate(232,112) scale(12)">
+    <path fill="url(#note)" d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
+  </g>
+</svg>

@@ -1,0 +1,52 @@
+# electron-builder 打包配置
+# 签名：macOS 无证书时自动跳过签名并给出警告（发布前设置 CSC_LINK/CSC_KEY_PASSWORD 环境变量即可）
+appId: com.syncwave.app
+productName: SyncWave
+
+directories:
+  buildResources: build
+  output: dist
+
+files:
+  - out/**
+  - '!src/**'
+  - '!tests/**'
+  - '!docs/**'
+  - '!music_logos/**'
+  - '!build/*.svg'
+  - '!playlist.txt'
+  - '!planning.md'
+  - '!PRD.md'
+  - '!CLAUDE.md'
+
+# native 模块（better-sqlite3）不能从 asar 内加载
+asarUnpack:
+  - '**/*.node'
+
+npmRebuild: true
+
+mac:
+  category: public.app-category.music
+  icon: build/icon.png
+  target:
+    - dmg
+    - zip
+
+win:
+  icon: build/icon.png
+  target:
+    - nsis
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  artifactName: '${productName}-Setup-${version}.${ext}'
+
+dmg:
+  artifactName: '${productName}-${version}.${ext}'
+
+linux:
+  icon: build/icon.png
+  category: AudioVideo
+  target:
+    - AppImage

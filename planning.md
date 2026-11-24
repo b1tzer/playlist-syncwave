@@ -391,6 +391,26 @@ tests/
 - **验证命令**：`npm run test -- main` + `npm run typecheck` + `npm run lint`
 - **实际结果**：新增 17 项测试（store 7 项 + service 10 项）全绿，全量 258 项测试、typecheck、ESLint 全部通过。实现要点：`core/cachePolicy.ts` 策略常量（列表 10min / 歌曲 30min / 手动刷新 30s）；`playlistCacheStore` 三张表（列表整份替换、歌曲整单替换 + meta 时间戳、ORDER BY rowid 保平台顺序）；`playlistCacheService` 缓存优先 → TTL 自动刷新 → 单飞去重（自动/手动冲突共享在途请求）→ 手动限流（返回缓存 + throttled 标记）；主进程两个拉取 IPC 接入服务（登录态校验并入实际拉取路径，缓存命中零平台请求），重命名/删除/增删歌曲/同步建单后联动失效对应缓存；渲染层平台切换与打开歌单缓存优先、手动刷新按钮 30s 冷却倒计时 + 主进程限流兜底 toast。i18n 中英补齐 2 键。
 
+### 基础能力补齐（对照差距分析逐项实施，一项一提交）
+> 目标：补齐合格桌面 App 应具备的基础能力，按差距分析顺序逐项实施。
+
+- **B1 打包分发 ✅**：electron-builder 配置（`electron-builder.yml`：appId/productName/图标/mac dmg+zip/win nsis/linux AppImage/asarUnpack native 模块）+ `dist` 脚本 + `build/icon.svg`→`icon.png`（1024）。验证：`npm run build` + `npx electron-builder --mac --dir` 产出 SyncWave.app，better-sqlite3 正确解包。签名未配置（发布前用 CSC_LINK/CSC_KEY_PASSWORD）。
+- **B2 单实例锁（待实施）**：`requestSingleInstanceLock`，二次启动聚焦已有窗口，防 SQLite 并发写。
+- **B3 窗口状态记忆（待实施）**：窗口位置/尺寸持久化，重启恢复。
+- **B4 应用菜单与快捷键（待实施）**：macOS 标准菜单（含 Edit 菜单保证剪贴板快捷键）+ 应用内快捷键。
+- **B5 开机启动真实现（待实施）**：`app.setLoginItemSettings` 对接设置开关。
+- **B6 自动更新（待实施）**：electron-updater + 检查更新入口 + 发布配置。
+- **B7 系统通知（待实施）**：同步完成/账号过期系统通知。
+- **B8 本地歌单库（待实施）**：本地暂存歌单（未匹配歌曲草稿、登录前编辑）。
+- **B9 文件导入（待实施）**：m3u/csv/txt 文件选择导入（复用 parser）。
+- **B10 歌单导出（待实施）**：导出 m3u/csv。
+- **B11 匹配/同步设置项（待实施）**：阈值、重试次数、限速等参数可配置化。
+- **B12 代理设置（待实施）**：HTTP 代理配置应用到平台请求。
+- **B13 CSP 与 sandbox 加固（待实施）**：渲染层 CSP、评估 sandbox 开启。
+- **B14 SQLite 版本化迁移（待实施）**：schema 版本表 + 迁移框架，替代散落 ALTER TABLE。
+- **B15 浅色主题（待实施）**：深浅主题切换与持久化。
+- **B16 关于版本号 + 崩溃恢复（待实施）**：设置页显示版本；崩溃提示与重启选项。
+
 ---
 
 | 风险 | 缓解 |
