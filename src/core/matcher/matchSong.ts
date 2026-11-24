@@ -16,6 +16,49 @@ export function normalize(text: string): string {
     .replace(/\s+/gu, '')
 }
 
+/**
+ * 歌手串切分为多个人名：先整串归一化，再按 feat/连接符切分。
+ * 顿号切分多人名合唱（周杰伦、温岚）；斜杠不切（乐队名常见斜杠）。
+ */
+const FEAT_SPLIT = /feat\.?|ft\.?|featuring|&|,|;|、/i
+
+export function artistParts(artist: string): string[] {
+  return normalize(artist)
+    .split(FEAT_SPLIT)
+    .map((p) => p.trim())
+    .filter(Boolean)
+}
+
+/** 版本标记词表：标题括号内出现即视为该版本；先匹配长词（remastered 先于 remaster） */
+const VERSION_TAGS = [
+  'remastered',
+  'instrumental',
+  'acoustic',
+  'unplugged',
+  'radioedit',
+  'remaster',
+  'remix',
+  'cover',
+  'live',
+  'dj',
+  '伴奏',
+  '翻唱',
+  '现场',
+  '纯音乐',
+]
+
+/** 提取标题括号内的版本标记；无则返回 undefined */
+export function extractVersionTag(title: string): string | undefined {
+  for (const match of title.matchAll(/[(（【[]([^)）】\]]+)[)）】\]]/g)) {
+    const inner = normalize(match[1])
+    if (!inner) continue
+    for (const tag of VERSION_TAGS) {
+      if (inner === tag || inner.includes(tag)) return tag
+    }
+  }
+  return undefined
+}
+
 /** 保留括号内容的原始键，用于区分「精确标题」与「括号变体」 */
 function rawKey(text: string): string {
   return t2s(text)
@@ -40,8 +83,8 @@ export function findBestMatch(
 ): MatchResult | null {
   const threshold = options.threshold ?? 0.6
   const queryTitle = normalize(query.title)
-  const queryArtist = query.artist ? normalize(query.artist) : ''
   const queryHasParen = HAS_PAREN.test(query.title)
+  const queryTag = extractVersionTag(query.title)
 
   let best: MatchResult | null = null
 
@@ -67,14 +110,28 @@ export function findBestMatch(
       score = 0
     }
 
-    if (queryArtist && candidateArtist) {
-      const artistScore = fuzzyScore(queryArtist, candidateArtist)
-      if (artistScore === 1) {
+    if (query.artist && candidateArtist) {
+      const queryParts = artistParts(query.artist)
+      const candidateParts = artistParts(c.artist)
+      const shared = queryParts.some((p) => candidateParts.includes(p))
+      if (shared) {
         score += 0.15
         reasons.push('artist-exact')
-      } else if (artistScore > 0) {
+      } else if (queryParts.some((p) => candidateParts.some((cp) => fuzzyScore(p, cp) > 0))) {
         score += 0.05
         reasons.push('artist-partial')
+      }
+    }
+
+    if (query.album && c.album) {
+      const queryAlbum = normalize(query.album)
+      const candidateAlbum = normalize(c.album)
+      if (queryAlbum === candidateAlbum) {
+        score += 0.05
+        reasons.push('album-exact')
+      } else if (fuzzyScore(queryAlbum, candidateAlbum) > 0) {
+        score += 0.02
+        reasons.push('album-partial')
       }
     }
 
@@ -82,6 +139,17 @@ export function findBestMatch(
       if (Math.abs(c.durationMs - query.durationMs) <= 1_000) {
         score += 0.02
         reasons.push('duration-match')
+      }
+    }
+
+    if (queryTag !== undefined) {
+      const candidateTag = extractVersionTag(c.title)
+      if (candidateTag === queryTag) {
+        score += 0.08
+        reasons.push('version-match')
+      } else if (candidateTag !== undefined) {
+        score -= 0.05
+        reasons.push('version-mismatch')
       }
     }
 

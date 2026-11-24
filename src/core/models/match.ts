@@ -12,6 +12,7 @@ export interface CandidateSong {
 export interface MatchQuery {
   title: string
   artist?: string
+  album?: string
   durationMs?: number
   /** 字段顺序歧义时的备选候选；主候选无匹配时逐个搜索验证 */
   alternatives?: Array<{ title: string; artist?: string }>

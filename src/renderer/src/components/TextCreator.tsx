@@ -6,20 +6,12 @@ import type { PendingConfirmSession, SyncFailedItem, SyncReport, SyncTaskRecord 
 import type { PlatformAccount, PlatformMeta } from '@core/models/platform'
 import { createRendererLogger } from '../logging/rendererLogger'
 import { useI18n } from '../i18n'
-import type { TranslationKey } from '../i18n/translations'
 
 const log = createRendererLogger('renderer.text-creator')
 
 /** 歌曲去重键：标题+歌手归一化（与匹配引擎同口径） */
 const songDupKey = (s: { title: string; artist?: string }): string =>
   `${normalize(s.title)}|${normalize(s.artist ?? '')}`
-
-const EXAMPLE = `晴天 - 周杰伦
-稻香——周杰伦
-夜曲 | 周杰伦
-说谎 - 林宥嘉
-1. 海阔天空 / Beyond
-推荐你听《乌梅子酱》李荣浩`
 
 interface TextCreatorProps {
   platforms: PlatformMeta[]
@@ -29,39 +21,6 @@ interface TextCreatorProps {
   pendingConfirm: PendingConfirmSession | null
   onPendingConfirmChange: (session: PendingConfirmSession | null) => void
 }
-
-const FORMATS: Array<{ icon: string; titleKey: TranslationKey; exampleKey: TranslationKey }> = [
-  {
-    icon: 'auto_fix_high',
-    titleKey: 'textCreator.formats.auto.title',
-    exampleKey: 'textCreator.formats.auto.example',
-  },
-  {
-    icon: 'format_list_numbered',
-    titleKey: 'textCreator.formats.titleArtist.title',
-    exampleKey: 'textCreator.formats.titleArtist.example',
-  },
-  {
-    icon: 'swap_vert',
-    titleKey: 'textCreator.formats.artistTitle.title',
-    exampleKey: 'textCreator.formats.artistTitle.example',
-  },
-  {
-    icon: 'format_list_bulleted',
-    titleKey: 'textCreator.formats.numbered.title',
-    exampleKey: 'textCreator.formats.numbered.example',
-  },
-  {
-    icon: 'forum',
-    titleKey: 'textCreator.formats.chat.title',
-    exampleKey: 'textCreator.formats.chat.example',
-  },
-  {
-    icon: 'filter_alt_off',
-    titleKey: 'textCreator.formats.tolerant.title',
-    exampleKey: 'textCreator.formats.tolerant.example',
-  },
-]
 
 export default function TextCreator({
   platforms,
@@ -84,7 +43,6 @@ export default function TextCreator({
   const [progress, setProgress] = useState<{ ratio: number; stage: string } | null>(null)
   const [report, setReport] = useState<SyncReport | null>(null)
   const [syncError, setSyncError] = useState<string>('')
-  const [showFormats, setShowFormats] = useState(false)
 
   // 输入即解析：行集合为唯一数据源，逐行转换为标签
   const result = useMemo(() => parseText(lines.join('\n')), [lines])
@@ -342,65 +300,14 @@ export default function TextCreator({
 
   return (
     <div>
-      <div className="flex items-start justify-between">
-        <div>
-          <h1 className="mt-1 font-headline-lg text-headline-lg font-semibold">
-            {t('textCreator.title')}
-          </h1>
-          <p className="mt-1 max-w-xl font-body-md text-body-md text-on-surface-variant">
-            {t('textCreator.subtitle')}
-          </p>
-        </div>
-        <div className="flex gap-2">
-          <button
-            onClick={() => {
-              log.info('parse.load-example', '载入示例数据')
-              setLines(EXAMPLE.split('\n'))
-              setDraft('')
-              setEditingIdx(null)
-            }}
-            className="flex items-center gap-1.5 rounded-lg border border-outline-variant px-3 py-2 font-label-md text-label-md text-on-surface-variant transition-colors hover:bg-surface-container-high hover:text-on-surface"
-          >
-            <span className="material-symbols-outlined text-base">auto_fix_high</span>
-            {t('textCreator.loadExample')}
-            <span className="font-label-mono text-label-mono text-outline">⌥E</span>
-          </button>
-          <button
-            onClick={() =>
-              setShowFormats((v) => {
-                log.info('parse.toggle-formats', '切换格式说明', { show: !v })
-                return !v
-              })
-            }
-            className="flex items-center gap-1.5 rounded-lg border border-outline-variant px-3 py-2 font-label-md text-label-md text-on-surface-variant transition-colors hover:bg-surface-container-high hover:text-on-surface"
-          >
-            <span className="material-symbols-outlined text-base">help_outline</span>
-            {t('textCreator.formatHelp')}
-            <span className="material-symbols-outlined text-sm">
-              {showFormats ? 'expand_less' : 'expand_more'}
-            </span>
-          </button>
-        </div>
+      <div>
+        <h1 className="mt-1 font-headline-lg text-headline-lg font-semibold">
+          {t('textCreator.title')}
+        </h1>
+        <p className="mt-1 max-w-xl font-body-md text-body-md text-on-surface-variant">
+          {t('textCreator.subtitle')}
+        </p>
       </div>
-
-      {showFormats && (
-        <div className="mt-4 rounded-lg border border-outline-variant bg-surface-container-low p-4">
-          <p className="font-label-mono text-label-mono text-outline">SUPPORTED FORMATS</p>
-          <div className="mt-3 grid grid-cols-2 gap-3 lg:grid-cols-3">
-            {FORMATS.map((f) => (
-              <div key={f.titleKey} className="flex items-start gap-2">
-                <span className="material-symbols-outlined text-base text-primary">{f.icon}</span>
-                <div>
-                  <p className="font-label-md text-label-md font-medium">{t(f.titleKey)}</p>
-                  <p className="font-label-sm text-label-sm text-on-surface-variant">
-                    {t(f.exampleKey)}
-                  </p>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
 
       <div className="mt-4 flex gap-4">
         <div className="min-w-0 flex-1">

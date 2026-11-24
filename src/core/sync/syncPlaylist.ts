@@ -70,8 +70,8 @@ export async function planSync(
     }
 
     // 主候选 + 备选候选：主候选无匹配时逐个搜索验证（金标准闭环）
-    const attempts: Array<{ title: string; artist?: string }> = [
-      { title: query.title, artist: query.artist },
+    const attempts: Array<{ title: string; artist?: string; album?: string }> = [
+      { title: query.title, artist: query.artist, album: query.album },
       ...(query.alternatives ?? []),
     ]
 

@@ -33,6 +33,18 @@ export const LOG_MESSAGE_EN: Record<string, string> = {
   无已保存凭证: 'No saved credential',
   '系统加密不可用，无法解密凭证': 'System encryption unavailable, cannot decrypt credential',
 
+  // --- 凭证保活 ---
+  凭证保活调度已启动: 'Credential keep-alive scheduler started',
+  凭证保活调度已停止: 'Credential keep-alive scheduler stopped',
+  '凭证保活成功，已续期': 'Credential keep-alive succeeded, renewed',
+  凭证保活校验通过: 'Credential keep-alive check passed',
+  凭证已失效: 'Credential expired',
+  '凭证已失效，清除本地登录态': 'Credential expired, local login state cleared',
+  '凭证已续期并保存': 'Credential renewed and saved',
+  '保活检查失败，保持现状': 'Keep-alive check failed, keeping current state',
+  '平台保活失败，下轮重试': 'Platform keep-alive failed, will retry next round',
+  'token 刷新不可用，回退为登录态校验': 'Token refresh unavailable, falling back to login state check',
+
   // --- 扫码登录 ---
   发起扫码登录: 'QR login started',
   二维码票据生成成功: 'QR ticket generated',
@@ -60,8 +72,6 @@ export const LOG_MESSAGE_EN: Record<string, string> = {
   解析完成: 'Parse completed',
   输入格式探测结果: 'Format detected',
   清空输入: 'Input cleared',
-  载入示例数据: 'Example data loaded',
-  切换格式说明: 'Format help toggled',
   点选候选修正字段顺序: 'Candidate picked to fix field order',
 
   // --- 同步计划 ---

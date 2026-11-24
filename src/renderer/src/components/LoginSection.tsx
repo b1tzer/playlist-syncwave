@@ -202,23 +202,6 @@ export default function LoginSection({ platforms, accounts, onAccountChange }: L
                   </button>
                 )}
               </div>
-
-              {account && (
-                <div className="mt-3 flex items-center gap-2 border-t border-outline-variant pt-3 font-label-sm text-label-sm text-on-surface-variant">
-                  <span className="flex items-center gap-1">
-                    <span className="material-symbols-outlined text-sm">bolt</span>
-                    {t('login.syncFreq')}
-                  </span>
-                  <span className="mx-2 h-3 w-px bg-outline-variant" />
-                  <span className="flex items-center gap-1">
-                    <span className="material-symbols-outlined text-sm">sync_lock</span>
-                    {t('login.credentialNote')}
-                  </span>
-                  <span className="ml-auto font-label-mono text-label-mono text-outline">
-                    AUTO-REFRESH
-                  </span>
-                </div>
-              )}
             </div>
           )
         })}

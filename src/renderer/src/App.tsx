@@ -57,6 +57,20 @@ export default function App() {
       })
   }, [])
 
+  // 主进程保活调度可能导致凭证续期或失效，收到广播后重新查询该平台登录态
+  useEffect(() => {
+    const off = window.electronAPI.platforms.onAccountsChanged((platform) => {
+      log.info('app.account-changed', '平台账号状态变化，重新查询登录态', { platform })
+      window.electronAPI.platforms
+        .loginStatus(platform)
+        .then((account) => setAccounts((prev) => ({ ...prev, [platform]: account })))
+        .catch((e) => {
+          log.error('app.account-refresh-failed', '刷新账号状态失败', e, { platform })
+        })
+    })
+    return off
+  }, [])
+
   const handleAccountChange = (platform: string, account: PlatformAccount | null) => {
     setAccounts((prev) => ({ ...prev, [platform]: account }))
   }

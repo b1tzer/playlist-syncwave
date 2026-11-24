@@ -1,4 +1,4 @@
-import { normalize } from './matchSong'
+import { artistParts, normalize } from './matchSong'
 import type { MatchQuery } from '@core/models/match'
 import type { PlatformSong } from '@core/models/platform'
 
@@ -12,6 +12,14 @@ export type CandidateDisposition =
   | { kind: 'title-only'; candidates: PlatformSong[] }
   | { kind: 'variant' }
 
+/** 歌手串人名交集：feat./多人名顿号切分后任一人名归一化精确相等即视为同一歌手 */
+function artistMatch(queryArtist: string | undefined, candidateArtist: string): boolean {
+  if (!queryArtist) return false
+  const queryParts = artistParts(queryArtist)
+  const candidateParts = artistParts(candidateArtist)
+  return queryParts.some((p) => candidateParts.includes(p))
+}
+
 export function classifyCandidates(
   query: MatchQuery,
   candidates: PlatformSong[],
@@ -22,7 +30,7 @@ export function classifyCandidates(
   const titleMatches = candidates.filter((c) => normalize(c.title) === queryTitle)
 
   if (queryArtist) {
-    const exact = titleMatches.filter((c) => normalize(c.artist) === queryArtist)
+    const exact = titleMatches.filter((c) => artistMatch(queryArtist, c.artist))
     if (exact.length > 0) {
       return { kind: 'exact', songId: pickByDuration(exact, query) }
     }

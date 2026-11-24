@@ -5,7 +5,7 @@ import type {
 } from '@core/models/platform'
 import { SearchError } from '@core/models/sync'
 import type { PlatformModule } from '../meta'
-import { BasePlatformAdapter, type LoginStatusRaw, type QrCheckRaw } from '../base'
+import { BasePlatformAdapter, type KeepAliveRaw, type LoginStatusRaw, type QrCheckRaw } from '../base'
 
 /** NeteaseCloudMusicApi 的模块函数签名（CJS） */
 export type NcmApiFn = (query?: Record<string, unknown>) => Promise<unknown>
@@ -91,6 +91,21 @@ export class NeteaseAdapter extends BasePlatformAdapter {
       userId: pickString(account.id, profile.userId),
       nickname: pickString(profile.nickname),
     }
+  }
+
+  protected async doKeepAlive(cookie: string): Promise<KeepAliveRaw> {
+    // 优先走 login_refresh 续期；扫码登录无 refresh token 时接口报错，回退为登录态校验
+    try {
+      const res = asObject(await callNcm(this.api.login_refresh!, { cookie }))
+      const refreshed = pickString(asObject(res.body).cookie)
+      if (refreshed) return { alive: true, cookie: refreshed }
+    } catch (e) {
+      this.log.debug('keepalive.check', 'token 刷新不可用，回退为登录态校验', {
+        message: e instanceof Error ? e.message : String(e),
+      })
+    }
+    const raw = await this.fetchLoginStatus(cookie)
+    return { alive: Boolean(raw.userId) }
   }
 
   protected async fetchPlaylists(cookie: string, userId: string): Promise<PlatformPlaylist[]> {

@@ -50,9 +50,6 @@ export default function SettingsView() {
       <h1 className="mt-1 font-headline-lg text-headline-lg font-semibold">
         {t('settings.title')}
       </h1>
-      <p className="mt-1 font-body-md text-body-md text-on-surface-variant">
-        {t('settings.subtitle')}
-      </p>
 
       <div className="mt-6 flex flex-col gap-3">
         <SettingRow

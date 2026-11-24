@@ -77,6 +77,12 @@ const api = {
       ipcRenderer.on('sync:progress', listener)
       return () => ipcRenderer.removeListener('sync:progress', listener)
     },
+    /** 账号状态变化（凭证保活续期/失效清除）时由主进程广播，渲染层重新查询该平台 */
+    onAccountsChanged: (callback: (platform: string) => void): (() => void) => {
+      const listener = (_event: unknown, platform: string) => callback(platform)
+      ipcRenderer.on('accounts:changed', listener)
+      return () => ipcRenderer.removeListener('accounts:changed', listener)
+    },
   },
 
   syncHistory: {

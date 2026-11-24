@@ -22,6 +22,12 @@ export interface PlatformAdapter {
   /** 用 cookie 换取账号信息；未登录返回 null */
   getLoginStatus(cookie: string): Promise<PlatformAccount | null>
 
+  /**
+   * 凭证保活：校验登录态是否仍有效，续期成功时返回新凭证。
+   * 定时后台任务调用；网络波动等异常不应误判失效。
+   */
+  keepAlive(credential: string): Promise<KeepAliveResult>
+
   /** 拉取用户歌单列表 */
   getUserPlaylists(cookie: string, userId: string): Promise<PlatformPlaylist[]>
 
@@ -62,6 +68,20 @@ export interface QrCheckRaw {
 export interface LoginStatusRaw {
   userId?: string
   nickname?: string
+}
+
+/** 保活原语原始结果：平台续期成功时返回新凭证 */
+export interface KeepAliveRaw {
+  /** 凭证是否仍有效（false 表示登录态已失效） */
+  alive: boolean
+  /** 续期后的新凭证；凭证无变化时为 undefined */
+  cookie?: string
+}
+
+/** 保活结果：模板方法统一返回，主进程据此更新凭证或清除登录态 */
+export interface KeepAliveResult {
+  alive: boolean
+  cookie?: string
 }
 
 /**
@@ -135,6 +155,34 @@ export abstract class BasePlatformAdapter implements PlatformAdapter {
       this.log.debug('login.status', '查询登录状态', { userId: raw.userId, nickname })
       return { platform: this.platform, userId: raw.userId, nickname }
     })
+  }
+
+  async keepAlive(credential: string): Promise<KeepAliveResult> {
+    // 定时后台任务，完成日志降为 debug
+    return this.log.time(
+      'keepalive.check',
+      async () => {
+        try {
+          const raw = await this.doKeepAlive(credential)
+          if (!raw.alive) {
+            this.log.warn('keepalive.check', '凭证已失效')
+          } else if (raw.cookie) {
+            this.log.info('keepalive.check', '凭证保活成功，已续期')
+          } else {
+            this.log.debug('keepalive.check', '凭证保活校验通过')
+          }
+          return { alive: raw.alive, cookie: raw.cookie }
+        } catch (e) {
+          // 网络波动等异常不应误判失效：保持现状，等待下一轮重试
+          this.log.warn('keepalive.check', '保活检查失败，保持现状', {
+            message: e instanceof Error ? e.message : String(e),
+          })
+          return { alive: true }
+        }
+      },
+      undefined,
+      'debug',
+    )
   }
 
   async getUserPlaylists(credential: string, userId: string): Promise<PlatformPlaylist[]> {
@@ -238,6 +286,19 @@ export abstract class BasePlatformAdapter implements PlatformAdapter {
     keyword: string,
     limit: number,
   ): Promise<PlatformSong[]>
+
+  // ==============================
+  // 保活原语（默认仅校验登录态，平台可覆写实现真正续期）
+  // ==============================
+
+  /**
+   * 保活原语：默认通过查询登录态校验凭证是否仍有效（不做续期）。
+   * 平台可覆写实现真正续期（如 login_refresh），续期成功后返回新 cookie。
+   */
+  protected async doKeepAlive(credential: string): Promise<KeepAliveRaw> {
+    const raw = await this.fetchLoginStatus(credential)
+    return { alive: Boolean(raw.userId) }
+  }
 
   // ==============================
   // 写能力原语（默认不支持，按 capabilities 覆写）

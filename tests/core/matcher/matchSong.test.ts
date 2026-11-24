@@ -51,13 +51,12 @@ describe('findBestMatch — 匹配评分（FR-3）', () => {
     expect(r!.score).toBeLessThan(0.9)
   })
 
-  it('标题变体（Live/括号）可匹配，但分数低于精确匹配', () => {
+  it('标题变体（Live/括号）：query 无标记选原版，query 带标记选对应版本', () => {
     const candidates = [jay('1', '晴天'), jay('2', '晴天 (Live)')]
     const exact = findBestMatch(q('晴天'), candidates)
     const variant = findBestMatch(q('晴天 (Live)'), candidates)
     expect(exact!.candidate.id).toBe('1')
     expect(variant!.candidate.id).toBe('2')
-    expect(exact!.score).toBeGreaterThan(variant!.score)
   })
 
   it('从多个候选中返回最高分', () => {
@@ -89,5 +88,84 @@ describe('findBestMatch — 匹配评分（FR-3）', () => {
     const r = findBestMatch(q('晴天', '周杰伦'), [jay('1', '晴天')])
     expect(r!.reasons.length).toBeGreaterThan(0)
     expect(r!.reasons.some((x) => x.includes('title'))).toBe(true)
+  })
+})
+
+describe('findBestMatch — feat/多歌手归一化（T8.1）', () => {
+  it('歌手含 feat. 变体：主歌手精确 → 歌手精确加分', () => {
+    const r = findBestMatch(q('爱一点', '莫艳琳'), [
+      { id: '1', title: '爱一点', artist: '莫艳琳 feat. 陈洁仪' },
+    ])
+    expect(r!.score).toBeGreaterThanOrEqual(0.95)
+    expect(r!.reasons).toContain('artist-exact')
+  })
+
+  it('多人名顿号连接：query 命中任一人名 → 歌手精确加分', () => {
+    const r = findBestMatch(q('屋顶', '温岚'), [
+      { id: '1', title: '屋顶', artist: '周杰伦、温岚' },
+    ])
+    expect(r!.score).toBeGreaterThanOrEqual(0.95)
+    expect(r!.reasons).toContain('artist-exact')
+  })
+
+  it('歌手串人名无交集 → 不加歌手分', () => {
+    const r = findBestMatch(q('爱一点', '王力宏'), [
+      { id: '1', title: '爱一点', artist: '莫艳琳 feat. 陈洁仪' },
+    ])
+    expect(r!.score).toBeLessThan(0.9)
+  })
+})
+
+describe('findBestMatch — 版本标记消歧（T8.2）', () => {
+  it('query 带版本标记：同标记候选优先', () => {
+    const r = findBestMatch(q('晴天 (Live)'), [
+      jay('1', '晴天 (Remix)'),
+      jay('2', '晴天 (Live)'),
+    ])
+    expect(r!.candidate.id).toBe('2')
+    expect(r!.reasons).toContain('version-match')
+  })
+
+  it('query 带版本标记：异标记候选降权，无标记候选胜出', () => {
+    const r = findBestMatch(q('晴天 (Live)'), [
+      jay('1', '晴天 (Remix)'),
+      jay('2', '晴天'),
+    ])
+    expect(r!.candidate.id).toBe('2')
+  })
+
+  it('版本词全角/大小写归一化仍可识别', () => {
+    const r = findBestMatch(q('晴天（ＬＩＶＥ）'), [jay('1', '晴天 (Live)')])
+    expect(r!.reasons).toContain('version-match')
+  })
+})
+
+describe('findBestMatch — 专辑因子（T8.3）', () => {
+  it('专辑精确匹配 → album-exact 加分', () => {
+    const r = findBestMatch(
+      { title: '晴天', artist: '周杰伦', album: '叶惠美' },
+      [
+        { id: '1', title: '晴天', artist: '周杰伦', album: '范特西' },
+        { id: '2', title: '晴天', artist: '周杰伦', album: '叶惠美' },
+      ],
+    )
+    expect(r!.candidate.id).toBe('2')
+    expect(r!.reasons).toContain('album-exact')
+  })
+
+  it('专辑部分包含 → album-partial 加分', () => {
+    const r = findBestMatch(
+      { title: '晴天', artist: '周杰伦', album: 'Greatest Hits' },
+      [{ id: '1', title: '晴天', artist: '周杰伦', album: 'Greatest Hits 2010' }],
+    )
+    expect(r!.reasons).toContain('album-partial')
+  })
+
+  it('query 无专辑：行为不变', () => {
+    const r = findBestMatch(q('晴天', '周杰伦'), [
+      { id: '1', title: '晴天', artist: '周杰伦', album: '叶惠美' },
+    ])
+    expect(r!.score).toBeCloseTo(0.95)
+    expect(r!.reasons).not.toContain('album-exact')
   })
 })

@@ -266,6 +266,26 @@ tests/
 - **顺带清理**：删除上轮遗漏的同类装饰标签——SyncCenter「Hub Engine v2.4 / DAEMON ONLINE」、LoginSection「AUTHENTICATION VAULT / SQLite AES-256…」、SettingsView「PREFERENCES LOCAL ONLY」。
 - **待办**：手工验收窗口缩放各页面铺满效果。
 
+### T8 — 匹配引擎增强（对标第三方：专辑因子 / feat 归一化 / 版本标记消歧）
+> 背景：第三方（Soundiiz/TuneMyMusic 等）匹配均基于「标题+歌手+专辑+时长」多因子；本项目此前缺专辑因子、feat./多歌手变体归一化、括号版本标记（Live/Remix/Cover）排序。候选重选 UI（ConfirmSyncDialog）与人工映射写回（confirm-sync → saveConfirmedMapping）已闭环，本轮不动；低置信度不自动选（threshold 0.6）维持现状。
+
+**验收标准**
+1. 专辑因子：`MatchQuery` 新增 `album?`；query 带专辑且候选专辑归一化精确相等 → +0.05（album-exact），部分包含 → +0.02（album-partial）；query 无专辑时行为不变。
+2. feat/多歌手归一化：歌手串按 `feat./ft./featuring/&/＆/,/，/;/；/、` 切分为多个人名（先 normalize 整串再切分），query 与候选任一人名精确相等即视为歌手匹配；`classifyCandidates` 金标准同口径（feat 变体视为同一歌手 → exact 自动选，不再进手动面板）。
+3. 版本标记消歧：提取标题括号内版本词（live/remix/remastered/cover/instrumental/acoustic/unplugged/dj/radio edit/伴奏/现场/翻唱/纯音乐）；query 与候选同标记 +0.08（version-match）、异标记 −0.05（version-mismatch）；无标记方不受影响。
+4. 现有测试 2 项断言按需求演进更新（计划内，非改测试过测）：feat 断言 title-only → exact；「标题变体分数低于精确」跨 query 分数比较改为各自选中正确候选（版本标记使「query 带标记 + 候选同标记且标题逐字一致」成为最强信号 0.86，跨 query 分数比较无业务含义）。其余全部保持通过；全量 test + typecheck + lint 通过。
+
+**边界情况**：歌手名含斜杠（乐队名 `Weird Fishes/Arpeggi`）不切分；版本词在标题非括号处（如 `晴天现场版` 无括号）不误提取；版本词大小写/全角归一化；`(Live in Taipei)` 命中 live 词根。
+
+**实施拆分**：T8.1 feat/多歌手归一化 + 金标准口径 → T8.2 版本标记消歧 → T8.3 专辑因子 + 查询透传。均 TDD。
+
+**实际结果（T8 全部完成 ✅）**：
+- `matchSong.ts`：新增 `artistParts`（先 normalize 整串再按 `feat./ft./featuring/&/,/;/、` 切分，斜杠不切防乐队名误拆）与 `extractVersionTag`（括号内版本词表，长词先于短词，如 remastered 先于 remaster）；评分新增专辑因子（exact +0.05 / partial +0.02）、版本标记信号（同标记 +0.08 version-match / 异标记 −0.05 version-mismatch）、歌手比对改为人名交集（exact +0.15 / partial +0.05）。
+- `exactMatch.ts`：金标准歌手判定改用 `artistParts` 交集（feat./多人名顿号变体视为同一歌手 → exact 自动选，不再进手动面板）。
+- `models/match.ts`：`MatchQuery` 新增 `album?`；`syncPlaylist.ts` attempts 透传 album（跨平台歌单同步时专辑因子生效，文本场景 album 缺省不受影响）。
+- TDD：先写 9 项新用例 + 2 项计划内断言演进（红 10 项）→ 实现转绿。全量 207 项测试、lint 通过；本次改动文件 typecheck 无误。
+- 注：typecheck 现存 3 个错误（keepAliveService.ts / platforms/base.ts / App.tsx）来自工作区其他未提交的「凭证保活」改动，与本任务无关，未处理。
+
 | 风险 | 缓解 |
 |---|---|
 | 平台 API 变更/风控 | 适配器接口解耦；限速 + 指数退避；文件导入作为降级通道 |

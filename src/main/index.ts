@@ -10,6 +10,7 @@ import { logCenter } from './logging/logCenter'
 import { upsertSyncTask, listSyncTasks, removeSyncTask, clearSyncTasks } from './syncHistoryService'
 import { getSetting, setSetting, getAllSettings } from './settingsService'
 import { saveConfirmedMapping, clearMappings, mappingStats, findMappings } from './mappingService'
+import { startKeepAliveScheduler, stopKeepAliveScheduler } from './keepAliveService'
 import { getDatabase } from './appDatabase'
 import type { SyncTaskRecord, SyncChoice } from '@core/models/sync'
 
@@ -39,6 +40,7 @@ process.on('unhandledRejection', (reason) => {
 
 app.on('before-quit', () => {
   log.info('app.before-quit', '应用即将退出')
+  stopKeepAliveScheduler()
   logCenter.flush()
 })
 
@@ -68,6 +70,8 @@ app.whenReady().then(() => {
       })
     })
   }
+  // 凭证保活：应用就绪后立即执行一轮并进入周期调度
+  startKeepAliveScheduler()
 })
 
 function createWindow(): void {

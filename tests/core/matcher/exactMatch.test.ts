@@ -88,9 +88,27 @@ describe('classifyCandidates — 金标准判定', () => {
     expect(r.kind).toBe('variant')
   })
 
-  it('标题相同但歌手名有括号变体（如 feat.）也视为同歌不同作者候选', () => {
+  it('歌手名含 feat. 变体：主歌手精确即视为同一歌手 → exact 自动选', () => {
     const r = classifyCandidates(
       { title: '爱一点', artist: '莫艳琳' },
+      [song('1', '爱一点', '莫艳琳 feat. 陈洁仪')],
+    )
+    expect(r.kind).toBe('exact')
+    if (r.kind === 'exact') expect(r.songId).toBe('1')
+  })
+
+  it('多人名顿号连接：query 命中任一歌手 → exact 自动选', () => {
+    const r = classifyCandidates(
+      { title: '屋顶', artist: '周杰伦' },
+      [song('1', '屋顶', '周杰伦、温岚')],
+    )
+    expect(r.kind).toBe('exact')
+    if (r.kind === 'exact') expect(r.songId).toBe('1')
+  })
+
+  it('歌手串人名无交集 → 仍为 title-only 手动选择', () => {
+    const r = classifyCandidates(
+      { title: '爱一点', artist: '王力宏' },
       [song('1', '爱一点', '莫艳琳 feat. 陈洁仪')],
     )
     expect(r.kind).toBe('title-only')
