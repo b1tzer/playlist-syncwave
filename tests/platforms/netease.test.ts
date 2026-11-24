@@ -168,4 +168,30 @@ describe('NeteaseAdapter — 映射契约', () => {
     await new NeteaseAdapter(api).addSongsToPlaylist('c', '99', [])
     expect(fn).not.toHaveBeenCalled()
   })
+
+  it('重命名歌单：透传歌单 id 与新名称', async () => {
+    const fn = vi.fn(async () => ({ body: { code: 200 } }))
+    const api = makeApi({ playlist_name_update: fn })
+    await new NeteaseAdapter(api).renamePlaylist('c', '99', '新名字')
+    expect(fn).toHaveBeenCalledWith({ id: '99', name: '新名字', cookie: 'c' })
+  })
+
+  it('删除歌单：透传歌单 id', async () => {
+    const fn = vi.fn(async () => ({ body: { code: 200 } }))
+    const api = makeApi({ playlist_delete: fn })
+    await new NeteaseAdapter(api).deletePlaylist('c', '99')
+    expect(fn).toHaveBeenCalledWith({ id: '99', cookie: 'c' })
+  })
+
+  it('移除歌曲：ids 逗号拼接透传，空列表跳过', async () => {
+    const fn = vi.fn(async () => ({ body: { code: 200 } }))
+    const api = makeApi({ playlist_track_delete: fn })
+    await new NeteaseAdapter(api).removeSongsFromPlaylist('c', '99', ['1', '2', '3'])
+    expect(fn).toHaveBeenCalledWith({ id: '99', ids: '1,2,3', cookie: 'c' })
+
+    const fn2 = vi.fn()
+    const api2 = makeApi({ playlist_track_delete: fn2 })
+    await new NeteaseAdapter(api2).removeSongsFromPlaylist('c', '99', [])
+    expect(fn2).not.toHaveBeenCalled()
+  })
 })

@@ -211,6 +211,93 @@ ipcMain.handle('platform:playlist-songs', (_event, platform: string, playlistId:
   ),
 )
 
+/** 歌单管理类 IPC 的统一前置：已登录平台 + 凭证 */
+async function withPlaylistCredential(platform: string) {
+  const services = getPlatform(platform)
+  const credential = services.getCredential()
+  if (!credential) throw new Error('尚未登录')
+  const adapter = await resolveAdapter(platform)
+  return { credential, adapter }
+}
+
+ipcMain.handle('platform:search-songs', (_event, platform: string, keyword: string, limit?: number) =>
+  ipcLog.time(
+    'platform.search-songs',
+    async () => {
+      const { credential, adapter } = await withPlaylistCredential(platform)
+      // 限速与风控由平台适配器/同步引擎负责；这里仅约束单次数量
+      const capped = Math.min(Math.max(1, Math.floor(limit ?? 30)), 50)
+      return adapter.searchSongs(credential, keyword, capped)
+    },
+    { platform, keyword },
+  ),
+)
+
+ipcMain.handle(
+  'platform:playlist-rename',
+  (_event, platform: string, playlistId: string, name: string) =>
+    ipcLog.time(
+      'platform.playlist-rename',
+      async () => {
+        if (typeof name !== 'string' || !name.trim()) throw new Error('歌单名不能为空')
+        const { credential, adapter } = await withPlaylistCredential(platform)
+        await adapter.renamePlaylist(credential, playlistId, name.trim())
+        ipcLog.info('platform.playlist-rename', '歌单重命名完成', { platform, playlistId })
+      },
+      { platform, playlistId },
+    ),
+)
+
+ipcMain.handle('platform:playlist-delete', (_event, platform: string, playlistId: string) =>
+  ipcLog.time(
+    'platform.playlist-delete',
+    async () => {
+      const { credential, adapter } = await withPlaylistCredential(platform)
+      await adapter.deletePlaylist(credential, playlistId)
+      ipcLog.info('platform.playlist-delete', '歌单删除完成', { platform, playlistId })
+    },
+    { platform, playlistId },
+  ),
+)
+
+ipcMain.handle(
+  'platform:playlist-remove-songs',
+  (_event, platform: string, playlistId: string, songIds: string[]) =>
+    ipcLog.time(
+      'platform.playlist-remove-songs',
+      async () => {
+        if (!Array.isArray(songIds)) throw new Error('无效的歌曲列表')
+        const { credential, adapter } = await withPlaylistCredential(platform)
+        await adapter.removeSongsFromPlaylist(credential, playlistId, songIds)
+        ipcLog.info('platform.playlist-remove-songs', '移除歌曲完成', {
+          platform,
+          playlistId,
+          count: songIds.length,
+        })
+      },
+      { platform, playlistId, count: Array.isArray(songIds) ? songIds.length : 0 },
+    ),
+)
+
+ipcMain.handle(
+  'platform:playlist-add-songs',
+  (_event, platform: string, playlistId: string, songIds: string[]) =>
+    ipcLog.time(
+      'platform.playlist-add-songs',
+      async () => {
+        if (!Array.isArray(songIds)) throw new Error('无效的歌曲列表')
+        const { credential, adapter } = await withPlaylistCredential(platform)
+        await adapter.addSongsToPlaylist(credential, playlistId, songIds)
+        ipcLog.info('platform.playlist-add-songs', '添加歌曲完成', {
+          platform,
+          playlistId,
+          count: songIds.length,
+        })
+      },
+      { platform, playlistId, count: Array.isArray(songIds) ? songIds.length : 0 },
+    ),
+)
+
 /** 待确认的同步会话：choice-needed 后缓存 plan，等待用户选择 */
 const pendingSyncs = new Map<
   string,
@@ -302,69 +389,102 @@ ipcMain.handle(
 
 // --- 同步历史（SQLite 持久化）---
 
-ipcMain.handle('sync-history:list', () => {
-  ipcLog.debug('sync-history.list', '查询同步历史')
-  return listSyncTasks()
-})
+ipcMain.handle('sync-history:list', () =>
+  ipcLog.time('sync-history.list', async () => listSyncTasks(), undefined, 'debug'),
+)
 
-ipcMain.handle('sync-history:upsert', (_event, task: SyncTaskRecord) => {
-  ipcLog.debug('sync-history.upsert', '写入同步任务', {
-    taskId: task.id,
-    status: task.status,
-    progress: task.progress,
-  })
-  upsertSyncTask(task)
-})
+ipcMain.handle('sync-history:upsert', (_event, task: SyncTaskRecord) =>
+  ipcLog.time(
+    'sync-history.upsert',
+    async () => {
+      upsertSyncTask(task)
+    },
+    { taskId: task.id, status: task.status, progress: task.progress },
+    // 进度更新时高频写入，完成日志降为 debug
+    'debug',
+  ),
+)
 
-ipcMain.handle('sync-history:remove', (_event, id: string) => {
-  ipcLog.info('sync-history.remove', '删除同步任务', { taskId: id })
-  removeSyncTask(id)
-})
+ipcMain.handle('sync-history:remove', (_event, id: string) =>
+  ipcLog.time(
+    'sync-history.remove',
+    async () => {
+      removeSyncTask(id)
+    },
+    { taskId: id },
+  ),
+)
 
-ipcMain.handle('sync-history:clear', () => {
-  ipcLog.info('sync-history.clear', '清空同步历史')
-  clearSyncTasks()
-})
+ipcMain.handle('sync-history:clear', () =>
+  ipcLog.time('sync-history.clear', async () => {
+    clearSyncTasks()
+  }),
+)
 
 // --- 应用设置（SQLite 持久化）---
 
-ipcMain.handle('settings:get-all', () => {
-  ipcLog.debug('settings.get-all', '读取全部设置')
-  return getAllSettings()
-})
+ipcMain.handle('settings:get-all', () =>
+  ipcLog.time('settings.get-all', async () => getAllSettings(), undefined, 'debug'),
+)
 
-ipcMain.handle('settings:set', (_event, key: string, value: unknown) => {
-  ipcLog.debug('settings.set', '写入设置', { key })
-  if (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean') {
-    throw new Error('不支持的设置值类型')
-  }
-  setSetting(key, value)
-})
+ipcMain.handle('settings:set', (_event, key: string, value: unknown) =>
+  ipcLog.time(
+    'settings.set',
+    async () => {
+      if (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean') {
+        throw new Error('不支持的设置值类型')
+      }
+      setSetting(key, value)
+    },
+    { key },
+    'debug',
+  ),
+)
 
-ipcMain.handle('settings:get', (_event, key: string, fallback: unknown) => {
-  if (
-    typeof fallback !== 'string' &&
-    typeof fallback !== 'number' &&
-    typeof fallback !== 'boolean'
-  ) {
-    throw new Error('不支持的默认值类型')
-  }
-  return getSetting(key, fallback)
-})
+ipcMain.handle('settings:get', (_event, key: string, fallback: unknown) =>
+  ipcLog.time(
+    'settings.get',
+    async () => {
+      if (
+        typeof fallback !== 'string' &&
+        typeof fallback !== 'number' &&
+        typeof fallback !== 'boolean'
+      ) {
+        throw new Error('不支持的默认值类型')
+      }
+      return getSetting(key, fallback)
+    },
+    { key },
+    'debug',
+  ),
+)
 
 // --- 歌曲映射缓存 ---
 
-ipcMain.handle('mappings:confirm', (_event, platform: string, choice: SyncChoice, songId: string) => {
-  ipcLog.debug('mappings.confirm', '记录人工确认映射', { platform, songId })
-  saveConfirmedMapping(platform, choice, songId)
-})
+ipcMain.handle('mappings:confirm', (_event, platform: string, choice: SyncChoice, songId: string) =>
+  ipcLog.time(
+    'mappings.confirm',
+    async () => {
+      saveConfirmedMapping(platform, choice, songId)
+    },
+    { platform, songId },
+    'debug',
+  ),
+)
 
-ipcMain.handle('mappings:clear', (_event, platform: string) => {
-  ipcLog.info('mappings.clear', '清空平台映射缓存', { platform })
-  clearMappings(platform)
-})
+ipcMain.handle('mappings:clear', (_event, platform: string) =>
+  ipcLog.time(
+    'mappings.clear',
+    async () => {
+      clearMappings(platform)
+    },
+    { platform },
+  ),
+)
 
-ipcMain.handle('mappings:stats', () => mappingStats())
+ipcMain.handle('mappings:stats', () =>
+  ipcLog.time('mappings.stats', async () => mappingStats(), undefined, 'debug'),
+)
 
 ipcMain.handle(
   'platform:confirm-sync',

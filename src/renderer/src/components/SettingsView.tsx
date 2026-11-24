@@ -103,8 +103,14 @@ export default function SettingsView() {
             onClick={() => {
               setAutoLaunch((v) => {
                 const next = !v
-                window.electronAPI.settings.set('autoLaunch', next).catch(() => {})
-                log.info('settings.auto-launch', '切换开机启动', { enabled: next })
+                window.electronAPI.settings
+                  .set('autoLaunch', next)
+                  .then(() => log.info('settings.auto-launch', '开机启动设置已保存', { enabled: next }))
+                  .catch((e) =>
+                    log.error('settings.auto-launch', '开机启动设置保存失败', e, {
+                      enabled: next,
+                    }),
+                  )
                 return next
               })
             }}
@@ -130,8 +136,14 @@ export default function SettingsView() {
             onClick={() => {
               setReportEnabled((v) => {
                 const next = !v
-                window.electronAPI.settings.set('reportEnabled', next).catch(() => {})
-                log.info('settings.log-report', '切换日志上报', { enabled: next })
+                window.electronAPI.settings
+                  .set('reportEnabled', next)
+                  .then(() => log.info('settings.log-report', '日志上报设置已保存', { enabled: next }))
+                  .catch((e) =>
+                    log.error('settings.log-report', '日志上报设置保存失败', e, {
+                      enabled: next,
+                    }),
+                  )
                 return next
               })
             }}

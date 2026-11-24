@@ -14,6 +14,9 @@ import {
   type TranslationKey,
   type TranslateParams,
 } from './translations'
+import { createRendererLogger } from '../logging/rendererLogger'
+
+const log = createRendererLogger('renderer.i18n')
 
 interface I18nContextValue {
   locale: Locale
@@ -36,7 +39,9 @@ export function I18nProvider({ children }: { children: ReactNode }) {
       .then((v) => {
         if (!cancelled) setLocaleState(normalizeLocale(v))
       })
-      .catch(() => {})
+      .catch((e) => {
+        log.warn('i18n.restore-failed', '恢复语言偏好失败', e)
+      })
     return () => {
       cancelled = true
     }
@@ -49,7 +54,10 @@ export function I18nProvider({ children }: { children: ReactNode }) {
 
   const setLocale = useCallback((next: Locale) => {
     setLocaleState(next)
-    window.electronAPI.settings.set('language', next).catch(() => {})
+    window.electronAPI.settings
+      .set('language', next)
+      .then(() => log.info('i18n.language-saved', '语言偏好已保存', { locale: next }))
+      .catch((e) => log.error('i18n.language-save-failed', '语言偏好保存失败', e, { locale: next }))
   }, [])
 
   const t = useCallback(

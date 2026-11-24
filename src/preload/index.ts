@@ -38,6 +38,19 @@ const api = {
       ipcRenderer.invoke('platform:user-playlists', platform),
     playlistSongs: (platform: string, playlistId: string): Promise<PlatformSong[]> =>
       ipcRenderer.invoke('platform:playlist-songs', platform, playlistId),
+    searchSongs: (platform: string, keyword: string, limit?: number): Promise<PlatformSong[]> =>
+      ipcRenderer.invoke('platform:search-songs', platform, keyword, limit),
+    renamePlaylist: (platform: string, playlistId: string, name: string): Promise<void> =>
+      ipcRenderer.invoke('platform:playlist-rename', platform, playlistId, name),
+    deletePlaylist: (platform: string, playlistId: string): Promise<void> =>
+      ipcRenderer.invoke('platform:playlist-delete', platform, playlistId),
+    addSongsToPlaylist: (platform: string, playlistId: string, songIds: string[]): Promise<void> =>
+      ipcRenderer.invoke('platform:playlist-add-songs', platform, playlistId, songIds),
+    removeSongsFromPlaylist: (
+      platform: string,
+      playlistId: string,
+      songIds: string[],
+    ): Promise<void> => ipcRenderer.invoke('platform:playlist-remove-songs', platform, playlistId, songIds),
     syncPlaylist: (
       platform: string,
       queries: MatchQuery[],

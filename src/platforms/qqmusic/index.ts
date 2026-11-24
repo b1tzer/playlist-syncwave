@@ -244,23 +244,59 @@ export class QqMusicAdapter implements PlatformAdapter {
   }
 
   async addSongsToPlaylist(token: string, playlistId: string, songIds: string[]): Promise<void> {
-    return log.time('playlist.add-songs', async () => {
+    await this.updatePlaylistTracks(token, playlistId, 'add', songIds, 'playlist.add-songs', '批量添加歌曲成功')
+  }
+
+  /** 歌曲批量增删共用的分批写入（接口限制每批 ≤100 首） */
+  private async updatePlaylistTracks(
+    token: string,
+    playlistId: string,
+    op: 'add' | 'del',
+    songIds: string[],
+    event: string,
+    doneMessage: string,
+  ): Promise<void> {
+    return log.time(event, async () => {
       if (songIds.length === 0) return
-      // 接口限制每批最多 100 首
-      let added = 0
+      let changed = 0
       for (let i = 0; i < songIds.length; i += 100) {
         const batch = songIds.slice(i, i + 100)
         const payload = {
           tid: Number(playlistId),
-          op: 'add',
+          op,
           songs: batch.map((id) => ({ id: Number(id), type: 0 })),
         }
         await this.call('POST', '/user/playlist/tracks', token, payload)
-        added += batch.length
-        log.debug('playlist.add-songs', '写入一批歌曲', { playlistId, batch: batch.length })
+        changed += batch.length
+        log.debug(event, '写入一批歌曲', { playlistId, batch: batch.length })
       }
-      log.info('playlist.add-songs', '批量添加歌曲成功', { playlistId, count: added })
+      log.info(event, doneMessage, { playlistId, count: changed })
     })
+  }
+
+  async renamePlaylist(token: string, playlistId: string, name: string): Promise<void> {
+    return log.time('playlist.rename', async () => {
+      await this.call('POST', '/user/playlist/rename', token, {
+        tid: Number(playlistId),
+        name,
+      })
+      log.info('playlist.rename', '重命名歌单成功', { playlistId, name })
+    })
+  }
+
+  async deletePlaylist(token: string, playlistId: string): Promise<void> {
+    return log.time('playlist.delete', async () => {
+      await this.call('POST', '/user/playlist/delete', token, { tid: Number(playlistId) })
+      log.info('playlist.delete', '删除歌单成功', { playlistId })
+    })
+  }
+
+  async removeSongsFromPlaylist(
+    token: string,
+    playlistId: string,
+    songIds: string[],
+  ): Promise<void> {
+    await this.updatePlaylistTracks(token, playlistId, 'del', songIds, 'playlist.remove-songs', '移除歌曲成功')
   }
 }
 

@@ -218,6 +218,25 @@ tests/
 - **测试**：`tests/renderer/i18n.test.ts` 6 项（键集合/占位符一致性、插值、未知键回退、normalizeLocale、LOCALES）；共 171 项全绿；typecheck、lint 通过。
 - 待办：手工验收中英切换即时生效、重启后语言保持、同步历史新旧数据展示。
 
+### T7 — 歌单管理操作（重命名/删除/歌曲增删）✅ 编码完成（手工验收待用户执行）
+- **交付物**：`PlatformAdapter` 扩展歌单管理方法（rename/delete/remove songs）+ 网易云/QQ音乐实现 + 通用 IPC + 「我的歌单」UI 管理操作
+- **验收**：
+  - 歌单可重命名：改后列表即时更新，重启后平台侧仍为新名
+  - 歌单可删除：两步确认（点击「删除歌单」→「确认删除？」），删除后从列表消失
+  - 歌单内歌曲可单首移除：点击行尾移除按钮即时生效
+  - 歌单内可添加歌曲：搜索关键词 → 候选列表 → 点击添加，重复添加不报错
+  - 以上操作仅对 `capabilities.write` 平台显示；未登录或凭证过期时给出明确错误
+- **边界情况**：空歌单名（前端 trim 校验）、QQ音乐歌单名 ≤20 字符（平台限制）、移除/添加空列表跳过、删除当前已打开的选中歌单、跨平台搜索限速（沿用限速策略）、非本人歌单操作失败（平台报错透传）
+- **验证命令**：`npm run test -- platforms` + 手工验收（双平台歌单重命名/删除/增删歌曲）
+- **实际结果**：
+  - 接口：`PlatformAdapter` 追加 `renamePlaylist` / `deletePlaylist` / `removeSongsFromPlaylist`；`BasePlatformAdapter` 同步默认「不支持」实现（插件化架构下新平台可选择性实现）。
+  - 网易云：`playlist_name_update` / `playlist_delete` / `playlist_track_delete`（ids 逗号拼接），错误 code 非 200 抛异常。
+  - QQ音乐：`POST /user/playlist/rename`（body `{tid,name}`）、`/user/playlist/delete`（body `{tid}`）、`/user/playlist/tracks`（`op:'del'`，每批 ≤100，与 add 共抽取 `updatePlaylistTracks` 私有方法）。
+  - IPC：新增通用 `platform:search-songs` / `playlist-rename` / `playlist-delete` / `playlist-add-songs` / `playlist-remove-songs`（统一 `withPlaylistCredential` 前置校验登录，search 单次 ≤50 条防滥用）；preload 白名单同步暴露。
+  - UI（PlaylistSection）：歌单详情头部支持重命名（inline 编辑，Enter 保存 / Esc 取消）；删除歌单两步确认；歌曲行 hover 显示移除按钮；「添加歌曲」搜索区（搜索 → 候选列表 → 逐首添加，添加后候选移除并同步到本地列表）。所有管理操作仅 `capabilities.write` 平台显示。i18n 中英双语补齐 12 键。
+  - TDD：先写 6 项适配器测试（netease 3 + qqmusic 3）红 → 实现转绿；全量 177 项测试、typecheck、lint、build 全部通过。
+- **待办**：手工验收（双平台歌单重命名/删除/移除歌曲/搜索添加歌曲）。
+
 | 风险 | 缓解 |
 |---|---|
 | 平台 API 变更/风控 | 适配器接口解耦；限速 + 指数退避；文件导入作为降级通道 |

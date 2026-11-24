@@ -218,4 +218,50 @@ describe('QqMusicAdapter — serverless HTTP 映射', () => {
     const adapter = new QqMusicAdapter(handler, env)
     await expect(adapter.getUserPlaylists('bad', '1')).rejects.toThrow()
   })
+
+  it('重命名歌单：POST /user/playlist/rename，body { tid, name }', async () => {
+    const { handler, calls } = makeHandler((method, url, body) => {
+      expect(method).toBe('POST')
+      expect(url.pathname).toBe('/user/playlist/rename')
+      expect(body).toEqual({ tid: 222, name: '新名字' })
+      return json({ code: 200, data: { changed: true } })
+    })
+    const adapter = new QqMusicAdapter(handler, env)
+    await adapter.renamePlaylist('tok', '222', '新名字')
+    expect(calls[0].headers.get('x-qq-session')).toBe('tok')
+  })
+
+  it('删除歌单：POST /user/playlist/delete，body { tid }', async () => {
+    const { handler, calls } = makeHandler((method, url, body) => {
+      expect(method).toBe('POST')
+      expect(url.pathname).toBe('/user/playlist/delete')
+      expect(body).toEqual({ tid: 222 })
+      return json({ code: 200, data: { deleted: true } })
+    })
+    const adapter = new QqMusicAdapter(handler, env)
+    await adapter.deletePlaylist('tok', '222')
+    expect(calls[0].headers.get('x-qq-session')).toBe('tok')
+  })
+
+  it('移除歌曲：POST /user/playlist/tracks op=del，空列表跳过', async () => {
+    const { handler, calls } = makeHandler((method, url) => {
+      expect(method).toBe('POST')
+      expect(url.pathname).toBe('/user/playlist/tracks')
+      return json({ code: 200, data: { changed: true } })
+    })
+    const adapter = new QqMusicAdapter(handler, env)
+    await adapter.removeSongsFromPlaylist('tok', '222', ['1', '2'])
+    expect(calls[0].body).toEqual({
+      tid: 222,
+      op: 'del',
+      songs: [
+        { id: 1, type: 0 },
+        { id: 2, type: 0 },
+      ],
+    })
+
+    const empty = makeHandler(() => json({ code: 200 }))
+    await new QqMusicAdapter(empty.handler, env).removeSongsFromPlaylist('tok', '222', [])
+    expect(empty.calls.length).toBe(0)
+  })
 })

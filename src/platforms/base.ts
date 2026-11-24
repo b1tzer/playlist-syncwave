@@ -33,6 +33,15 @@ export interface PlatformAdapter {
 
   /** 批量添加歌曲到歌单 */
   addSongsToPlaylist(cookie: string, playlistId: string, songIds: string[]): Promise<void>
+
+  /** 重命名歌单 */
+  renamePlaylist(cookie: string, playlistId: string, name: string): Promise<void>
+
+  /** 删除歌单 */
+  deletePlaylist(cookie: string, playlistId: string): Promise<void>
+
+  /** 从歌单移除歌曲 */
+  removeSongsFromPlaylist(cookie: string, playlistId: string, songIds: string[]): Promise<void>
 }
 
 function unsupported(platform: string, method: string): Error {
@@ -77,5 +86,17 @@ export abstract class BasePlatformAdapter implements PlatformAdapter {
 
   addSongsToPlaylist(_cookie: string, _playlistId: string, _songIds: string[]): Promise<void> {
     return Promise.reject(unsupported(this.platform, 'addSongsToPlaylist'))
+  }
+
+  renamePlaylist(_cookie: string, _playlistId: string, _name: string): Promise<void> {
+    return Promise.reject(unsupported(this.platform, 'renamePlaylist'))
+  }
+
+  deletePlaylist(_cookie: string, _playlistId: string): Promise<void> {
+    return Promise.reject(unsupported(this.platform, 'deletePlaylist'))
+  }
+
+  removeSongsFromPlaylist(_cookie: string, _playlistId: string, _songIds: string[]): Promise<void> {
+    return Promise.reject(unsupported(this.platform, 'removeSongsFromPlaylist'))
   }
 }

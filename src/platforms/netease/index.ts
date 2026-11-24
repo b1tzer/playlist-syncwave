@@ -181,6 +181,46 @@ export class NeteaseAdapter implements PlatformAdapter {
       log.info('playlist.add-songs', '批量添加歌曲成功', { playlistId, count: songIds.length })
     })
   }
+
+  async renamePlaylist(cookie: string, playlistId: string, name: string): Promise<void> {
+    return log.time('playlist.rename', async () => {
+      const res = asObject(await this.api.playlist_name_update!({ id: playlistId, name, cookie }))
+      const body = asObject(res.body)
+      if (body.code !== undefined && Number(body.code) !== 200) {
+        throw new Error(`网易云：重命名歌单失败 code=${String(body.code)}`)
+      }
+      log.info('playlist.rename', '重命名歌单成功', { playlistId, name })
+    })
+  }
+
+  async deletePlaylist(cookie: string, playlistId: string): Promise<void> {
+    return log.time('playlist.delete', async () => {
+      const res = asObject(await this.api.playlist_delete!({ id: playlistId, cookie }))
+      const body = asObject(res.body)
+      if (body.code !== undefined && Number(body.code) !== 200) {
+        throw new Error(`网易云：删除歌单失败 code=${String(body.code)}`)
+      }
+      log.info('playlist.delete', '删除歌单成功', { playlistId })
+    })
+  }
+
+  async removeSongsFromPlaylist(
+    cookie: string,
+    playlistId: string,
+    songIds: string[],
+  ): Promise<void> {
+    return log.time('playlist.remove-songs', async () => {
+      if (songIds.length === 0) return
+      const res = asObject(
+        await this.api.playlist_track_delete!({ id: playlistId, ids: songIds.join(','), cookie }),
+      )
+      const body = asObject(res.body)
+      if (body.code !== undefined && Number(body.code) !== 200) {
+        throw new Error(`网易云：移除歌曲失败 code=${String(body.code)}`)
+      }
+      log.info('playlist.remove-songs', '移除歌曲成功', { playlistId, count: songIds.length })
+    })
+  }
 }
 
 function mapTrack(t: unknown): PlatformSong {
