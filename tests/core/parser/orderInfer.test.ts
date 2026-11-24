@@ -27,18 +27,6 @@ describe('splitQuotedTitle — 书名号锚定', () => {
 })
 
 describe('inferPair — 字段顺序自动判定', () => {
-  it('歌手词典命中右侧 → title-first', () => {
-    expect(inferPair('晴天', '周杰伦').order).toBe('title-first')
-  })
-
-  it('歌手词典命中左侧 → artist-first', () => {
-    expect(inferPair('周杰伦', '晴天').order).toBe('artist-first')
-  })
-
-  it('繁转简后命中词典 → artist-first', () => {
-    expect(inferPair('周杰倫', '晴天').order).toBe('artist-first')
-  })
-
   it('版本词在歌名侧 → title-first', () => {
     expect(inferPair('晴天 (Live)', '周杰伦').order).toBe('title-first')
   })
@@ -58,9 +46,24 @@ describe('inferPair — 字段顺序自动判定', () => {
   })
 
   it('两侧信号相抵 → ambiguous，不误判', () => {
-    // 词典歌手 + 另一侧也是词典歌手名（歌手-歌手），不能随便定序
     const r = inferPair('周杰伦', '蔡依林')
     expect(r.order).toBe('ambiguous')
+  })
+
+  it('无任何信号 → ambiguous（顺序交由搜索验证）', () => {
+    expect(inferPair('晴天', '周杰伦').order).toBe('ambiguous')
+    expect(inferPair('周杰伦', '晴天').order).toBe('ambiguous')
+  })
+
+  it('词根误匹配不作版本词信号：Forever. / Deliver / Recover', () => {
+    expect(inferPair('Forever.', 'Hidden').order).toBe('ambiguous')
+    expect(inferPair('Deliver', 'Hidden').order).toBe('ambiguous')
+    expect(inferPair('Recover', 'Hidden').order).toBe('ambiguous')
+  })
+
+  it('真实版本词仍作歌名侧信号', () => {
+    expect(inferPair('晴天 (Live)', '张三').order).toBe('title-first')
+    expect(inferPair('晴天（Remix）', '张三').order).toBe('title-first')
   })
 })
 
@@ -72,8 +75,11 @@ describe('majorityOrder — 整段一致性投票', () => {
     'ambiguous',
   ]
 
-  it('多数定序（≥80%）→ 返回该顺序', () => {
+  it('多数定序（≥60%）→ 返回该顺序', () => {
     expect(majorityOrder(rows)).toBe('artist-first')
+    expect(majorityOrder(['title-first', 'title-first', 'artist-first', 'ambiguous'])).toBe(
+      'title-first',
+    )
   })
 
   it('样本不足或未达阈值 → undefined', () => {

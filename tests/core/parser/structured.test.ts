@@ -20,13 +20,14 @@ describe('parseText — 结构格式全自动解析（T6.3）', () => {
     ])
   })
 
-  it('m3u：#EXTINF 行提取，字段顺序自动判定', () => {
+  it('m3u：#EXTINF 行提取，默认解读 + 双候选（顺序由搜索验证）', () => {
     const result = parseText('#EXTM3U\n#EXTINF:249,周杰伦 - 晴天\n#EXTINF:243,林宥嘉 - 说谎\nsong.mp3')
     expect(result.format).toBe('m3u')
     expect(result.songs.map((s) => [s.title, s.artist])).toEqual([
-      ['晴天', '周杰伦'],
-      ['说谎', '林宥嘉'],
+      ['周杰伦', '晴天'],
+      ['林宥嘉', '说谎'],
     ])
+    expect(result.songs.every((s) => s.candidates?.length === 2)).toBe(true)
   })
 
   it('LRC 歌词：剥时间戳、过滤元信息行', () => {
@@ -68,5 +69,32 @@ describe('parseText — 结构格式全自动解析（T6.3）', () => {
     expect(result.songs.map((s) => s.title)).toEqual(['晴天', '稻香'])
     expect(result.songs[0].artist).toBeUndefined()
     expect(result.songs[0].confidence).toBeLessThan(0.9)
+  })
+
+  it('CSV 引号转义：字段内含分隔符', () => {
+    const result = parseText('歌名,歌手\n"晴天, 晴",周杰伦\n稻香,周杰伦')
+    expect(result.format).toBe('csv')
+    expect(result.songs.map((s) => [s.title, s.artist])).toEqual([
+      ['晴天, 晴', '周杰伦'],
+      ['稻香', '周杰伦'],
+    ])
+  })
+
+  it('CSV 双引号转义（"" → "）', () => {
+    const result = parseText('歌名,歌手\n"含""引号""歌",周杰伦')
+    expect(result.format).toBe('csv')
+    expect(result.songs[0]).toMatchObject({ title: '含"引号"歌', artist: '周杰伦' })
+  })
+
+  it('CSV 引号包裹普通字段与表头', () => {
+    const result = parseText('"歌名","歌手"\n"晴天","周杰伦"')
+    expect(result.format).toBe('csv')
+    expect(result.songs[0]).toMatchObject({ title: '晴天', artist: '周杰伦' })
+  })
+
+  it('CSV（tab 分隔）引号转义', () => {
+    const result = parseText('歌名\t歌手\n"晴天, 晴"\t周杰伦')
+    expect(result.format).toBe('csv')
+    expect(result.songs[0]).toMatchObject({ title: '晴天, 晴', artist: '周杰伦' })
   })
 })

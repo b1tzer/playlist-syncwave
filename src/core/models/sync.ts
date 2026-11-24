@@ -78,6 +78,8 @@ export interface SyncOptions {
   searchIntervalMs?: number
   /** 单首歌搜索重试次数（仅对可重试错误），默认 2 */
   searchRetries?: number
+  /** 单首歌最大搜索次数预算（主/备选候选 × 关键词），默认 4，防止风控 */
+  maxSearchesPerSong?: number
   /** 进度回调：0~1 */
   onProgress?: (ratio: number, stage: 'matching' | 'adding') => void
 }

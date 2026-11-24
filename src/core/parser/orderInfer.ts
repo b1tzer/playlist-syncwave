@@ -1,8 +1,8 @@
-import { normalize } from '@core/matcher/matchSong'
 import type { FieldOrder } from '@core/models/parse'
-import { ARTIST_LEXICON } from './artistLexicon'
 
-const VERSION_WORD = /(live|remix|cover|demo|acoustic|instrumental|ver\.|伴奏|现场版|纯音乐|演唱会|完整版)/i
+// 英文版本词加词边界（避免 Deliver/Recover/Forever. 词根误匹配）；中文词保持子串匹配
+const VERSION_WORD_EN = /\b(live|remix|cover|demo|acoustic|instrumental|ver\.?)\b/i
+const VERSION_WORD_CN = /(伴奏|现场版|现场|翻唱|纯音乐|演唱会|完整版)/
 // 仅顿号连接的中文人名（2~5 人）；英文逗号/斜杠常见于乐队名与歌名，不作多人名信号
 const MULTI_ARTIST = /^[\u4e00-\u9fff·]{1,6}(?:、[\u4e00-\u9fff·]{1,6}){1,4}$/
 const FEAT = /feat\.|featuring|ft\./i
@@ -12,17 +12,20 @@ function cjkLength(field: string): number {
   return field.match(CJK)?.length ?? 0
 }
 
-/** 单侧信号：该字段作为 title 或 artist 的证据分 */
+/**
+ * 单侧信号：该字段作为 title 或 artist 的证据分。
+ * 字段顺序的最终裁决不依赖本地词典，交由同步阶段的平台搜索验证闭环完成；
+ * 此处仅保留强结构信号（书名号/版本词/多人名/feat/长度）。
+ */
 function signalFor(field: string, role: 'title' | 'artist'): number {
   let score = 0
   if (role === 'title') {
     if (/《.+》/.test(field)) score += 0.4
-    if (VERSION_WORD.test(field)) score += 0.35
+    if (VERSION_WORD_EN.test(field) || VERSION_WORD_CN.test(field)) score += 0.35
     if (cjkLength(field) >= 8) score += 0.1
   } else {
     if (MULTI_ARTIST.test(field)) score += 0.35
     if (FEAT.test(field)) score += 0.3
-    if (ARTIST_LEXICON.has(normalize(field))) score += 0.3
     if (cjkLength(field) <= 3) score += 0.1
   }
   return score
@@ -53,15 +56,26 @@ export function inferPair(first: string, second: string): PairInference {
 
 /**
  * 整段一致性投票：同一来源文本字段顺序基本一致，
- * 多数定序（占比 ≥80% 且样本 ≥2）用于裁决歧义行。
+ * 多数定序（占比 ≥60% 且样本 ≥2）用于裁决歧义行。
  */
 export function majorityOrder(orders: Array<FieldOrder | 'ambiguous'>): FieldOrder | undefined {
   const decided = orders.filter((o): o is FieldOrder => o !== 'ambiguous')
   if (decided.length < 2) return undefined
   const titleFirstCount = decided.filter((o) => o === 'title-first').length
-  if (titleFirstCount / decided.length >= 0.8) return 'title-first'
-  if ((decided.length - titleFirstCount) / decided.length >= 0.8) return 'artist-first'
+  if (titleFirstCount / decided.length >= 0.6) return 'title-first'
+  if ((decided.length - titleFirstCount) / decided.length >= 0.6) return 'artist-first'
   return undefined
+}
+
+/**
+ * 歧义行的默认顺序启发式：
+ * 双字段均无中文（英文 tracklist/m3u 常见「歌手 - 歌名」）→ artist-first；
+ * 其余（中文 App 分享常见「歌名 - 歌手」）→ title-first。
+ * 仅影响预览默认展示，同步阶段仍由备选候选验证闭环裁决。
+ */
+export function defaultOrderForPair(first: string, second: string): FieldOrder {
+  const hasCjk = /[\u4e00-\u9fff]/.test(first) || /[\u4e00-\u9fff]/.test(second)
+  return hasCjk ? 'title-first' : 'artist-first'
 }
 
 /**

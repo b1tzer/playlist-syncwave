@@ -448,6 +448,46 @@ describe('planSync — 备选候选搜索验证（T6.4 闭环）', () => {
     expect(plan.failed).toHaveLength(1)
     expect(plan.failed[0].reason).toBe('no-match')
   })
+
+  it('风控（rate-limited）→ 不尝试备选，直接失败', async () => {
+    const target = makeTarget({})
+    target.searchSongs = vi.fn(async () => {
+      throw new SearchError('操作频繁', false, true)
+    })
+    const plan = await planSync(
+      [
+        {
+          title: '主候选',
+          artist: '某人',
+          alternatives: [{ title: '备选候选', artist: '某人' }],
+        },
+      ],
+      target,
+      { searchIntervalMs: 0, searchRetries: 0 },
+    )
+    expect(plan.failed).toHaveLength(1)
+    expect(plan.failed[0].reason).toBe('rate-limited')
+    expect(target.searchSongs).toHaveBeenCalledTimes(1)
+  })
+
+  it('搜索预算 maxSearchesPerSong：超预算停止搜索', async () => {
+    const target = makeTarget({})
+    target.searchSongs = vi.fn(async () => [])
+    const plan = await planSync(
+      [
+        {
+          title: '主候选',
+          artist: '某人',
+          alternatives: [{ title: '备选候选', artist: '某人' }],
+        },
+      ],
+      target,
+      { searchIntervalMs: 0, maxSearchesPerSong: 2 },
+    )
+    expect(target.searchSongs).toHaveBeenCalledTimes(2)
+    expect(plan.failed).toHaveLength(1)
+    expect(plan.failed[0].reason).toBe('no-match')
+  })
 })
 
 describe('syncPlaylist — 第一首歌曲风格（自动命名）', () => {

@@ -1,5 +1,6 @@
 import type { ParseResult, ParsedSong } from '@core/models/parse'
 import { parseLineText } from './lines'
+import { splitCsvLine } from './csv'
 
 const TITLE_KEYS = ['title', 'name', 'song', 'songname', 'track', 'trackname']
 const ARTIST_KEYS = ['artist', 'singer', 'singername', 'artistname', 'author']
@@ -89,7 +90,8 @@ export function parseCsv(text: string): ParseResult {
   let artistCol = 1
   let start = 0
 
-  const header = rows[0]?.split(sep).map((c) => c.trim().toLowerCase()) ?? []
+  const header = splitCsvLine(rows[0] ?? '', sep)
+    .map((c) => c.trim().toLowerCase())
   const hasHeader = header.some((h) => HEADER_TITLE.test(h) || HEADER_ARTIST.test(h))
   if (hasHeader) {
     const t = header.findIndex((h) => HEADER_TITLE.test(h))
@@ -101,7 +103,7 @@ export function parseCsv(text: string): ParseResult {
 
   const songs: ParsedSong[] = []
   rows.slice(start).forEach((row, i) => {
-    const cols = row.split(sep).map((c) => c.trim())
+    const cols = splitCsvLine(row, sep).map((c) => c.trim())
     const title = cols[titleCol]
     if (!title) return
     const artist = cols[artistCol] || undefined

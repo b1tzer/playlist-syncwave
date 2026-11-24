@@ -13,6 +13,63 @@ const log = createRendererLogger('renderer.text-creator')
 const songDupKey = (s: { title: string; artist?: string }): string =>
   `${normalize(s.title)}|${normalize(s.artist ?? '')}`
 
+/** 输入区草稿持久化：刷新/重启后保留用户输入 */
+const STORAGE_LINES = 'textCreator.lines'
+const STORAGE_DRAFT = 'textCreator.draft'
+
+function loadLines(): string[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_LINES)
+    if (!raw) return []
+    const parsed: unknown = JSON.parse(raw)
+    return Array.isArray(parsed)
+      ? parsed.filter((x): x is string => typeof x === 'string')
+      : []
+  } catch {
+    return []
+  }
+}
+
+function loadDraft(): string {
+  try {
+    return localStorage.getItem(STORAGE_DRAFT) ?? ''
+  } catch {
+    return ''
+  }
+}
+
+interface EditInputProps {
+  value: string
+  /** 与被替换文本等宽，避免布局重排引起页面跳动 */
+  width: number
+  onChange: (v: string) => void
+  onCommit: () => void
+  onCancel: () => void
+}
+
+/** 原位编辑框：继承 tag 字体与行高，零边框零内边距，宽度与原文一致 */
+function EditInput({ value, width, onChange, onCommit, onCancel }: EditInputProps) {
+  return (
+    <input
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      onBlur={onCommit}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') onCommit()
+        if (e.key === 'Escape') onCancel()
+      }}
+      ref={(el) => {
+        // 仅首次聚焦，且禁止滚动：聚焦不应引起页面跳动
+        if (el && document.activeElement !== el) {
+          el.focus({ preventScroll: true })
+        }
+      }}
+      style={{ width }}
+      className="m-0 min-w-8 max-w-56 border-0 bg-surface p-0 font-label-md text-label-md text-on-surface caret-primary outline-none [font-family:inherit]"
+    />
+  )
+}
+
 interface TextCreatorProps {
   platforms: PlatformMeta[]
   accounts: Record<string, PlatformAccount | null>
@@ -30,10 +87,11 @@ export default function TextCreator({
   onPendingConfirmChange,
 }: TextCreatorProps) {
   const { t, formatTime, formatDate } = useI18n()
-  const [lines, setLines] = useState<string[]>([])
-  const [draft, setDraft] = useState('')
+  const [lines, setLines] = useState<string[]>(loadLines)
+  const [draft, setDraft] = useState(loadDraft)
   const [editingIdx, setEditingIdx] = useState<number | null>(null)
   const [editingText, setEditingText] = useState('')
+  const [editingWidth, setEditingWidth] = useState(120)
   const [removedExtra, setRemovedExtra] = useState<Set<number>>(new Set())
   const draftRef = useRef<HTMLInputElement>(null)
   const cancelEditRef = useRef(false)
@@ -43,6 +101,23 @@ export default function TextCreator({
   const [progress, setProgress] = useState<{ ratio: number; stage: string } | null>(null)
   const [report, setReport] = useState<SyncReport | null>(null)
   const [syncError, setSyncError] = useState<string>('')
+
+  // 草稿持久化：任意变化即写回，刷新/重启后恢复
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_LINES, JSON.stringify(lines))
+    } catch {
+      // 存储不可用时静默降级（内存态仍可用）
+    }
+  }, [lines])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_DRAFT, draft)
+    } catch {
+      // 同上
+    }
+  }, [draft])
 
   // 输入即解析：行集合为唯一数据源，逐行转换为标签
   const result = useMemo(() => parseText(lines.join('\n')), [lines])
@@ -118,15 +193,7 @@ export default function TextCreator({
     }
   }
 
-  /** 点选候选：把该行原文改写为「歌名 - 歌手」，重新解析即消除歧义 */
-  const applyCandidate = (lineNumber: number, title: string, artist?: string) => {
-    log.debug('parse.apply-candidate', '点选候选修正字段顺序', { lineNumber, title, artist })
-    setLines((prev) =>
-      prev.map((line, idx) =>
-        idx === lineNumber - 1 ? `${title}${artist ? ` - ${artist}` : ''}` : line,
-      ),
-    )
-  }
+  // 字段顺序歧义不再提供手动切换：同步阶段由平台搜索自动验证（正反候选搜索）裁决
 
   const handleSync = async () => {
     if (result.songs.length === 0) return
@@ -283,10 +350,11 @@ export default function TextCreator({
     setEditingIdx((cur) => (cur === idx ? null : cur))
   }
 
-  const startEdit = (idx: number) => {
+  const startEdit = (idx: number, width: number) => {
     cancelEditRef.current = false
     setEditingIdx(idx)
     setEditingText(lines[idx])
+    setEditingWidth(width)
   }
 
   const commitEdit = (idx: number) => {
@@ -319,31 +387,10 @@ export default function TextCreator({
           >
             {lines.map((raw, idx) => {
               const lineNo = idx + 1
-
-              if (editingIdx === idx) {
-                return (
-                  <input
-                    key={`edit-${idx}`}
-                    ref={(el) => el?.focus()}
-                    value={editingText}
-                    onChange={(e) => setEditingText(e.target.value)}
-                    onBlur={() => commitEdit(idx)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') commitEdit(idx)
-                      if (e.key === 'Escape') {
-                        cancelEditRef.current = true
-                        setEditingIdx(null)
-                      }
-                    }}
-                    className="w-56 rounded-lg border border-primary bg-surface px-2 py-1.5 font-mono outline-none"
-                  />
-                )
-              }
-
+              const isEditing = editingIdx === idx
               const songIdx = songIdxByLine.get(lineNo)
               if (songIdx !== undefined) {
                 const song = result.songs[songIdx]
-                const ambiguous = song.candidates && song.candidates.length > 1
                 const dup = dupFlags[songIdx] ?? false
                 return (
                   <span
@@ -372,48 +419,36 @@ export default function TextCreator({
                     >
                       music_note
                     </span>
-                    <button
-                      type="button"
-                      onClick={() => startEdit(idx)}
-                      title={raw}
-                      className={
-                        dup
-                          ? 'max-w-56 truncate transition-colors hover:text-on-surface'
-                          : 'max-w-56 truncate transition-colors hover:text-primary'
-                      }
-                    >
-                      {song.title}
-                      {song.artist ? (
-                        <span className={dup ? 'text-outline' : 'text-on-surface-variant'}>
-                          {' '}
-                          · {song.artist}
-                        </span>
-                      ) : null}
-                    </button>
-                    {ambiguous && (
-                      <span className="flex items-center gap-0.5">
-                        {song.candidates!.map((c) => {
-                          const active = c.title === song.title
-                          return (
-                            <button
-                              key={c.title}
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                applyCandidate(lineNo, c.title, c.artist)
-                              }}
-                              title={t('textCreator.pickCandidate')}
-                              className={
-                                active
-                                  ? 'rounded bg-primary px-1.5 py-0.5 font-label-sm text-label-sm text-on-primary'
-                                  : 'rounded bg-surface-container-high px-1.5 py-0.5 font-label-sm text-label-sm text-on-surface-variant transition-colors hover:text-on-surface'
-                              }
-                            >
-                              {c.title}
-                            </button>
-                          )
-                        })}
-                      </span>
+                    {isEditing ? (
+                      <EditInput
+                        value={editingText}
+                        width={editingWidth}
+                        onChange={setEditingText}
+                        onCommit={() => commitEdit(idx)}
+                        onCancel={() => {
+                          cancelEditRef.current = true
+                          setEditingIdx(null)
+                        }}
+                      />
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={(e) => startEdit(idx, e.currentTarget.offsetWidth)}
+                        title={`${raw}（${t('textCreator.editHint')}）`}
+                        className={
+                          dup
+                            ? 'max-w-56 cursor-text truncate transition-colors hover:text-on-surface hover:underline'
+                            : 'max-w-56 cursor-text truncate transition-colors hover:text-primary hover:underline'
+                        }
+                      >
+                        {song.title}
+                        {song.artist ? (
+                          <span className={dup ? 'text-outline' : 'text-on-surface-variant'}>
+                            {' '}
+                            · {song.artist}
+                          </span>
+                        ) : null}
+                      </button>
                     )}
                     <button
                       type="button"
@@ -442,13 +477,26 @@ export default function TextCreator({
                     className="group inline-flex max-w-full items-center gap-1 rounded-lg border border-error/50 bg-error/10 px-2.5 py-1.5 font-label-md text-label-md text-error"
                   >
                     <span className="material-symbols-outlined text-sm">error_outline</span>
-                    <button
-                      type="button"
-                      onClick={() => startEdit(idx)}
-                      className="max-w-56 truncate transition-colors hover:underline"
-                    >
-                      {failed.raw || t('textCreator.emptyLine')}
-                    </button>
+                    {isEditing ? (
+                      <EditInput
+                        value={editingText}
+                        width={editingWidth}
+                        onChange={setEditingText}
+                        onCommit={() => commitEdit(idx)}
+                        onCancel={() => {
+                          cancelEditRef.current = true
+                          setEditingIdx(null)
+                        }}
+                      />
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={(e) => startEdit(idx, e.currentTarget.offsetWidth)}
+                        className="max-w-56 cursor-text truncate transition-colors hover:underline"
+                      >
+                        {failed.raw || t('textCreator.emptyLine')}
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={(e) => {
@@ -463,7 +511,48 @@ export default function TextCreator({
                 )
               }
 
-              if (result.ignoredLines.some((f) => f.lineNumber === lineNo)) return null
+              const ignored = result.ignoredLines.find((f) => f.lineNumber === lineNo)
+              if (ignored) {
+                return (
+                  <span
+                    key={`i-${idx}`}
+                    className="group inline-flex max-w-full items-center gap-1 rounded-lg border border-outline-variant bg-surface-container-high/40 px-2.5 py-1.5 font-label-md text-label-md text-outline"
+                  >
+                    <span className="material-symbols-outlined text-sm">filter_alt_off</span>
+                    {isEditing ? (
+                      <EditInput
+                        value={editingText}
+                        width={editingWidth}
+                        onChange={setEditingText}
+                        onCommit={() => commitEdit(idx)}
+                        onCancel={() => {
+                          cancelEditRef.current = true
+                          setEditingIdx(null)
+                        }}
+                      />
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={(e) => startEdit(idx, e.currentTarget.offsetWidth)}
+                        title={t('textCreator.ignoredLine')}
+                        className="max-w-56 cursor-text truncate line-through transition-colors hover:text-on-surface"
+                      >
+                        {raw || t('textCreator.emptyLine')}
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        removeLine(idx)
+                      }}
+                      className="material-symbols-outlined text-sm text-outline transition-colors hover:text-error"
+                    >
+                      close
+                    </button>
+                  </span>
+                )
+              }
               if (raw.trim() === '') return null
 
               return (
@@ -471,13 +560,26 @@ export default function TextCreator({
                   key={`r-${idx}`}
                   className="group inline-flex max-w-full items-center gap-1 rounded-lg border border-outline-variant bg-surface-container-high px-2.5 py-1.5 font-label-md text-label-md text-on-surface-variant"
                 >
-                  <button
-                    type="button"
-                    onClick={() => startEdit(idx)}
-                    className="max-w-56 truncate transition-colors hover:text-on-surface"
-                  >
-                    {raw}
-                  </button>
+                  {isEditing ? (
+                    <EditInput
+                      value={editingText}
+                      width={editingWidth}
+                      onChange={setEditingText}
+                      onCommit={() => commitEdit(idx)}
+                      onCancel={() => {
+                        cancelEditRef.current = true
+                        setEditingIdx(null)
+                      }}
+                    />
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={(e) => startEdit(idx, e.currentTarget.offsetWidth)}
+                      className="max-w-56 cursor-text truncate transition-colors hover:text-on-surface hover:underline"
+                    >
+                      {raw}
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={(e) => {

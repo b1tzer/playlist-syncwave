@@ -10,7 +10,7 @@ Cory Wong - Golden
 Björk - Hidden Place`
 
 describe('回归：英文独立乐队清单（用户实测报告）', () => {
-  it('七行全部正确判定为「歌手 - 歌名」，无歧义', () => {
+  it('七行默认「歌手 - 歌名」展示正确，双候选交由搜索验证', () => {
     const r = parseText(INPUT)
     expect(r.songs.map((s) => [s.title, s.artist])).toEqual([
       ['Weird Fishes/Arpeggi', 'Radiohead'],
@@ -21,8 +21,7 @@ describe('回归：英文独立乐队清单（用户实测报告）', () => {
       ['Golden', 'Cory Wong'],
       ['Hidden Place', 'Björk'],
     ])
-    expect(r.songs.every((s) => !s.candidates)).toBe(true)
-    expect(r.detectedOrder).toBe('artist-first')
+    expect(r.songs.every((s) => s.candidates?.length === 2)).toBe(true)
   })
 
   it('斜杠歌名不触发多人名误判（Radiohead 行）', () => {

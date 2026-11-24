@@ -1,5 +1,6 @@
 import type { DetectedFormat } from '@core/models/parse'
 export type { DetectedFormat }
+import { splitCsvLine } from './csv'
 
 export type LineCategory = 'song' | 'meta' | 'template' | 'chat' | 'link' | 'noise'
 
@@ -14,8 +15,26 @@ export interface ClassifiedLine {
 const META_PREFIX = /^(作词|作曲|编曲|填词|谱曲|专辑|发行|制作|混音|母带|演唱|和声|吉他|钢琴|时长|时间)[:：]/
 const TEMPLATE =
   /^(分享.{0,30}(歌单|歌曲|音乐)|来自.{0,12}(音乐|音乐平台)|复制这条信息|打开.{0,12}(App|APP|app))/
-const CHAT_PREFIX = /^[\p{L}\p{N}_\-\u4e00-\u9fff]{1,20}[:：]\s*/u
+const CHAT_PREFIX = /^([\p{L}\p{N}_\-\u4e00-\u9fff]{1,20})[:：]\s*/u
 const BRACKET_CHAT = /^【[^】]{1,20}】\s*/
+// 数字冒号：04:44 / 1:30:12 为时间戳而非说话人前缀
+const NUMERIC_TIME = /^\d{1,3}[:：]\d{2}/
+const CJK = /[\u4e00-\u9fff]/
+
+/**
+ * 说话人前缀锚定：数字时间戳不剥；中文昵称冒号必剥；
+ * 英文昵称仅当剩余内容含中文时剥（英文冒号常见于歌名/标题结构，避免误剥）。
+ */
+function stripChatPrefix(line: string): string | null {
+  if (NUMERIC_TIME.test(line)) return null
+  const m = line.match(CHAT_PREFIX)
+  if (!m) return null
+  const name = m[1]
+  const rest = line.slice(m[0].length)
+  if (CJK.test(name)) return rest
+  if (CJK.test(rest) && name.length <= 8) return rest
+  return null
+}
 const URL_PATTERN = /https?:\/\/|music\.163\.com|y\.qq\.com|kugou\.com|kuwo\.cn|migu\.cn/
 const QUOTED_TITLE = /《([^》]{1,60})》/
 const TIMESTAMP_LINE = /^\[?\d{1,2}:\d{2}(?:\.\d+)?\]?/
@@ -55,7 +74,7 @@ export function detectFormat(text: string): DetectedFormat {
     .map((l) => l.trim())
     .filter((l) => l.length > 0)
   for (const sep of ['\t', ',']) {
-    const colCounts = rows.map((r) => r.split(sep).length)
+    const colCounts = rows.map((r) => splitCsvLine(r, sep).length)
     if (colCounts.every((n) => n >= 2)) {
       const mode = colCounts[0]
       const consistent = colCounts.filter((n) => n === mode).length / colCounts.length
@@ -101,8 +120,9 @@ export function classifyLine(raw: string): ClassifiedLine {
   }
   while (depth < 5) {
     if (META_PREFIX.test(line) || TEMPLATE.test(line)) break
-    if (!CHAT_PREFIX.test(line)) break
-    line = line.replace(CHAT_PREFIX, '')
+    const stripped = stripChatPrefix(line)
+    if (stripped === null) break
+    line = stripped
     depth++
     isChat = true
   }

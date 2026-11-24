@@ -80,6 +80,8 @@ export async function planSync(
       | { type: 'choice'; attempt: MatchQuery; candidates: PlatformSong[] }
       | null = null
     let lastError: unknown = null
+    const budget = options.maxSearchesPerSong ?? 4
+    let searchCount = 0
 
     for (const attempt of attempts) {
       // 搜索关键词策略：优先「歌名 + 歌手」提高召回精度；无精确命中时降级纯歌名
@@ -89,11 +91,19 @@ export async function planSync(
 
       let searchFailed = false
       for (let k = 0; k < keywords.length && settled === null; k++) {
+        if (searchCount >= budget) {
+          log.warn('plan.budget-exhausted', '单曲搜索预算用尽', {
+            title: query.title,
+            budget,
+          })
+          break
+        }
         const keyword = keywords[k]
         let candidates: Awaited<ReturnType<SyncTarget['searchSongs']>> | null = null
 
         for (let retry = 0; retry <= searchRetries && candidates === null; retry++) {
           try {
+            searchCount++
             candidates = await target.searchSongs(keyword, 10)
           } catch (e) {
             lastError = e
@@ -111,7 +121,7 @@ export async function planSync(
           }
         }
 
-        // 搜索失败不降级：网络错误时换关键词再发请求无意义
+        // 搜索失败不降级：网络/风控错误时换关键词再发请求无意义
         if (candidates === null) {
           searchFailed = true
           break
@@ -148,7 +158,7 @@ export async function planSync(
         }
       }
 
-      if (settled !== null || searchFailed) break
+      if (settled !== null || searchFailed || searchCount >= budget) break
       // no-match：尝试下一个备选候选
     }
 

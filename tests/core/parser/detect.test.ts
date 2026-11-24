@@ -81,4 +81,34 @@ describe('classifyLine — 行分类', () => {
     expect(line.category).toBe('song')
     expect(line.cleaned).toBe('晴天 - 周杰伦')
   })
+
+  it('数字时间戳冒号不误剥（04:44）', () => {
+    const line = classifyLine('04:44 晴天 - 周杰伦')
+    expect(line.category).toBe('song')
+    expect(line.cleaned).toBe('04:44 晴天 - 周杰伦')
+  })
+
+  it('英文歌名冒号不误剥（Time: The Revelator）', () => {
+    const line = classifyLine('Time: The Revelator - Gillian Welch')
+    expect(line.category).toBe('song')
+    expect(line.cleaned).toBe('Time: The Revelator - Gillian Welch')
+  })
+
+  it('英文昵称 + 中文内容仍剥（John: 晴天）', () => {
+    const line = classifyLine('John: 晴天 - 周杰伦')
+    expect(line.category).toBe('chat')
+    expect(line.cleaned).toBe('晴天 - 周杰伦')
+  })
+
+  it('中文昵称冒号仍剥', () => {
+    const line = classifyLine('张三: 晴天 - 周杰伦')
+    expect(line.category).toBe('chat')
+    expect(line.cleaned).toBe('晴天 - 周杰伦')
+  })
+
+  it('英文冒号 + 英文内容不剥（NickName123: hello world）', () => {
+    const line = classifyLine('NickName123: hello world')
+    expect(line.category).toBe('song')
+    expect(line.cleaned).toBe('NickName123: hello world')
+  })
 })

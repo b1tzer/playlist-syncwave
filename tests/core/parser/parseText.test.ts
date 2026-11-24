@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { parseText } from '@core/parser/parseText'
 
 describe('parseText — FR-2.1 文本快速创建', () => {
-  it('解析「歌名 - 歌手」（自动判定顺序）', () => {
+  it('解析「歌名 - 歌手」：无强信号时保留双候选（顺序由搜索验证）', () => {
     const result = parseText('晴天 - 周杰伦')
     expect(result.songs).toHaveLength(1)
     expect(result.songs[0]).toMatchObject({
@@ -11,8 +11,8 @@ describe('parseText — FR-2.1 文本快速创建', () => {
       lineNumber: 1,
       raw: '晴天 - 周杰伦',
     })
-    expect(result.songs[0].confidence).toBeGreaterThanOrEqual(0.8)
-    expect(result.songs[0].orderConfidence).toBeGreaterThanOrEqual(0.8)
+    expect(result.songs[0].candidates).toHaveLength(2)
+    expect(result.songs[0].orderConfidence).toBeLessThanOrEqual(0.5)
     expect(result.failedLines).toHaveLength(0)
   })
 
@@ -101,21 +101,22 @@ describe('parseText — FR-2.1 文本快速创建', () => {
     expect(result.ignoredLines[0]).toMatchObject({ lineNumber: 1, category: 'template' })
   })
 
-  it('全自动：混排两种字段顺序，无需手动指定', () => {
+  it('混排两种字段顺序：无词典时按默认解读展示并保留双候选（同步搜索验证裁决）', () => {
     const result = parseText('晴天 - 周杰伦\n周杰伦 - 稻香\n林宥嘉 - 说谎')
+    expect(result.songs.every((s) => s.candidates?.length === 2)).toBe(true)
     expect(result.songs.map((s) => [s.title, s.artist])).toEqual([
       ['晴天', '周杰伦'],
-      ['稻香', '周杰伦'],
-      ['说谎', '林宥嘉'],
+      ['周杰伦', '稻香'],
+      ['林宥嘉', '说谎'],
     ])
   })
 
-  it('全自动：整段投票纠正无信号歧义行', () => {
-    const result = parseText('周杰伦 - 晴天\n周杰伦 - 稻香\n张三 - 预谋邂逅')
+  it('强信号（版本词）行定序后，投票裁决无信号歧义行', () => {
+    const result = parseText('晴天 (Live) - 周杰伦\n稻香 (Live) - 周杰伦\n张三 - 预谋邂逅')
     expect(result.songs.map((s) => [s.title, s.artist])).toEqual([
-      ['晴天', '周杰伦'],
-      ['稻香', '周杰伦'],
-      ['预谋邂逅', '张三'],
+      ['晴天 (Live)', '周杰伦'],
+      ['稻香 (Live)', '周杰伦'],
+      ['张三', '预谋邂逅'],
     ])
   })
 
@@ -156,5 +157,43 @@ describe('parseText — FR-2.1 文本快速创建', () => {
     const result = parseText('晴天 - 周杰伦\n链接: https://music.163.com/song?id=186016')
     expect(result.format).toBe('share')
     expect(result.songs.map((s) => s.title)).toEqual(['晴天'])
+  })
+
+  it('数字时间戳行：清时间戳后正确解析', () => {
+    const result = parseText('04:44 晴天 - 周杰伦\n1:30 稻香 - 周杰伦')
+    expect(result.songs.map((s) => [s.title, s.artist])).toEqual([
+      ['晴天', '周杰伦'],
+      ['稻香', '周杰伦'],
+    ])
+  })
+
+  it('英文歌名冒号不误剥（默认 artist-first 展示，双候选由同步闭环兜底）', () => {
+    const result = parseText('Time: The Revelator - Gillian Welch')
+    expect(result.songs).toHaveLength(1)
+    expect(result.songs[0].title).toBe('Gillian Welch')
+    expect(result.songs[0].artist).toBe('Time: The Revelator')
+    expect(result.songs[0].candidates).toEqual([
+      { title: 'Gillian Welch', artist: 'Time: The Revelator' },
+      { title: 'Time: The Revelator', artist: 'Gillian Welch' },
+    ])
+  })
+
+  it('英文歧义行默认「歌手 - 歌名」（tracklist 场景）', () => {
+    const result = parseText('Gillian Welch - Time: The Revelator')
+    expect(result.songs[0]).toMatchObject({
+      title: 'Time: The Revelator',
+      artist: 'Gillian Welch',
+    })
+    expect(result.songs[0].candidates).toHaveLength(2)
+  })
+
+  it('中文歧义行保持默认「歌名 - 歌手」', () => {
+    const result = parseText('张三 - 预谋邂逅')
+    expect(result.songs[0]).toMatchObject({ title: '张三', artist: '预谋邂逅' })
+  })
+
+  it('英文昵称 + 中文内容剥前缀', () => {
+    const result = parseText('John: 晴天 - 周杰伦')
+    expect(result.songs[0]).toMatchObject({ title: '晴天', artist: '周杰伦' })
   })
 })

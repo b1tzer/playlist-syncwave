@@ -5,7 +5,7 @@ import type {
   ParsedSong,
 } from '@core/models/parse'
 import { classifyLine } from './detect'
-import { inferPair, majorityOrder, splitQuotedTitle } from './orderInfer'
+import { defaultOrderForPair, inferPair, majorityOrder, splitQuotedTitle } from './orderInfer'
 
 const SEPARATOR = /\s*(?:——|\s--\s|\s-\s|\s\|\s)\s*|\t+|—/
 const TIMESTAMP = /^\[?\d{1,2}:\d{2}(?:\.\d+)?\]?\s*/
@@ -148,16 +148,24 @@ export function parseLineText(
       const finalOrder = inference.order === 'ambiguous' ? voted : inference.order
 
       if (!finalOrder) {
+        const defaultOrder = defaultOrderForPair(pair.first, pair.second)
+        const titleFirst = defaultOrder === 'title-first'
         songs.push({
-          title: pair.first,
+          title: (titleFirst ? pair.first : pair.second)!,
+          artist: titleFirst ? pair.second : pair.first,
           raw: pair.raw,
           lineNumber: pair.lineNumber,
           confidence: 0.45,
           orderConfidence: 0.5,
-          candidates: [
-            { title: pair.first, artist: pair.second },
-            { title: pair.second, artist: pair.first },
-          ],
+          candidates: titleFirst
+            ? [
+                { title: pair.first, artist: pair.second },
+                { title: pair.second, artist: pair.first },
+              ]
+            : [
+                { title: pair.second, artist: pair.first },
+                { title: pair.first, artist: pair.second },
+              ],
         })
         return
       }

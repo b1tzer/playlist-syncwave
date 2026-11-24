@@ -1,4 +1,4 @@
-import { artistParts, normalize } from './matchSong'
+import { artistParts, extractVersionTag, normalize } from './matchSong'
 import type { MatchQuery } from '@core/models/match'
 import type { PlatformSong } from '@core/models/platform'
 
@@ -32,7 +32,15 @@ export function classifyCandidates(
   if (queryArtist) {
     const exact = titleMatches.filter((c) => artistMatch(queryArtist, c.artist))
     if (exact.length > 0) {
-      return { kind: 'exact', songId: pickByDuration(exact, query) }
+      return { kind: 'exact', songId: pickBestVersion(exact, query) }
+    }
+    // 搜索反向验证：候选标题 == query 歌手 且 候选歌手 == query 歌名，
+    // 说明字段顺序相反，平台搜索已给出正确收录，直接采纳。
+    const reversed = candidates.filter(
+      (c) => normalize(c.title) === queryArtist && artistMatch(query.title, c.artist),
+    )
+    if (reversed.length > 0) {
+      return { kind: 'exact', songId: pickBestVersion(reversed, query) }
     }
   } else if (titleMatches.length === 1) {
     return { kind: 'exact', songId: titleMatches[0].id }
@@ -45,7 +53,23 @@ export function classifyCandidates(
   return { kind: 'variant' }
 }
 
-/** 同一首歌多收录时，按时长最接近 query 者选择 */
+/**
+ * 同歌同唱多收录时选择最优版本：
+ * query 带版本标记 → 优先同版本；无版本标记 → 优先原版（无标记候选）；
+ * 无符合条件的候选时回退全部，再按时长最接近 query 者选择。
+ */
+function pickBestVersion(songs: PlatformSong[], query: MatchQuery): string {
+  if (songs.length === 1) return songs[0].id
+  const queryTag = extractVersionTag(query.title)
+  const preferred = songs.filter((s) => {
+    const candidateTag = extractVersionTag(s.title)
+    return queryTag ? candidateTag === queryTag : candidateTag === undefined
+  })
+  const pool = preferred.length > 0 ? preferred : songs
+  return pickByDuration(pool, query)
+}
+
+/** 按时长最接近 query 者选择 */
 function pickByDuration(songs: PlatformSong[], query: MatchQuery): string {
   if (songs.length === 1 || query.durationMs === undefined) return songs[0].id
   const target = query.durationMs

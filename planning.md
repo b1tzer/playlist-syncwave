@@ -210,6 +210,31 @@ tests/
 - **测试**：回归用例（用户清单 7 行全对、斜杠/逗号乐队名不误判）3 项 + planSync alternatives 4 项，共 131 项全绿；typecheck、lint 通过。
 - 待办：手工验收真实平台同步（该清单应 7 首全部匹配并自动建单）。
 
+### 修复记录 — 全自动解析 P0/P1 缺陷 ✅
+- **P0-1 冒号误剥**：`detect.ts` 说话人前缀剥除改为锚定判定——数字冒号（`04:44`）不剥；中文昵称冒号必剥；英文昵称仅当剩余内容含中文且昵称 ≤8 字符时剥。修复 `04:44 晴天 - 周杰伦`、`Time: The Revelator - Gillian Welch` 被剥坏。测试 +5（detect）+3（parseText）。
+- **P0-4 版本差异被金标准吞掉**：`exactMatch.ts` 新增 `pickBestVersion`——query 带版本标记（Live/Remix）优先同版本候选；无版本标记优先原版（无标记候选）；无符合候选回退全部，再按时长兜底。复用 T8 的 `extractVersionTag`。测试 +4。
+- **P0-5 搜索膨胀/风控**：`SyncOptions` 新增 `maxSearchesPerSong`（默认 4），`planSync` 按每首歌计数预算，超预算停止备选搜索。风控（`SearchError.rateLimited`）保持不试备选（继续请求会加剧风控，属正确行为）。测试 +2。
+- **P1-6 被忽略行不可见**：TAG 流中被忽略行由 `return null` 改为渲染灰色标签（删除线 + 删除按钮 + 点击编辑恢复），误滤可见且可恢复。i18n 新增 `textCreator.ignoredLine` 词条（中英）。
+- 验证：typecheck、lint 通过，221 项测试全绿（17 文件）。
+- 待办：手工验收（粘贴含 `04:44` 时间戳/英文冒号歌名/聊天记录的混排文本；同步含 Live 版本差异的歌单）。
+
+### 修复记录 — 解析器剩余缺陷（P0-3/P1-7/P1-12/P2-15）✅
+- **P0-3 全歧义默认顺序**：`orderInfer.ts` 新增 `defaultOrderForPair` 启发式——双字段均无中文（英文 tracklist/m3u 常见「歌手 - 歌名」）默认 artist-first，其余默认 title-first；仅影响预览默认展示与候选排序，同步仍由备选验证闭环裁决。
+- **P1-12 投票阈值**：`majorityOrder` 80% → 60%（样本 ≥2 不变），3 行 2:1 场景可投票裁决歧义行。
+- **P1-7 CSV 引号转义**：新增 `core/parser/csv.ts`（`splitCsvLine` 支持双引号包裹字段与 `""` 转义），`detectFormat` 列数探测与 `parseCsv` 表头/数据行统一改用引号感知拆分。
+- **P2-15 版本词边界**：`VERSION_WORD` 拆分为英文边界正则 `\b(live|remix|cover|demo|acoustic|instrumental|ver\.?)\b` + 中文子串正则，修复 `Deliver`/`Recover`/`Forever.` 词根误作版本词信号。
+- 测试：orderInfer +4、parseText +2、structured +4，共 229 项全绿；typecheck、lint 通过。
+- 本轮明确不做（用户确认）：歌词文件判别、JSON 数组启发式、链接解析。
+
+### 架构变更 — 移除本地词典，字段顺序交由搜索验证 ✅
+- **决策（用户确认）**：不再用本地歌手词典猜测字段顺序，也不在预览提供手动切换；直接用平台搜索接口验证。
+- **改动**：
+  1. 删除 `core/parser/artistLexicon.ts`；`orderInfer.signalFor` 移除词典信号（+0.30），仅保留强结构信号（书名号/版本词/多人名/feat/长度）。
+  2. `exactMatch.classifyCandidates` 新增**搜索反向验证**：候选标题 == query 歌手 且 候选歌手 == query 歌名（即平台结果与 query 交换后精确相等）→ 证明字段顺序颠倒 → 自动采纳。正向精确优先于反向。
+  3. UI 移除歧义行「切换候选」chip 与 `applyCandidate`；`textCreator.pickCandidate` 词条删除。歧义行仅显示默认解读（中英文启发式），双候选随 `alternatives` 进入同步闭环（主候选组合关键词搜索 + 反向验证 + 备选搜索三重兜底）。
+- **行为变化**：无强信号的双字段行几乎全部标记歧义（保留双候选），预览按中英文默认顺序展示；正确性由同步阶段搜索验证保证。单曲搜索预算（maxSearchesPerSong=4）控制验证开销。
+- **测试**：删除 3 项词典用例，更新 6 项依赖词典的断言（按新语义：默认解读 + 双候选），新增反向验证 2 项，共 229 项全绿；typecheck、lint 通过。
+
 ### 国际化接入 ✅（中英双语）
 - **范围**：渲染层全量 UI 文案（6 个组件）+ 窗口标题/`<html lang>`；core 与主进程日志保持中文（不面向用户）。
 - **方案**：自研轻量类型安全 i18n（不引入第三方依赖）。`renderer/src/i18n/translations.ts` 扁平键词典（zh-CN 基准 + en-US 以 `Record<TranslationKey, string>` 编译期强制键一致）；`renderer/src/i18n/index.tsx` 提供 `I18nProvider`/`useI18n`（`t()` 支持 `{param}` 插值、`formatTime/formatDate` 按语言格式化）。

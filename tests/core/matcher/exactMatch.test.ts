@@ -113,4 +113,58 @@ describe('classifyCandidates — 金标准判定', () => {
     )
     expect(r.kind).toBe('title-only')
   })
+
+  it('query 带版本标记（Live）→ 优先选同版本候选', () => {
+    const r = classifyCandidates(
+      { title: '晴天 (Live)', artist: '周杰伦' },
+      [song('1', '晴天', '周杰伦'), song('2', '晴天 (Live)', '周杰伦')],
+    )
+    expect(r.kind).toBe('exact')
+    if (r.kind === 'exact') expect(r.songId).toBe('2')
+  })
+
+  it('query 无版本标记 → 优先选原版（无版本标记候选）', () => {
+    const r = classifyCandidates(
+      { title: '晴天', artist: '周杰伦' },
+      [song('1', '晴天 (Live)', '周杰伦'), song('2', '晴天', '周杰伦')],
+    )
+    expect(r.kind).toBe('exact')
+    if (r.kind === 'exact') expect(r.songId).toBe('2')
+  })
+
+  it('候选全为版本变体时回退（不因版本过滤而丢失匹配）', () => {
+    const r = classifyCandidates(
+      { title: '晴天', artist: '周杰伦' },
+      [song('1', '晴天 (Live)', '周杰伦'), song('2', '晴天 (Remix)', '周杰伦')],
+    )
+    expect(r.kind).toBe('exact')
+    if (r.kind === 'exact') expect(['1', '2']).toContain(r.songId)
+  })
+
+  it('query 版本标记与候选均不一致 → 回退全部候选', () => {
+    const r = classifyCandidates(
+      { title: '晴天 (Remix)', artist: '周杰伦' },
+      [song('1', '晴天 (Live)', '周杰伦'), song('2', '晴天', '周杰伦')],
+    )
+    expect(r.kind).toBe('exact')
+    if (r.kind === 'exact') expect(['1', '2']).toContain(r.songId)
+  })
+
+  it('搜索反向验证：query 顺序颠倒时，平台结果证明后自动采纳', () => {
+    const r = classifyCandidates(
+      { title: '周杰伦', artist: '晴天' },
+      [song('1', '晴天', '周杰伦')],
+    )
+    expect(r.kind).toBe('exact')
+    if (r.kind === 'exact') expect(r.songId).toBe('1')
+  })
+
+  it('反向验证与正向精确并存时，正向优先', () => {
+    const r = classifyCandidates(
+      { title: '晴天', artist: '周杰伦' },
+      [song('1', '周杰伦', '晴天'), song('2', '晴天', '周杰伦')],
+    )
+    expect(r.kind).toBe('exact')
+    if (r.kind === 'exact') expect(r.songId).toBe('2')
+  })
 })
