@@ -159,7 +159,7 @@ export default function ContextMenu({ open, x, y, ariaLabel, entries, onClose }:
           >
             {entry.iconNode ??
               (entry.icon && (
-                <span className="material-symbols-outlined text-base">{entry.icon}</span>
+                <span className="material-symbols-outlined text-sm">{entry.icon}</span>
               ))}
             <span className="min-w-0 flex-1 truncate">{entry.label}</span>
           </button>

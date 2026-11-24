@@ -88,7 +88,7 @@ function InterveneButtons({
   const buttonCls = md
     ? 'flex items-center gap-1.5 rounded-lg border px-3 py-1.5 font-label-md text-label-md transition-colors'
     : 'flex items-center gap-1 rounded-md border px-2 py-1 font-label-sm text-label-sm transition-colors'
-  const iconCls = md ? 'text-base' : 'text-sm'
+  const iconCls = 'text-sm'
   return (
     <>
       <button
@@ -282,13 +282,13 @@ export default function SyncCenter({
           onClick={handleNewTask}
           className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 font-label-md text-label-md font-medium text-on-primary transition-colors hover:bg-primary/85"
         >
-          <span className="material-symbols-outlined text-base">add</span>
+          <span className="material-symbols-outlined text-sm">add</span>
           {t('syncCenter.newTask')}
         </button>
       </div>
 
       <div className="mt-6 flex items-center gap-2 font-label-sm text-label-sm text-on-surface-variant">
-        <span className="material-symbols-outlined text-base">terminal</span>
+        <span className="material-symbols-outlined text-sm">terminal</span>
         <span>{t('syncCenter.logTitle')}</span>
         <span className="mx-2 h-3 w-px bg-outline-variant" />
         <span>
@@ -366,7 +366,7 @@ export default function SyncCenter({
               onClick={handleNewTask}
               className="mt-4 flex items-center gap-2 rounded-lg border border-outline-variant px-4 py-2 font-label-md text-label-md text-primary transition-colors hover:bg-surface-container-high"
             >
-              <span className="material-symbols-outlined text-base">add</span>
+              <span className="material-symbols-outlined text-sm">add</span>
               {t('syncCenter.firstTask')}
             </button>
           </div>

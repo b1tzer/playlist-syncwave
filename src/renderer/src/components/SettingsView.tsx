@@ -19,7 +19,7 @@ function SettingRow({ icon, title, description, children }: SettingRowProps) {
   return (
     <div className="flex items-center justify-between rounded-lg border border-outline-variant bg-surface-container-low p-4">
       <div className="flex items-center gap-3">
-        <span className="material-symbols-outlined text-xl text-on-surface-variant">{icon}</span>
+        <span className="material-symbols-outlined text-lg text-on-surface-variant">{icon}</span>
         <div>
           <p className="font-body-md text-body-md font-medium">{title}</p>
           <p className="font-label-sm text-label-sm text-on-surface-variant">{description}</p>

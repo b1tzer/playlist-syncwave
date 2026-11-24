@@ -296,7 +296,13 @@ export default function TextCreator({
                       : 'flex items-center gap-1.5 rounded-lg border border-outline-variant px-2.5 py-1 font-label-sm text-label-sm text-on-surface-variant opacity-40 transition-colors hover:opacity-80'
                   }
                 >
-                  <PlatformLogo platform={p.id} name={p.name} icon={p.icon} />
+                  <PlatformLogo
+                    platform={p.id}
+                    name={p.name}
+                    icon={p.icon}
+                    size="h-4 w-4"
+                    iconSize="text-sm"
+                  />
                   {p.name}
                 </button>
               )
@@ -462,7 +468,7 @@ export default function TextCreator({
                 disabled={running}
                 className="flex shrink-0 items-center gap-1.5 rounded-lg border border-outline-variant px-3 py-1.5 font-label-md text-label-md text-on-surface-variant transition-colors hover:bg-surface-container-high hover:text-on-surface disabled:opacity-40"
               >
-                <span className="material-symbols-outlined text-base">delete_sweep</span>
+                <span className="material-symbols-outlined text-sm">delete_sweep</span>
                 {t('textCreator.clear')}
               </button>
               <button
@@ -471,7 +477,7 @@ export default function TextCreator({
                 title={t('textCreator.importFile')}
                 className="flex shrink-0 items-center gap-1.5 rounded-lg border border-outline-variant px-3 py-1.5 font-label-md text-label-md text-on-surface-variant transition-colors hover:bg-surface-container-high hover:text-primary disabled:opacity-40"
               >
-                <span className="material-symbols-outlined text-base">upload_file</span>
+                <span className="material-symbols-outlined text-sm">upload_file</span>
                 {t('textCreator.importFile')}
               </button>
               <button
@@ -480,7 +486,7 @@ export default function TextCreator({
                 title={t('textCreator.saveLocal')}
                 className="flex shrink-0 items-center gap-1.5 rounded-lg border border-outline-variant px-3 py-1.5 font-label-md text-label-md text-on-surface-variant transition-colors hover:bg-surface-container-high hover:text-primary disabled:opacity-40"
               >
-                <span className="material-symbols-outlined text-base">
+                <span className="material-symbols-outlined text-sm">
                   {savingLocal ? 'progress_activity' : 'save'}
                 </span>
                 {t('textCreator.saveLocal')}
@@ -501,7 +507,7 @@ export default function TextCreator({
               disabled={running || pendingConfirm !== null || !loggedIn || result.songs.length === 0}
               className="flex shrink-0 items-center justify-center gap-1.5 rounded-lg bg-primary px-4 py-2 font-label-md text-label-md font-medium text-on-primary transition-colors hover:bg-primary/85 disabled:opacity-40"
             >
-              <span className="material-symbols-outlined text-base">
+              <span className="material-symbols-outlined text-sm">
                 {running ? 'progress_activity' : 'rocket_launch'}
               </span>
               {running ? t('textCreator.syncing') : t('textCreator.create')}

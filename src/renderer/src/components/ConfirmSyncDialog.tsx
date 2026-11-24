@@ -212,7 +212,7 @@ export default function ConfirmSyncDialog({
               onClick={onDone}
               className="mt-4 flex w-full items-center justify-center gap-1.5 rounded-lg bg-primary px-4 py-2 font-label-md text-label-md font-medium text-on-primary transition-colors hover:bg-primary/85"
             >
-              <span className="material-symbols-outlined text-base">check</span>
+              <span className="material-symbols-outlined text-sm">check</span>
               {t('confirmDialog.done')}
             </button>
           </div>
@@ -271,7 +271,7 @@ export default function ConfirmSyncDialog({
                 disabled={current === 0 || confirming}
                 className="flex items-center gap-1 rounded-lg border border-outline-variant px-3 py-2 font-label-md text-label-md text-on-surface-variant transition-colors hover:bg-surface-container-highest hover:text-on-surface disabled:opacity-40"
               >
-                <span className="material-symbols-outlined text-base">arrow_back</span>
+                <span className="material-symbols-outlined text-sm">arrow_back</span>
                 {t('confirmDialog.previous')}
               </button>
               <button
@@ -279,7 +279,7 @@ export default function ConfirmSyncDialog({
                 disabled={confirming}
                 className="flex items-center gap-1 rounded-lg border border-outline-variant px-3 py-2 font-label-md text-label-md text-on-surface-variant transition-colors hover:bg-surface-container-highest hover:text-on-surface disabled:opacity-40"
               >
-                <span className="material-symbols-outlined text-base">close</span>
+                <span className="material-symbols-outlined text-sm">close</span>
                 {t('textCreator.cancelPending')}
               </button>
               <button
@@ -287,7 +287,7 @@ export default function ConfirmSyncDialog({
                 disabled={confirming || !allSelected}
                 className="ml-auto flex items-center gap-1.5 rounded-lg bg-primary px-4 py-2 font-label-md text-label-md font-medium text-on-primary transition-colors hover:bg-primary/85 disabled:opacity-40"
               >
-                <span className="material-symbols-outlined text-base">
+                <span className="material-symbols-outlined text-sm">
                   {confirming ? 'progress_activity' : 'task_alt'}
                 </span>
                 {confirming ? t('confirmDialog.confirming') : t('textCreator.confirmAndCreate')}

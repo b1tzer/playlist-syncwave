@@ -163,7 +163,7 @@ export default function LoginSection({ platforms, accounts, onAccountChange }: L
         </div>
         <div className="flex items-center gap-3">
           <span className="flex items-center gap-1.5 rounded-full bg-surface-container-high px-3 py-1.5 font-label-sm text-label-sm text-on-surface-variant">
-            <span className="material-symbols-outlined text-base text-primary">verified_user</span>
+            <span className="material-symbols-outlined text-sm text-primary">verified_user</span>
             {t('login.onlineBadge', { count: loggedInCount, total: platforms.length })}
           </span>
         </div>
@@ -218,7 +218,7 @@ export default function LoginSection({ platforms, accounts, onAccountChange }: L
                       onClick={() => logout(p.id)}
                       className="flex items-center gap-1 rounded-lg border border-outline-variant px-3 py-1.5 font-label-sm text-label-sm text-on-surface-variant transition-colors hover:bg-surface-container-highest hover:text-error"
                     >
-                      <span className="material-symbols-outlined text-base">logout</span>
+                      <span className="material-symbols-outlined text-sm">logout</span>
                       {t('login.logout')}
                     </button>
                   </div>
@@ -228,7 +228,7 @@ export default function LoginSection({ platforms, accounts, onAccountChange }: L
                     disabled={loading}
                     className="flex items-center gap-1.5 rounded-lg bg-primary px-4 py-2 font-label-md text-label-md font-medium text-on-primary transition-colors hover:bg-primary/85 disabled:opacity-50"
                   >
-                    <span className="material-symbols-outlined text-base">
+                    <span className="material-symbols-outlined text-sm">
                       {p.loginType === 'web' ? 'open_in_new' : 'qr_code_scanner'}
                     </span>
                     {p.loginType === 'web'
@@ -257,7 +257,7 @@ export default function LoginSection({ platforms, accounts, onAccountChange }: L
                 onClick={closeQr}
                 className="text-on-surface-variant transition-colors hover:text-on-surface"
               >
-                <span className="material-symbols-outlined text-xl">close</span>
+                <span className="material-symbols-outlined text-base">close</span>
               </button>
             </div>
 

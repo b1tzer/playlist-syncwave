@@ -492,7 +492,15 @@ export default function PlaylistSection({
         type: 'item',
         id: `sync-${p.id}`,
         label: t('playlist.syncToPlatform', { platform: p.name }),
-        iconNode: <PlatformLogo platform={p.id} name={p.name} icon={p.icon} size="h-4 w-4" />,
+        iconNode: (
+          <PlatformLogo
+            platform={p.id}
+            name={p.name}
+            icon={p.icon}
+            size="h-4 w-4"
+            iconSize="text-sm"
+          />
+        ),
         onSelect: () => void handleSyncTo(p.id),
       })
     }
@@ -785,7 +793,13 @@ export default function PlaylistSection({
                   : 'text-on-surface-variant hover:text-on-surface'
               }`}
             >
-              <PlatformLogo platform={p.id} name={p.name} icon={p.icon} />
+              <PlatformLogo
+                platform={p.id}
+                name={p.name}
+                icon={p.icon}
+                size="h-4 w-4"
+                iconSize="text-sm"
+              />
               {p.name}
             </button>
           ))}
@@ -800,7 +814,7 @@ export default function PlaylistSection({
                 : 'text-on-surface-variant hover:text-on-surface'
             }`}
           >
-            <span className="material-symbols-outlined text-base">save</span>
+            <span className="material-symbols-outlined text-sm">save</span>
             {t('playlist.localTab')}
           </button>
         </div>
@@ -912,7 +926,7 @@ export default function PlaylistSection({
                           title={t('playlist.save')}
                           className="flex items-center rounded-md p-1 text-primary transition-colors hover:bg-surface-container-highest disabled:opacity-50"
                         >
-                          <span className="material-symbols-outlined text-base">check</span>
+                          <span className="material-symbols-outlined text-sm">check</span>
                         </button>
                         <button
                           onClick={() => setRenamingId(null)}
@@ -920,7 +934,7 @@ export default function PlaylistSection({
                           title={t('playlist.cancel')}
                           className="flex items-center rounded-md p-1 text-on-surface-variant transition-colors hover:bg-surface-container-highest disabled:opacity-50"
                         >
-                          <span className="material-symbols-outlined text-base">close</span>
+                          <span className="material-symbols-outlined text-sm">close</span>
                         </button>
                       </div>
                     ) : (
@@ -1033,7 +1047,7 @@ export default function PlaylistSection({
                         title={t('playlist.save')}
                         className="flex items-center rounded-md p-1 text-primary transition-colors hover:bg-surface-container-highest disabled:opacity-50"
                       >
-                        <span className="material-symbols-outlined text-base">check</span>
+                        <span className="material-symbols-outlined text-sm">check</span>
                       </button>
                       <button
                         onClick={() => setRenaming(false)}
@@ -1041,7 +1055,7 @@ export default function PlaylistSection({
                         title={t('playlist.cancel')}
                         className="flex items-center rounded-md p-1 text-on-surface-variant transition-colors hover:bg-surface-container-highest disabled:opacity-50"
                       >
-                        <span className="material-symbols-outlined text-base">close</span>
+                        <span className="material-symbols-outlined text-sm">close</span>
                       </button>
                     </div>
                   ) : (
@@ -1105,7 +1119,7 @@ export default function PlaylistSection({
                         : 'text-on-surface-variant hover:bg-surface-container-highest hover:text-error'
                     }`}
                   >
-                    <span className="material-symbols-outlined text-base">
+                    <span className="material-symbols-outlined text-sm">
                       {confirmDelete ? 'warning' : 'delete'}
                     </span>
                     {confirmDelete ? t('playlist.deleteConfirm') : t('playlist.delete')}
@@ -1125,7 +1139,7 @@ export default function PlaylistSection({
               <div className="shrink-0 border-b border-outline-variant px-4 py-2">
                 <div className="flex items-center gap-2">
                   <span className="flex items-center gap-1 font-label-sm text-label-sm text-on-surface-variant">
-                    <span className="material-symbols-outlined text-base text-primary">
+                    <span className="material-symbols-outlined text-sm text-primary">
                       playlist_add
                     </span>
                     {t('playlist.addSongs')}
@@ -1146,7 +1160,7 @@ export default function PlaylistSection({
                     className="flex shrink-0 items-center gap-1 rounded-md border border-outline-variant px-2 py-1 font-label-sm text-label-sm text-on-surface-variant transition-colors hover:bg-surface-container-high hover:text-primary disabled:opacity-50"
                   >
                     <span
-                      className={`material-symbols-outlined text-base ${searching ? 'animate-spin' : ''}`}
+                      className={`material-symbols-outlined text-sm ${searching ? 'animate-spin' : ''}`}
                     >
                       {searching ? 'progress_activity' : 'search'}
                     </span>

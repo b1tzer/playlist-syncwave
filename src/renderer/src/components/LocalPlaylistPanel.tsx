@@ -310,7 +310,7 @@ export default function LocalPlaylistPanel({
               disabled={creating}
               className="flex items-center gap-1 rounded-md px-2 py-1 font-label-sm text-label-sm text-primary transition-colors hover:bg-primary/10 disabled:opacity-50"
             >
-              <span className="material-symbols-outlined text-base">add</span>
+              <span className="material-symbols-outlined text-sm">add</span>
               {t('localPlaylist.new')}
             </button>
           </div>
@@ -354,7 +354,7 @@ export default function LocalPlaylistPanel({
               <li key={p.id}>
                 {renamingId === p.id ? (
                   <div className="flex items-center gap-1.5 rounded-md border border-primary bg-surface px-2.5 py-1.5">
-                    <span className="material-symbols-outlined text-lg">queue_music</span>
+                    <span className="material-symbols-outlined text-base">queue_music</span>
                     <input
                       ref={inlineRenameInputRef}
                       autoFocus
@@ -373,14 +373,14 @@ export default function LocalPlaylistPanel({
                       title={t('localPlaylist.rename')}
                       className="flex items-center rounded-md p-1 text-primary transition-colors hover:bg-primary/10 disabled:opacity-50"
                     >
-                      <span className="material-symbols-outlined text-base">check</span>
+                      <span className="material-symbols-outlined text-sm">check</span>
                     </button>
                     <button
                       onClick={() => setRenamingId(null)}
                       title={t('localPlaylist.cancel')}
                       className="flex items-center rounded-md p-1 text-on-surface-variant transition-colors hover:bg-surface-container-highest disabled:opacity-50"
                     >
-                      <span className="material-symbols-outlined text-base">close</span>
+                      <span className="material-symbols-outlined text-sm">close</span>
                     </button>
                   </div>
                 ) : (
@@ -403,7 +403,7 @@ export default function LocalPlaylistPanel({
                         : 'text-on-surface hover:bg-surface-container-high'
                     }`}
                   >
-                    <span className="material-symbols-outlined text-lg">queue_music</span>
+                    <span className="material-symbols-outlined text-base">queue_music</span>
                     <span className="min-w-0 flex-1">
                       <span className="block truncate font-label-md text-label-md">{p.name}</span>
                       <span className="block font-label-sm text-label-sm text-on-surface-variant">
@@ -497,7 +497,7 @@ export default function LocalPlaylistPanel({
                   title={t('localPlaylist.syncTo')}
                   className="flex items-center gap-1 rounded-md border border-outline-variant px-2.5 py-1.5 font-label-md text-label-md text-primary transition-colors hover:bg-primary/10 disabled:opacity-40"
                 >
-                  <span className="material-symbols-outlined text-base">sync_alt</span>
+                  <span className="material-symbols-outlined text-sm">sync_alt</span>
                   {t('localPlaylist.syncTo')}
                 </button>
                 {syncPicker && (
@@ -513,7 +513,13 @@ export default function LocalPlaylistPanel({
                           onClick={() => void handleSyncTo(p.id)}
                           className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 font-label-md text-label-md text-on-surface transition-colors hover:bg-surface-container-highest"
                         >
-                          <PlatformLogo platform={p.id} name={p.name} icon={p.icon} />
+                          <PlatformLogo
+                            platform={p.id}
+                            name={p.name}
+                            icon={p.icon}
+                            size="h-4 w-4"
+                            iconSize="text-sm"
+                          />
                           {p.name}
                         </button>
                       ))

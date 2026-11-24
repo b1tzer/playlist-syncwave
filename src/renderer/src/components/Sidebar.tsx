@@ -32,7 +32,7 @@ export default function Sidebar({ view, onNavigate, runningTasks, accounts }: Si
       {/* macOS 隐藏标题栏后为红绿灯留白，同时作为窗口拖拽区 */}
       {isMac && <div className="h-9 shrink-0 [-webkit-app-region:drag]" />}
       <div className="flex items-center gap-2 px-2">
-        <span className="material-symbols-outlined text-lg text-primary">graphic_eq</span>
+        <span className="material-symbols-outlined text-base text-primary">graphic_eq</span>
         {/* 品牌名跨语言一致，直接使用字面量（app.title 含副标题，保留给窗口标题使用） */}
         <p className="font-label-md text-label-md font-semibold leading-tight text-on-surface">
           SyncWave
@@ -55,7 +55,7 @@ export default function Sidebar({ view, onNavigate, runningTasks, accounts }: Si
                   : 'text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface'
               }`}
             >
-              <span className={`material-symbols-outlined text-xl ${active ? 'fill' : ''}`}>
+              <span className={`material-symbols-outlined text-base ${active ? 'fill' : ''}`}>
                 {item.icon}
               </span>
               <span className="font-label-md text-label-md flex-1">{t(item.labelKey)}</span>
@@ -72,7 +72,7 @@ export default function Sidebar({ view, onNavigate, runningTasks, accounts }: Si
       <div className="mt-auto flex flex-col gap-2">
         <div className="rounded-lg border border-outline-variant bg-surface-container-low p-3">
           <div className="flex items-center gap-2">
-            <span className="material-symbols-outlined text-base text-tertiary">headphones</span>
+            <span className="material-symbols-outlined text-sm text-tertiary">headphones</span>
             <p className="font-label-sm text-label-sm text-on-surface">
               {t('sidebar.platformsOnline', {
                 count: loggedInCount,
