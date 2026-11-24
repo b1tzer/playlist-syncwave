@@ -35,6 +35,7 @@ import { startKeepAliveScheduler, stopKeepAliveScheduler } from './keepAliveServ
 import { loadWindowState, trackWindowState } from './windowState'
 import { buildApplicationMenu } from './menu'
 import { setupAutoUpdater, checkForUpdates, quitAndInstall } from './updater'
+import { notifySyncResult, notifySyncStopped } from './notifications'
 import { createPlaylistCacheService } from './playlistCacheService'
 import { getDatabase } from './appDatabase'
 import type { SyncTaskRecord, SyncChoice } from '@core/models/sync'
@@ -657,11 +658,13 @@ ipcMain.handle(
             added: report.added,
             failed: report.failed.length,
           })
+          notifySyncResult(finalName, report.added, report.failed.length)
           return { taskId, report }
         } catch (e) {
           if (e instanceof SyncAbortedError) {
             const fallbackName = (payload.playlistName ?? '').trim() || payload.autoNameDate || '未命名歌单'
             ipcLog.info('platform.sync-playlist', '同步被用户停止', { platform, taskId })
+            notifySyncStopped(fallbackName)
             return { taskId, report: stoppedReport(e.partial, fallbackName) }
           }
           throw e
@@ -856,10 +859,12 @@ ipcMain.handle(
           if (report.playlistId !== '') {
             playlistCacheStore.invalidatePlaylists(platform)
           }
+          notifySyncResult(report.playlistName, report.added, report.failed.length)
           return report
         } catch (e) {
           if (e instanceof SyncAbortedError) {
             ipcLog.info('platform.confirm-sync', '写入被用户停止', { platform, taskId })
+            notifySyncStopped(pending.playlistName)
             return stoppedReport(e.partial, pending.playlistName)
           }
           throw e

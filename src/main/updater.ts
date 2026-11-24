@@ -1,6 +1,7 @@
 import { app, BrowserWindow } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import { logCenter } from './logging/logCenter'
+import { notifyUpdateReady } from './notifications'
 
 const log = logCenter.logger('updater')
 
@@ -45,6 +46,7 @@ export function setupAutoUpdater(): void {
   autoUpdater.on('update-downloaded', (info) => {
     log.info('updater.downloaded', '新版本已下载，等待安装', { version: info.version })
     broadcast({ state: 'downloaded', version: info.version })
+    notifyUpdateReady(info.version)
   })
   autoUpdater.on('error', (err) => {
     log.error('updater.error', '更新流程出错', err)
