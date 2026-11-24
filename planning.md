@@ -245,6 +245,7 @@ tests/
   - 主进程 `platform:sync-playlist` 接收 `autoNameDate`（渲染层按当前语言格式化的今日日期），歌单名留空时拼「日期 + 风格」为最终名，建单与 choice-needed 会话均使用最终名。
   - UI（TextCreator）：textarea 输入实时解析（useEffect），删除「解析歌曲」按钮与 `handleParse`；任务记录名使用报告返回的最终名。App 头部删除 securityNote 区块；两处 `MODULE://` 装饰标签删除；i18n 清理 `app.securityNote`/`textCreator.parse`/`textCreator.defaultPlaylistName` 中英 3 键。
 - **测试**：新增 firstGenre 传播 3 项（完全匹配/choice 取第一候选/无风格 undefined）。
+- **文档**：新增 `docs/platform-api-fields.md`——两个平台全部上游接口的返回参数字段清单（含歌曲条目字段、genre 获取结论与待实测项）。
 - **待办**：手工验收（粘贴文本即时出预览、留空歌单名后建单名为「日期 + 风格」；上游不返回风格时仅日期）。
 
 | 风险 | 缓解 |

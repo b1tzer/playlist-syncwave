@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -98,5 +98,90 @@ describe('主进程文件日志传输', () => {
     const files = readdirSync(dir)
     expect(files).not.toContain('app-2020-01-01.log')
     expect(files.some((f) => f.startsWith('app-'))).toBe(true)
+  })
+
+  it('轮转时 .2→.3、.1→.2、当前→.1 级联，最旧的 .3 被丢弃', () => {
+    const transport = new FileLogTransport(dir, { maxBytes: 100 })
+    transport.init()
+    transport.write(makeEntry({ message: 'seed' })) // 建立当前文件
+
+    const dateFile = readdirSync(dir)[0]
+    const currentPath = join(dir, dateFile)
+    // 预置：当前文件超过上限，且 .1/.2/.3 各有标记内容
+    const oversized = 'CURRENT-CONTENT-'.repeat(10) // 160 字节 > 100
+    writeFileSync(currentPath, oversized, 'utf-8')
+    writeFileSync(`${currentPath}.1`, 'ONE\n', 'utf-8')
+    writeFileSync(`${currentPath}.2`, 'TWO\n', 'utf-8')
+    writeFileSync(`${currentPath}.3`, 'THREE\n', 'utf-8')
+
+    transport.write(makeEntry({ message: 'new-after-rotate' }))
+
+    // 级联顺序：旧当前文件 → .1，原 .1 → .2，原 .2 → .3；原 .3 被删除
+    expect(readFileSync(`${currentPath}.1`, 'utf-8')).toBe(oversized)
+    expect(readFileSync(`${currentPath}.2`, 'utf-8')).toBe('ONE\n')
+    expect(readFileSync(`${currentPath}.3`, 'utf-8')).toBe('TWO\n')
+    // 新日志写入全新的当前文件
+    const fresh = readFileSync(currentPath, 'utf-8')
+    expect(fresh).toContain('new-after-rotate')
+    expect(fresh).not.toContain('CURRENT-CONTENT-')
+  })
+
+  it('清理仅删除过期文件，保留期内与命名不符的文件不受影响', () => {
+    const makeOld = (name: string, ageDays: number): void => {
+      const p = join(dir, name)
+      writeFileSync(p, '{"x":1}\n', 'utf-8')
+      const past = new Date(Date.now() - ageDays * 24 * 60 * 60 * 1000)
+      utimesSync(p, past, past)
+    }
+    makeOld('app-2026-11-20.log', 30) // 过期 → 删除
+    makeOld('app-2026-11-21.log', 3) // 保留期内（默认 7 天）→ 保留
+    makeOld('other.log', 30) // 命名不符 → 保留
+    makeOld('app-2026-11-22.log.txt', 30) // 命名不符 → 保留
+    makeOld('app.log', 30) // 命名不符 → 保留
+
+    const transport = new FileLogTransport(dir)
+    transport.init()
+    transport.write(makeEntry())
+
+    const files = readdirSync(dir)
+    expect(files).not.toContain('app-2026-11-20.log')
+    expect(files).toContain('app-2026-11-21.log')
+    expect(files).toContain('other.log')
+    expect(files).toContain('app-2026-11-22.log.txt')
+    expect(files).toContain('app.log')
+  })
+
+  it('自定义前缀生效，清理只作用于该前缀的文件', () => {
+    const transport = new FileLogTransport(dir, { prefix: 'sync' })
+    transport.init()
+    transport.write(makeEntry())
+
+    const past = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+    const otherPrefix = join(dir, 'app-2020-01-01.log')
+    writeFileSync(otherPrefix, '{"x":1}\n', 'utf-8')
+    utimesSync(otherPrefix, past, past)
+    const staleSamePrefix = join(dir, 'sync-2020-01-01.log')
+    writeFileSync(staleSamePrefix, '{"x":1}\n', 'utf-8')
+    utimesSync(staleSamePrefix, past, past)
+
+    // 再次 init 触发清理
+    new FileLogTransport(dir, { prefix: 'sync' }).init()
+
+    const files = readdirSync(dir)
+    expect(files.some((f) => /^sync-\d{4}-\d{2}-\d{2}\.log$/.test(f))).toBe(true)
+    expect(files).not.toContain('sync-2020-01-01.log')
+    expect(files).toContain('app-2020-01-01.log')
+  })
+
+  it('目标文件不可写时写入静默，不抛异常', () => {
+    const transport = new FileLogTransport(dir)
+    transport.init()
+    transport.write(makeEntry({ message: 'seed' }))
+
+    const path = join(dir, readdirSync(dir)[0])
+    rmSync(path)
+    mkdirSync(path) // 同名目录使 appendFileSync 失败
+
+    expect(() => transport.write(makeEntry({ message: 'should-not-throw' }))).not.toThrow()
   })
 })
