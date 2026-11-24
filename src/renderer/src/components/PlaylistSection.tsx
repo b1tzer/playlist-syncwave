@@ -241,6 +241,7 @@ export default function PlaylistSection({
         })
         setPlaylists(res.items)
         setPlaylistTotal(res.total)
+        playlistsPlatformRef.current = active
         // 刷新后剔除已不存在的选择
         setSelectedIds((prev) => {
           const ids = new Set(res.items.map((p) => p.id))
@@ -284,6 +285,13 @@ export default function PlaylistSection({
     }
   }
 
+  // 各平台上次打开的歌单 id：切回平台时恢复上次选择，而非重新打开第一个
+  const lastOpenedRef = useRef<Record<string, string>>({})
+  // 已执行自动打开的「平台 → 歌单 id」：防止列表分页/刷新时重复触发
+  const autoOpenedRef = useRef<Record<string, string>>({})
+  // 当前歌单列表所属平台：防止切换平台瞬间用旧列表误打开
+  const playlistsPlatformRef = useRef('')
+
   useEffect(() => {
     setPlaylists([])
     setPlaylistTotal(0)
@@ -292,6 +300,7 @@ export default function PlaylistSection({
     setActiveId(null)
     setSelectedIds(new Set())
     setMenu(null)
+    autoOpenedRef.current = {}
     void fetchPlaylists()
   }, [fetchPlaylists])
 
@@ -340,33 +349,50 @@ export default function PlaylistSection({
     setRefreshing(false)
   }
 
-  const openPlaylist = async (id: string) => {
-    setActiveId(id)
-    setLoading(true)
-    setError('')
-    // 切换歌单时重置管理操作状态
-    setRenaming(false)
-    setConfirmDelete(false)
-    setSearchResults(null)
-    setSearchInput('')
-    try {
-      const res = await window.electronAPI.platforms.playlistSongsPage(active, id, 0, SONG_PAGE_SIZE)
-      log.info('playlist.songs.fetch', '拉取歌单歌曲第一页', {
-        platform: active,
-        playlistId: id,
-        count: res.items.length,
-        total: res.total,
-        fromCache: res.fromCache,
-      })
-      setSongs(res.items)
-      setSongTotal(res.total)
-    } catch (e) {
-      log.error('playlist.songs.fetch-failed', '拉取歌曲失败', e, { platform: active, playlistId: id })
-      setError(e instanceof Error ? e.message : t('playlist.fetchSongsFailed'))
-    } finally {
-      setLoading(false)
-    }
-  }
+  const openPlaylist = useCallback(
+    async (id: string) => {
+      // 记录该平台最后打开的歌单，切回时恢复
+      lastOpenedRef.current[active] = id
+      setActiveId(id)
+      setLoading(true)
+      setError('')
+      // 切换歌单时重置管理操作状态
+      setRenaming(false)
+      setConfirmDelete(false)
+      setSearchResults(null)
+      setSearchInput('')
+      try {
+        const res = await window.electronAPI.platforms.playlistSongsPage(active, id, 0, SONG_PAGE_SIZE)
+        log.info('playlist.songs.fetch', '拉取歌单歌曲第一页', {
+          platform: active,
+          playlistId: id,
+          count: res.items.length,
+          total: res.total,
+          fromCache: res.fromCache,
+        })
+        setSongs(res.items)
+        setSongTotal(res.total)
+      } catch (e) {
+        log.error('playlist.songs.fetch-failed', '拉取歌曲失败', e, { platform: active, playlistId: id })
+        setError(e instanceof Error ? e.message : t('playlist.fetchSongsFailed'))
+      } finally {
+        setLoading(false)
+      }
+    },
+    [active, t],
+  )
+
+  // 歌单列表加载完成后自动打开详情：该平台首次访问打开第一个，曾打开过则恢复上次选择
+  useEffect(() => {
+    if (loading || playlists.length === 0) return
+    if (playlistsPlatformRef.current !== active) return
+    const remembered = lastOpenedRef.current[active]
+    const targetId =
+      remembered && playlists.some((p) => p.id === remembered) ? remembered : playlists[0].id
+    if (autoOpenedRef.current[active] === targetId) return
+    autoOpenedRef.current[active] = targetId
+    void openPlaylist(targetId)
+  }, [loading, playlists, openPlaylist, active])
 
   /** 滚动到底部时加载下一页歌曲 */
   const loadMoreSongs = async () => {
@@ -707,16 +733,8 @@ export default function PlaylistSection({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex shrink-0 items-start justify-between">
-        <div>
-          <h1 className="mt-1 font-headline-lg text-headline-lg font-semibold">
-            {t('playlist.title')}
-          </h1>
-          <p className="mt-1 font-body-md text-body-md text-on-surface-variant">
-            {t('playlist.subtitle')}
-          </p>
-        </div>
-        <div className="flex gap-1 rounded-lg border border-outline-variant bg-surface-container-low p-1">
+      <div className="shrink-0">
+        <div className="flex w-fit gap-1 rounded-lg border border-outline-variant bg-surface-container-low p-1">
           {platforms.map((p) => (
             <button
               key={p.id}

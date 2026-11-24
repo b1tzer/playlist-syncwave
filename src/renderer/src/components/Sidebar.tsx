@@ -1,4 +1,3 @@
-import { useEffect, useState } from 'react'
 import type { PlatformAccount } from '@core/models/platform'
 import { createRendererLogger } from '../logging/rendererLogger'
 import { useI18n } from '../i18n'
@@ -25,16 +24,8 @@ interface SidebarProps {
 
 export default function Sidebar({ view, onNavigate, runningTasks, accounts }: SidebarProps) {
   const { t } = useI18n()
-  const [version, setVersion] = useState('')
   const loggedInCount = Object.values(accounts).filter((a) => a !== null).length
   const isMac = window.electronAPI.platform === 'darwin'
-
-  useEffect(() => {
-    window.electronAPI
-      .getVersion()
-      .then(setVersion)
-      .catch(() => log.debug('nav.version', '查询应用版本失败'))
-  }, [])
 
   return (
     <aside className="flex w-60 shrink-0 flex-col border-r border-outline-variant bg-surface-container-lowest px-3 py-4">
@@ -42,16 +33,10 @@ export default function Sidebar({ view, onNavigate, runningTasks, accounts }: Si
       {isMac && <div className="h-9 shrink-0 [-webkit-app-region:drag]" />}
       <div className="flex items-center gap-2 px-2">
         <span className="material-symbols-outlined text-lg text-primary">graphic_eq</span>
-        <div>
-          <p className="font-label-md text-label-md font-semibold leading-tight text-on-surface">
-            {t('app.title')}
-          </p>
-          {version && (
-            <p className="font-label-sm text-label-sm text-on-surface-variant">
-              {t('sidebar.version', { version })}
-            </p>
-          )}
-        </div>
+        {/* 品牌名跨语言一致，直接使用字面量（app.title 含副标题，保留给窗口标题使用） */}
+        <p className="font-label-md text-label-md font-semibold leading-tight text-on-surface">
+          SyncWave
+        </p>
       </div>
 
       <nav className="mt-6 flex flex-col gap-1">
@@ -88,20 +73,12 @@ export default function Sidebar({ view, onNavigate, runningTasks, accounts }: Si
         <div className="rounded-lg border border-outline-variant bg-surface-container-low p-3">
           <div className="flex items-center gap-2">
             <span className="material-symbols-outlined text-base text-tertiary">headphones</span>
-            <p className="font-label-sm text-label-sm text-on-surface">{t('sidebar.statusTitle')}</p>
-          </div>
-          <div className="mt-2 flex items-center gap-2 font-label-mono text-label-mono text-outline">
-            <span className="material-symbols-outlined text-sm">dark_mode</span>
-            <span>
+            <p className="font-label-sm text-label-sm text-on-surface">
               {t('sidebar.platformsOnline', {
                 count: loggedInCount,
                 total: Object.keys(accounts).length,
               })}
-            </span>
-          </div>
-          <div className="mt-1 flex items-center gap-2 font-label-mono text-label-mono text-outline">
-            <span className="material-symbols-outlined text-sm">terminal</span>
-            <span>{t('sidebar.engine')}</span>
+            </p>
           </div>
         </div>
       </div>

@@ -48,21 +48,22 @@ jobs:
     needs: check
     runs-on: ubuntu-latest
     if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    # 需在 GitHub 仓库 Settings → Secrets and variables → Actions
+    # 配置 GITEE_TOKEN(Gitee 私人令牌:https://gitee.com/personal_access_tokens)
+    # 注意:secrets 不能直接用于 if 条件,先注入 env 再判断 env.GITEE_TOKEN
+    env:
+      GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      # 需在 GitHub 仓库 Settings → Secrets and variables → Actions
-      # 配置 GITEE_TOKEN(Gitee 私人令牌:https://gitee.com/personal_access_tokens)
       - name: skip gitee
-        if: ${{ secrets.GITEE_TOKEN == '' }}
+        if: env.GITEE_TOKEN == ''
         run: echo "GITEE_TOKEN 未配置,跳过 Gitee 同步"
 
       - name: push to gitee
-        if: ${{ secrets.GITEE_TOKEN != '' }}
-        env:
-          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+        if: env.GITEE_TOKEN != ''
         run: |
           set -euo pipefail
           git remote add gitee "https://bibobibo_309:${GITEE_TOKEN}@gitee.com/bibobibo_309/playlist-syncwave.git"

@@ -79,6 +79,10 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     if: ${{ github.event.inputs.publish == 'true' }}
+    # 需在 Gitee 创建同名仓库 playlist-syncwave 并配置 GITEE_TOKEN secret
+    # 注意:secrets 不能直接用于 if 条件,先注入 env 再判断 env.GITEE_TOKEN
+    env:
+      GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
     steps:
       - uses: actions/checkout@v4
 
@@ -93,11 +97,8 @@ jobs:
           version=$(node -p "require('./package.json').version")
           gh release download "v${version}" --dir dist --clobber
 
-      # 需在 Gitee 创建同名仓库 playlist-syncwave 并配置 GITEE_TOKEN secret
       - name: push to gitee
-        if: ${{ secrets.GITEE_TOKEN != '' }}
-        env:
-          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+        if: env.GITEE_TOKEN != ''
         run: |
           set -euo pipefail
           version=$(node -p "require('./package.json').version")
@@ -115,5 +116,5 @@ jobs:
           git push origin release
 
       - name: skip gitee
-        if: ${{ secrets.GITEE_TOKEN == '' }}
+        if: env.GITEE_TOKEN == ''
         run: echo "GITEE_TOKEN 未配置,跳过 Gitee 备用源同步"
