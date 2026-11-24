@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { createRendererLogger } from '../logging/rendererLogger'
 import { LOCALES, useI18n } from '../i18n'
 import ToggleSwitch from './ToggleSwitch'
+import { notify } from './toast'
 import type { UpdateStatus } from '../../../preload/index'
 
 const log = createRendererLogger('renderer.settings')
@@ -36,6 +37,30 @@ export default function SettingsView() {
   const [syncThreshold, setSyncThreshold] = useState(0.6)
   const [syncRetries, setSyncRetries] = useState(2)
   const [syncInterval, setSyncInterval] = useState(500)
+  const [proxyUrl, setProxyUrl] = useState('')
+  const [proxyDraft, setProxyDraft] = useState('')
+
+  const handleProxyApply = async () => {
+    try {
+      await window.electronAPI.proxy.set(proxyDraft.trim())
+      setProxyUrl(proxyDraft.trim())
+      log.info('settings.proxy-apply', '代理已应用', { url: proxyDraft.trim() })
+    } catch (e) {
+      log.error('settings.proxy-apply-failed', '应用代理失败', e)
+      notify('error', t('settings.proxyApplyFailed'), e instanceof Error ? e.message : '')
+    }
+  }
+
+  const handleProxyClear = async () => {
+    try {
+      await window.electronAPI.proxy.set('')
+      setProxyUrl('')
+      setProxyDraft('')
+      log.info('settings.proxy-clear', '代理已清除')
+    } catch (e) {
+      log.error('settings.proxy-clear-failed', '清除代理失败', e)
+    }
+  }
 
   // 自动更新状态流转
   useEffect(() => {
@@ -76,6 +101,15 @@ export default function SettingsView() {
       .then(setAutoLaunch)
       .catch((e) => {
         log.warn('settings.auto-launch-read-failed', '读取开机启动状态失败', e)
+      })
+    window.electronAPI.proxy
+      .get()
+      .then((url) => {
+        setProxyUrl(url)
+        setProxyDraft(url)
+      })
+      .catch((e) => {
+        log.warn('settings.proxy-read-failed', '读取代理设置失败', e)
       })
   }, [])
 
@@ -229,6 +263,38 @@ export default function SettingsView() {
             <span className="w-16 text-right font-label-mono text-label-mono text-on-surface">
               {t('settings.syncIntervalUnit', { value: syncInterval })}
             </span>
+          </div>
+        </SettingRow>
+        <SettingRow
+          icon="router"
+          title={t('settings.proxy')}
+          description={t('settings.proxyDesc')}
+        >
+          <div className="flex items-center gap-2">
+            <input
+              value={proxyDraft}
+              onChange={(e) => setProxyDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void handleProxyApply()
+              }}
+              placeholder={t('settings.proxyPlaceholder')}
+              className="w-56 rounded-lg border border-outline-variant bg-surface px-3 py-1.5 font-body-md text-body-md text-on-surface outline-none placeholder:text-outline focus:border-primary"
+            />
+            <button
+              onClick={() => void handleProxyApply()}
+              className="rounded-lg border border-outline-variant px-3 py-1.5 font-label-md text-label-md text-on-surface transition-colors hover:bg-surface-container-high hover:text-primary"
+            >
+              {t('settings.proxyApply')}
+            </button>
+            {proxyUrl !== '' && (
+              <button
+                onClick={() => void handleProxyClear()}
+                title={t('settings.proxyClear')}
+                className="flex items-center rounded-md p-1.5 text-on-surface-variant transition-colors hover:bg-surface-container-highest hover:text-error"
+              >
+                <span className="material-symbols-outlined text-base">close</span>
+              </button>
+            )}
           </div>
         </SettingRow>
         <SettingRow

@@ -59,6 +59,12 @@ const api = {
   /** 导出文本文件：选择保存位置后写入，返回保存路径（取消返回 null） */
   saveTextFile: (defaultName: string, content: string, extension: string): Promise<string | null> =>
     ipcRenderer.invoke('app:save-text-file', defaultName, content, extension),
+
+  /** 网络代理：读取/设置（空串清除） */
+  proxy: {
+    get: (): Promise<string> => ipcRenderer.invoke('proxy:get'),
+    set: (url: string): Promise<void> => ipcRenderer.invoke('proxy:set', url),
+  },
   /** 渲染进程日志上报：主进程校验后写入统一日志管线 */
   log: (entry: LogEntry): void => {
     ipcRenderer.send('log:write', entry)

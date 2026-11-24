@@ -26,6 +26,7 @@ import type { MatchQuery } from '@core/models/match'
 import { logCenter } from './logging/logCenter'
 import { upsertSyncTask, listSyncTasks, removeSyncTask, clearSyncTasks } from './syncHistoryService'
 import { getSetting, setSetting, getAllSettings, syncTuning } from './settingsService'
+import { restoreProxy, getProxySetting, setProxySetting } from './proxy'
 import {
   saveAutoMapping,
   saveConfirmedMapping,
@@ -178,6 +179,20 @@ ipcMain.handle('update:quit-and-install', () =>
   ipcLog.time('update.quit-and-install', async () => {
     quitAndInstall()
   }),
+)
+
+// --- 网络代理 ---
+
+ipcMain.handle('proxy:get', () => getProxySetting())
+
+ipcMain.handle('proxy:set', (_event, url: unknown) =>
+  ipcLog.time(
+    'proxy.set',
+    async () => {
+      setProxySetting(url)
+    },
+    { url: typeof url === 'string' ? url : '' },
+  ),
 )
 
 // --- 开机启动：打包环境对接系统登录项，开发环境仅持久化偏好 ---
@@ -1027,6 +1042,7 @@ ipcMain.handle(
 app.whenReady().then(() => {
   buildApplicationMenu()
   setupAutoUpdater()
+  restoreProxy()
   createWindow()
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
