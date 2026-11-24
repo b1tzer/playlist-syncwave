@@ -408,7 +408,7 @@ tests/
 - **B12 代理设置 ✅**：`main/proxy.ts` 三路注入——axios defaults（平台 API，共享单例）、`session.setProxy`（渲染层请求）、HTTP_PROXY/HTTPS_PROXY 环境变量（Node fetch）；启动自动恢复、设置页代理行（输入/应用/清除，失败 toast）。typecheck、lint、275 项测试通过。
 - **B13 CSP 与 sandbox 加固 ✅**：窗口开启 `sandbox: true`（preload 改 CJS 输出 `index.js`，仅 require electron）；`main/security.ts` 打包环境注入 CSP（仅放行字体外链与 https 图片）+ nosniff。附带修复任务 6 埋下问题：electron-updater 在 ESM 主进程下 named export 运行时失败，改 createRequire 加载。dev 启动实测：无报错、IPC 正常、退出流程完整；typecheck、lint、275 项测试通过。
 - **B14 SQLite 版本化迁移 ✅**：`main/migrations.ts`（`schema_migrations` 版本表 + 只追加的迁移数组 + `addColumnIfMissing` pragma 判列 + 每迁移独立事务）；启动顺序调整为「迁移 → 建 store」；`syncHistoryStore` 散落 ALTER 移除由迁移 v1 接管；新增 3 项迁移测试 + 1 项旧库升级测试按新路径演进（升级职责从 store 移交框架，测试语义不变）。typecheck、lint、278 项测试通过。
-- **B15 浅色主题（待实施）**：深浅主题切换与持久化。
+- **B15 浅色主题 ✅**：styles.css 改为双主题 CSS 变量（:root 浅色 Material 3 light / .dark 深色），@theme 颜色 token 引用运行时变量（含透明度修饰经 color-mix 生效）；`renderer/theme.ts`（applyTheme/restoreTheme）+ 入口恢复 + 设置页浅/深切换按钮组，持久化 settings.theme；index.html 移除 body 内联背景。构建产物含两套变量，typecheck、lint、278 项测试通过。
 - **B16 关于版本号 + 崩溃恢复（待实施）**：设置页显示版本；崩溃提示与重启选项。
 
 ---

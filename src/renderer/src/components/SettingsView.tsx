@@ -3,6 +3,7 @@ import { createRendererLogger } from '../logging/rendererLogger'
 import { LOCALES, useI18n } from '../i18n'
 import ToggleSwitch from './ToggleSwitch'
 import { notify } from './toast'
+import { applyTheme, type Theme } from '../theme'
 import type { UpdateStatus } from '../../../preload/index'
 
 const log = createRendererLogger('renderer.settings')
@@ -39,6 +40,7 @@ export default function SettingsView() {
   const [syncInterval, setSyncInterval] = useState(500)
   const [proxyUrl, setProxyUrl] = useState('')
   const [proxyDraft, setProxyDraft] = useState('')
+  const [theme, setTheme] = useState<Theme>('dark')
 
   const handleProxyApply = async () => {
     try {
@@ -111,6 +113,12 @@ export default function SettingsView() {
       .catch((e) => {
         log.warn('settings.proxy-read-failed', '读取代理设置失败', e)
       })
+    window.electronAPI.settings
+      .get('theme', 'dark')
+      .then((value) => {
+        if (value === 'light' || value === 'dark') setTheme(value)
+      })
+      .catch(() => {})
   }, [])
 
   return (
@@ -125,9 +133,30 @@ export default function SettingsView() {
           title={t('settings.theme')}
           description={t('settings.themeDesc')}
         >
-          <span className="rounded-full bg-primary-container/15 px-3 py-1 font-label-sm text-label-sm text-primary">
-            {t('settings.dark')}
-          </span>
+          <div className="flex gap-1 rounded-lg border border-outline-variant bg-surface-container-highest p-1">
+            {(['light', 'dark'] as const).map((th) => (
+              <button
+                key={th}
+                onClick={() => {
+                  setTheme(th)
+                  applyTheme(th)
+                  window.electronAPI.settings
+                    .set('theme', th)
+                    .then(() => log.info('settings.theme', '主题已切换', { theme: th }))
+                    .catch((e) =>
+                      log.error('settings.theme-save-failed', '主题保存失败', e, { theme: th }),
+                    )
+                }}
+                className={`rounded-md px-3 py-1 font-label-sm text-label-sm transition-colors ${
+                  theme === th
+                    ? 'bg-primary text-on-primary'
+                    : 'text-on-surface-variant hover:text-on-surface'
+                }`}
+              >
+                {th === 'light' ? t('settings.light') : t('settings.dark')}
+              </button>
+            ))}
+          </div>
         </SettingRow>
         <SettingRow
           icon="language"

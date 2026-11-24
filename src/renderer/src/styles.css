@@ -1,51 +1,124 @@
 @import 'tailwindcss';
 
-/* SyncWave 设计系统（提取自 Stitch 项目 6834109722642382385 的 designTheme） */
+/* SyncWave 设计系统（提取自 Stitch 项目 6834109722642382385 的 designTheme）
+   颜色 token 引用运行时 CSS 变量，浅色/深色两套在 :root 与 .dark 上定义 */
+:root {
+  /* 浅色（Material 3 light，品牌绿基调） */
+  --sw-background: #f7f7f9;
+  --sw-surface: #f7f7f9;
+  --sw-surface-dim: #d8d9dd;
+  --sw-surface-bright: #f7f7f9;
+  --sw-surface-container-lowest: #ffffff;
+  --sw-surface-container-low: #f1f1f4;
+  --sw-surface-container: #ebebef;
+  --sw-surface-container-high: #e5e5ea;
+  --sw-surface-container-highest: #dfdfe5;
+  --sw-on-surface: #1a1c1e;
+  --sw-on-surface-variant: #43474e;
+  --sw-outline: #73777f;
+  --sw-outline-variant: #c3c7cf;
+  --sw-inverse-surface: #2e3135;
+  --sw-inverse-on-surface: #f0f0f4;
+  --sw-primary: #006c49;
+  --sw-primary-container: #8cf5c4;
+  --sw-on-primary: #ffffff;
+  --sw-on-primary-container: #002114;
+  --sw-inverse-primary: #68d9a7;
+  --sw-secondary: #3e4a5c;
+  --sw-secondary-container: #c7d5e9;
+  --sw-on-secondary: #ffffff;
+  --sw-on-secondary-container: #1a2738;
+  --sw-tertiary: #2d5ca8;
+  --sw-tertiary-container: #d6e3ff;
+  --sw-on-tertiary: #ffffff;
+  --sw-on-tertiary-container: #001945;
+  --sw-error: #ba1a1a;
+  --sw-error-container: #ffdad6;
+  --sw-on-error: #ffffff;
+  --sw-on-error-container: #410002;
+}
+
+.dark {
+  /* 深色（原有配色） */
+  --sw-background: #121318;
+  --sw-surface: #121318;
+  --sw-surface-dim: #121318;
+  --sw-surface-bright: #38393f;
+  --sw-surface-container-lowest: #0d0e13;
+  --sw-surface-container-low: #1a1b21;
+  --sw-surface-container: #1e1f25;
+  --sw-surface-container-high: #292a2f;
+  --sw-surface-container-highest: #34343a;
+  --sw-on-surface: #e3e1e9;
+  --sw-on-surface-variant: #bbcabf;
+  --sw-outline: #86948a;
+  --sw-outline-variant: #3c4a42;
+  --sw-inverse-surface: #e3e1e9;
+  --sw-inverse-on-surface: #2f3036;
+  --sw-primary: #4edea3;
+  --sw-primary-container: #10b981;
+  --sw-on-primary: #003824;
+  --sw-on-primary-container: #00422b;
+  --sw-inverse-primary: #006c49;
+  --sw-secondary: #b7c8e1;
+  --sw-secondary-container: #3a4a5f;
+  --sw-on-secondary: #213145;
+  --sw-on-secondary-container: #a9bad3;
+  --sw-tertiary: #adc6ff;
+  --sw-tertiary-container: #71a1ff;
+  --sw-on-tertiary: #002e6a;
+  --sw-on-tertiary-container: #00367a;
+  --sw-error: #ffb4ab;
+  --sw-error-container: #93000a;
+  --sw-on-error: #690005;
+  --sw-on-error-container: #ffdad6;
+}
+
 @theme {
   --font-sans: 'Geist', ui-sans-serif, system-ui, -apple-system, sans-serif;
   --font-mono: 'Geist Mono', ui-monospace, 'SF Mono', 'JetBrains Mono', monospace;
 
-  /* 表面色（暗色阶梯） */
-  --color-background: #121318;
-  --color-surface: #121318;
-  --color-surface-dim: #121318;
-  --color-surface-bright: #38393f;
-  --color-surface-container-lowest: #0d0e13;
-  --color-surface-container-low: #1a1b21;
-  --color-surface-container: #1e1f25;
-  --color-surface-container-high: #292a2f;
-  --color-surface-container-highest: #34343a;
-  --color-on-surface: #e3e1e9;
-  --color-on-surface-variant: #bbcabf;
-  --color-outline: #86948a;
-  --color-outline-variant: #3c4a42;
-  --color-inverse-surface: #e3e1e9;
-  --color-inverse-on-surface: #2f3036;
+  /* 表面色 */
+  --color-background: var(--sw-background);
+  --color-surface: var(--sw-surface);
+  --color-surface-dim: var(--sw-surface-dim);
+  --color-surface-bright: var(--sw-surface-bright);
+  --color-surface-container-lowest: var(--sw-surface-container-lowest);
+  --color-surface-container-low: var(--sw-surface-container-low);
+  --color-surface-container: var(--sw-surface-container);
+  --color-surface-container-high: var(--sw-surface-container-high);
+  --color-surface-container-highest: var(--sw-surface-container-highest);
+  --color-on-surface: var(--sw-on-surface);
+  --color-on-surface-variant: var(--sw-on-surface-variant);
+  --color-outline: var(--sw-outline);
+  --color-outline-variant: var(--sw-outline-variant);
+  --color-inverse-surface: var(--sw-inverse-surface);
+  --color-inverse-on-surface: var(--sw-inverse-on-surface);
 
   /* 主色（品牌绿） */
-  --color-primary: #4edea3;
-  --color-primary-container: #10b981;
-  --color-on-primary: #003824;
-  --color-on-primary-container: #00422b;
-  --color-inverse-primary: #006c49;
+  --color-primary: var(--sw-primary);
+  --color-primary-container: var(--sw-primary-container);
+  --color-on-primary: var(--sw-on-primary);
+  --color-on-primary-container: var(--sw-on-primary-container);
+  --color-inverse-primary: var(--sw-inverse-primary);
 
   /* 次要色（蓝灰） */
-  --color-secondary: #b7c8e1;
-  --color-secondary-container: #3a4a5f;
-  --color-on-secondary: #213145;
-  --color-on-secondary-container: #a9bad3;
+  --color-secondary: var(--sw-secondary);
+  --color-secondary-container: var(--sw-secondary-container);
+  --color-on-secondary: var(--sw-on-secondary);
+  --color-on-secondary-container: var(--sw-on-secondary-container);
 
   /* 第三色（蓝） */
-  --color-tertiary: #adc6ff;
-  --color-tertiary-container: #71a1ff;
-  --color-on-tertiary: #002e6a;
-  --color-on-tertiary-container: #00367a;
+  --color-tertiary: var(--sw-tertiary);
+  --color-tertiary-container: var(--sw-tertiary-container);
+  --color-on-tertiary: var(--sw-on-tertiary);
+  --color-on-tertiary-container: var(--sw-on-tertiary-container);
 
   /* 错误色 */
-  --color-error: #ffb4ab;
-  --color-error-container: #93000a;
-  --color-on-error: #690005;
-  --color-on-error-container: #ffdad6;
+  --color-error: var(--sw-error);
+  --color-error-container: var(--sw-error-container);
+  --color-on-error: var(--sw-on-error);
+  --color-on-error-container: var(--sw-on-error-container);
 
   /* 排版（语义字号：label / body / headline） */
   --text-label-sm: 11px/14px;
