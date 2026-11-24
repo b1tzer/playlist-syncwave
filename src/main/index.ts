@@ -32,6 +32,7 @@ import {
   findMappings,
 } from './mappingService'
 import { startKeepAliveScheduler, stopKeepAliveScheduler } from './keepAliveService'
+import { loadWindowState, trackWindowState } from './windowState'
 import { createPlaylistCacheService } from './playlistCacheService'
 import { getDatabase } from './appDatabase'
 import type { SyncTaskRecord, SyncChoice } from '@core/models/sync'
@@ -115,9 +116,12 @@ app.whenReady().then(() => {
 })
 
 function createWindow(): void {
+  const state = loadWindowState()
   const win = new BrowserWindow({
-    width: 1200,
-    height: 820,
+    width: state.width,
+    height: state.height,
+    x: state.x,
+    y: state.y,
     webPreferences: {
       preload: join(__dirname, '../preload/index.mjs'),
       contextIsolation: true,
@@ -125,6 +129,9 @@ function createWindow(): void {
       sandbox: false,
     },
   })
+
+  if (state.maximized) win.maximize()
+  trackWindowState(win)
 
   log.info('window.create', '创建主窗口', { dev: isDev })
 
