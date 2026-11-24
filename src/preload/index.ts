@@ -53,6 +53,9 @@ const api = {
   encrypt: (plain: string): Promise<string> => ipcRenderer.invoke('crypto:encrypt', plain),
   /** 在系统浏览器/平台应用中打开链接（http/https/平台深链白名单） */
   openExternal: (url: string): Promise<void> => ipcRenderer.invoke('app:open-external', url),
+  /** 打开文件选择器导入歌单文本文件（m3u/m3u8/csv/txt/lrc/json），取消返回 null */
+  openTextFile: (): Promise<{ name: string; content: string } | null> =>
+    ipcRenderer.invoke('app:open-text-file'),
   /** 渲染进程日志上报：主进程校验后写入统一日志管线 */
   log: (entry: LogEntry): void => {
     ipcRenderer.send('log:write', entry)

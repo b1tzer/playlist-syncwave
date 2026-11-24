@@ -1,12 +1,14 @@
 import {
   app,
   BrowserWindow,
+  dialog,
   ipcMain,
   safeStorage,
   shell,
   type IpcMainInvokeEvent,
 } from 'electron'
-import { join } from 'node:path'
+import { join, basename } from 'node:path'
+import { readFileSync, statSync } from 'node:fs'
 import { platformModules } from '../platforms'
 import { registerPlatform, getPlatform, resolveAdapter, listPlatforms } from './platformRegistry'
 import type { AdapterContext } from '../platforms/meta'
@@ -194,6 +196,41 @@ ipcMain.handle('app:set-auto-launch', (_event, enabled: unknown) => {
     app.setLoginItemSettings({ openAtLogin: enabled })
   }
   ipcLog.info('app.set-auto-launch', '开机启动设置已应用', { enabled, packaged: app.isPackaged })
+})
+
+/** 文件导入大小上限 */
+const MAX_IMPORT_BYTES = 5 * 1024 * 1024
+
+/** 打开文件选择器读取歌单文本文件（m3u/m3u8/csv/txt/lrc/json），取消返回 null */
+ipcMain.handle('app:open-text-file', async () => {
+  const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
+  if (!win) return null
+  const zh = getSetting<string>('language', 'zh-CN') !== 'en-US'
+  const result = await dialog.showOpenDialog(win, {
+    title: zh ? '选择歌单文件' : 'Choose playlist file',
+    properties: ['openFile'],
+    filters: [
+      {
+        name: zh ? '歌单文件' : 'Playlist files',
+        extensions: ['m3u', 'm3u8', 'csv', 'txt', 'lrc', 'json'],
+      },
+      { name: zh ? '所有文件' : 'All files', extensions: ['*'] },
+    ],
+  })
+  if (result.canceled || result.filePaths.length === 0) return null
+  const filePath = result.filePaths[0]
+  try {
+    const size = statSync(filePath).size
+    if (size > MAX_IMPORT_BYTES) {
+      throw new Error(zh ? '文件过大（上限 5MB）' : 'File too large (5MB limit)')
+    }
+    const content = readFileSync(filePath, 'utf-8').replace(/^\uFEFF/, '')
+    ipcLog.info('app.open-text-file', '读取歌单文件', { name: basename(filePath), size })
+    return { name: basename(filePath), content }
+  } catch (e) {
+    ipcLog.error('app.open-text-file', '读取文件失败', e)
+    throw e
+  }
 })
 
 ipcMain.handle('crypto:encrypt', (_event, plain: string) => {

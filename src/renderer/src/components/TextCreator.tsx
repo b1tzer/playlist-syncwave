@@ -146,6 +146,20 @@ export default function TextCreator({
     }
   }
 
+  /** 导入歌单文件（m3u/m3u8/csv/txt/lrc/json）：内容追加为行，复用自动解析管线 */
+  const handleImportFile = async () => {
+    try {
+      const file = await window.electronAPI.openTextFile()
+      if (!file) return
+      log.info('text-creator.import-file', '导入歌单文件', { name: file.name })
+      const rows = file.content.split(/\r\n|\r|\n/)
+      setLines((prev) => [...prev, ...rows])
+    } catch (e) {
+      log.error('text-creator.import-file-failed', '导入文件失败', e)
+      notify('error', t('textCreator.importFailed'), e instanceof Error ? e.message : '')
+    }
+  }
+
   /** 保存解析结果到本地歌单库（去重后写入，无需登录） */
   const handleSaveLocal = async () => {
     if (result.songs.length === 0 || savingLocal) return
@@ -443,6 +457,15 @@ export default function TextCreator({
               >
                 <span className="material-symbols-outlined text-base">delete_sweep</span>
                 {t('textCreator.clear')}
+              </button>
+              <button
+                onClick={() => void handleImportFile()}
+                disabled={running}
+                title={t('textCreator.importFile')}
+                className="flex shrink-0 items-center gap-1.5 rounded-lg border border-outline-variant px-3 py-1.5 font-label-md text-label-md text-on-surface-variant transition-colors hover:bg-surface-container-high hover:text-primary disabled:opacity-40"
+              >
+                <span className="material-symbols-outlined text-base">upload_file</span>
+                {t('textCreator.importFile')}
               </button>
               <button
                 onClick={() => void handleSaveLocal()}
