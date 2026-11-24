@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
 import { parseText } from '@core/parser/parseText'
-import type { ParseResult } from '@core/models/parse'
-import type { SyncChoice, SyncReport } from '@core/models/sync'
+import type { FailedLine, ParseResult } from '@core/models/parse'
+import type { SyncChoice, SyncFailedItem, SyncReport } from '@core/models/sync'
 import type { PlatformAccount, PlatformMeta } from '@core/models/platform'
 import { createRendererLogger } from '../logging/rendererLogger'
 import type { SyncTaskRecord } from '@core/models/sync'
+import { useI18n } from '../i18n'
+import type { TranslationKey } from '../i18n/translations'
 
 const log = createRendererLogger('renderer.text-creator')
 
@@ -21,16 +23,41 @@ interface TextCreatorProps {
   onTaskUpdate: (task: SyncTaskRecord) => void
 }
 
-const FORMATS = [
-  { icon: 'auto_fix_high', title: '自动嗅探模式', example: '歌名与歌手顺序自动识别' },
-  { icon: 'format_list_numbered', title: '歌名 - 歌手', example: '晴天 - 周杰伦' },
-  { icon: 'swap_vert', title: '歌手 - 歌名', example: 'Taylor Swift - Cruel Summer' },
-  { icon: 'format_list_bulleted', title: '序列编号清单', example: '1. 海阔天空 / Beyond' },
-  { icon: 'forum', title: '微信/社群聊天混排', example: '推荐你听《乌梅子酱》李荣浩' },
-  { icon: 'filter_alt_off', title: '内置容错', example: '自动过滤表情包、多余标点、时间戳' },
+const FORMATS: Array<{ icon: string; titleKey: TranslationKey; exampleKey: TranslationKey }> = [
+  {
+    icon: 'auto_fix_high',
+    titleKey: 'textCreator.formats.auto.title',
+    exampleKey: 'textCreator.formats.auto.example',
+  },
+  {
+    icon: 'format_list_numbered',
+    titleKey: 'textCreator.formats.titleArtist.title',
+    exampleKey: 'textCreator.formats.titleArtist.example',
+  },
+  {
+    icon: 'swap_vert',
+    titleKey: 'textCreator.formats.artistTitle.title',
+    exampleKey: 'textCreator.formats.artistTitle.example',
+  },
+  {
+    icon: 'format_list_bulleted',
+    titleKey: 'textCreator.formats.numbered.title',
+    exampleKey: 'textCreator.formats.numbered.example',
+  },
+  {
+    icon: 'forum',
+    titleKey: 'textCreator.formats.chat.title',
+    exampleKey: 'textCreator.formats.chat.example',
+  },
+  {
+    icon: 'filter_alt_off',
+    titleKey: 'textCreator.formats.tolerant.title',
+    exampleKey: 'textCreator.formats.tolerant.example',
+  },
 ]
 
 export default function TextCreator({ platforms, accounts, onTaskUpdate }: TextCreatorProps) {
+  const { t, formatTime, formatDate } = useI18n()
   const [text, setText] = useState('')
   const [result, setResult] = useState<ParseResult | null>(null)
   const [playlistName, setPlaylistName] = useState('')
@@ -58,6 +85,34 @@ export default function TextCreator({ platforms, accounts, onTaskUpdate }: TextC
   }, [targetPlatforms, target])
 
   const loggedIn = target !== '' && accounts[target] !== null
+
+  /** 同步失败条目按稳定 reason 码翻译；平台原始错误（search-failed）直接透传。 */
+  const failedMessage = (f: SyncFailedItem): string => {
+    const title = `${f.query.title}${f.query.artist ? ` - ${f.query.artist}` : ''}`
+    switch (f.reason) {
+      case 'no-match':
+        return t('sync.failedNoMatch', { title })
+      case 'unresolved':
+        return t('sync.failedUnresolved', { title })
+      case 'rate-limited':
+        return t('sync.failedRateLimited')
+      default:
+        return f.message
+    }
+  }
+
+  const failedReason = (reason: FailedLine['reason']): string => {
+    switch (reason) {
+      case 'missing-title':
+        return t('textCreator.missingTitle')
+      case 'missing-artist':
+        return t('textCreator.missingArtist')
+      case 'ambiguous-order':
+        return t('textCreator.ambiguousOrder')
+      default:
+        return t('textCreator.unrecognized')
+    }
+  }
 
   const handleParse = () => {
     log.info('parse.click', '点击解析歌曲', { chars: text.length })
@@ -93,7 +148,8 @@ export default function TextCreator({ platforms, accounts, onTaskUpdate }: TextC
     setReport(null)
     setProgress({ ratio: 0, stage: 'matching' })
 
-    const name = playlistName.trim() || `文本导入 ${new Date().toLocaleDateString()}`
+    const name =
+      playlistName.trim() || t('textCreator.defaultPlaylistName', { date: formatDate(new Date()) })
     const taskId = `task-${Date.now()}`
     const queries = result.songs.map((s) => ({
       title: s.title,
@@ -105,12 +161,12 @@ export default function TextCreator({ platforms, accounts, onTaskUpdate }: TextC
       id: taskId,
       name,
       targetPlatform: target,
-      source: '文本导入',
+      source: 'text-import',
       status: 'running',
       total: queries.length,
       added: 0,
       failed: 0,
-      createdAt: new Date().toLocaleTimeString('zh-CN', { hour12: false }),
+      createdAt: formatTime(new Date()),
       progress: 0,
       failedDetail: [],
     })
@@ -122,12 +178,12 @@ export default function TextCreator({ platforms, accounts, onTaskUpdate }: TextC
           id: taskId,
           name,
           targetPlatform: target,
-          source: '文本导入',
+          source: 'text-import',
           status: 'running',
           total: queries.length,
           added: 0,
           failed: 0,
-          createdAt: new Date().toLocaleTimeString('zh-CN', { hour12: false }),
+          createdAt: formatTime(new Date()),
           progress: p.ratio,
           failedDetail: [],
         })
@@ -150,14 +206,14 @@ export default function TextCreator({ platforms, accounts, onTaskUpdate }: TextC
           id: taskId,
           name,
           targetPlatform: target,
-          source: '文本导入',
+          source: 'text-import',
           status: 'running',
           total: queries.length,
           added: 0,
           failed: rep.failed.length,
-          createdAt: new Date().toLocaleTimeString('zh-CN', { hour12: false }),
+          createdAt: formatTime(new Date()),
           progress: 1,
-          failedDetail: rep.failed.map((f) => `${f.query.title}（${f.message}）`),
+          failedDetail: rep.failed.map(failedMessage),
         })
         return
       }
@@ -174,29 +230,29 @@ export default function TextCreator({ platforms, accounts, onTaskUpdate }: TextC
         id: taskId,
         name,
         targetPlatform: target,
-        source: '文本导入',
+        source: 'text-import',
         status: ok ? 'done' : 'failed',
         total: queries.length,
         added: rep.added,
         failed: rep.failed.length,
-        createdAt: new Date().toLocaleTimeString('zh-CN', { hour12: false }),
+        createdAt: formatTime(new Date()),
         progress: 1,
-        failedDetail: rep.failed.map((f) => `${f.query.title}（${f.message}）`),
+        failedDetail: rep.failed.map(failedMessage),
       })
     } catch (e) {
-      const msg = e instanceof Error ? e.message : '同步失败'
+      const msg = e instanceof Error ? e.message : t('sync.failedGeneric')
       log.error('sync.failed', '同步失败', e, { targetPlatform: target })
       setSyncError(msg)
       onTaskUpdate({
         id: taskId,
         name,
         targetPlatform: target,
-        source: '文本导入',
+        source: 'text-import',
         status: 'failed',
         total: queries.length,
         added: 0,
         failed: queries.length,
-        createdAt: new Date().toLocaleTimeString('zh-CN', { hour12: false }),
+        createdAt: formatTime(new Date()),
         progress: 1,
         failedDetail: [msg],
       })
@@ -244,18 +300,18 @@ export default function TextCreator({ platforms, accounts, onTaskUpdate }: TextC
         id: `task-${Date.now()}`,
         name: rep.playlistName,
         targetPlatform: target,
-        source: '文本导入',
+        source: 'text-import',
         status: ok ? 'done' : 'failed',
         total: rep.total,
         added: rep.added,
         failed: rep.failed.length,
-        createdAt: new Date().toLocaleTimeString('zh-CN', { hour12: false }),
+        createdAt: formatTime(new Date()),
         progress: 1,
-        failedDetail: rep.failed.map((f) => `${f.query.title}（${f.message}）`),
+        failedDetail: rep.failed.map(failedMessage),
       })
     } catch (e) {
       log.error('sync.confirm-failed', '确认同步失败', e, { targetPlatform: target })
-      setSyncError(e instanceof Error ? e.message : '同步失败')
+      setSyncError(e instanceof Error ? e.message : t('sync.failedGeneric'))
     } finally {
       off()
       setSyncing(false)
@@ -273,9 +329,11 @@ export default function TextCreator({ platforms, accounts, onTaskUpdate }: TextC
             <span className="material-symbols-outlined text-sm">data_object</span>
             <span>MODULE://TEXT_IMPORT PARSER_CORE_V2.1</span>
           </div>
-          <h1 className="mt-1 font-headline-lg text-headline-lg font-semibold">文本快速创建</h1>
+          <h1 className="mt-1 font-headline-lg text-headline-lg font-semibold">
+            {t('textCreator.title')}
+          </h1>
           <p className="mt-1 max-w-xl font-body-md text-body-md text-on-surface-variant">
-            粘贴混合文本、聊天记录或杂乱歌曲清单，本地智能正则与语义解析引擎将快速提取歌名与歌手，支持跨平台即时检索与同步。
+            {t('textCreator.subtitle')}
           </p>
         </div>
         <div className="flex gap-2">
@@ -288,7 +346,7 @@ export default function TextCreator({ platforms, accounts, onTaskUpdate }: TextC
             className="flex items-center gap-1.5 rounded-lg border border-outline-variant px-3 py-2 font-label-md text-label-md text-on-surface-variant transition-colors hover:bg-surface-container-high hover:text-on-surface"
           >
             <span className="material-symbols-outlined text-base">auto_fix_high</span>
-            载入示例数据
+            {t('textCreator.loadExample')}
             <span className="font-label-mono text-label-mono text-outline">⌥E</span>
           </button>
           <button
@@ -301,7 +359,7 @@ export default function TextCreator({ platforms, accounts, onTaskUpdate }: TextC
             className="flex items-center gap-1.5 rounded-lg border border-outline-variant px-3 py-2 font-label-md text-label-md text-on-surface-variant transition-colors hover:bg-surface-container-high hover:text-on-surface"
           >
             <span className="material-symbols-outlined text-base">help_outline</span>
-            支持格式说明
+            {t('textCreator.formatHelp')}
             <span className="material-symbols-outlined text-sm">
               {showFormats ? 'expand_less' : 'expand_more'}
             </span>
@@ -314,11 +372,13 @@ export default function TextCreator({ platforms, accounts, onTaskUpdate }: TextC
           <p className="font-label-mono text-label-mono text-outline">SUPPORTED FORMATS</p>
           <div className="mt-3 grid grid-cols-2 gap-3 lg:grid-cols-3">
             {FORMATS.map((f) => (
-              <div key={f.title} className="flex items-start gap-2">
+              <div key={f.titleKey} className="flex items-start gap-2">
                 <span className="material-symbols-outlined text-base text-primary">{f.icon}</span>
                 <div>
-                  <p className="font-label-md text-label-md font-medium">{f.title}</p>
-                  <p className="font-label-sm text-label-sm text-on-surface-variant">{f.example}</p>
+                  <p className="font-label-md text-label-md font-medium">{t(f.titleKey)}</p>
+                  <p className="font-label-sm text-label-sm text-on-surface-variant">
+                    {t(f.exampleKey)}
+                  </p>
                 </div>
               </div>
             ))}
@@ -331,7 +391,7 @@ export default function TextCreator({ platforms, accounts, onTaskUpdate }: TextC
           <textarea
             value={text}
             onChange={(e) => setText(e.target.value)}
-            placeholder={`每行一首，支持「歌名 - 歌手」等格式。例如：\n${EXAMPLE}`}
+            placeholder={`${t('textCreator.textareaPlaceholder')}\n${EXAMPLE}`}
             rows={12}
             className="w-full resize-y rounded-lg border border-outline-variant bg-surface-container-low p-4 font-mono text-body-md text-on-surface outline-none placeholder:text-outline focus:border-primary"
           />
@@ -342,7 +402,7 @@ export default function TextCreator({ platforms, accounts, onTaskUpdate }: TextC
               className="flex items-center gap-1.5 rounded-lg bg-primary px-4 py-2 font-label-md text-label-md font-medium text-on-primary transition-colors hover:bg-primary/85 disabled:opacity-40"
             >
               <span className="material-symbols-outlined text-base">manage_search</span>
-              解析歌曲
+              {t('textCreator.parse')}
             </button>
             <button
               onClick={() => {
@@ -356,11 +416,11 @@ export default function TextCreator({ platforms, accounts, onTaskUpdate }: TextC
               className="flex items-center gap-1.5 rounded-lg border border-outline-variant px-4 py-2 font-label-md text-label-md text-on-surface-variant transition-colors hover:bg-surface-container-high hover:text-on-surface disabled:opacity-40"
             >
               <span className="material-symbols-outlined text-base">delete_sweep</span>
-              清空
+              {t('textCreator.clear')}
             </button>
             <span className="ml-auto font-label-sm text-label-sm text-on-surface-variant">
               <span className="material-symbols-outlined align-bottom text-sm">auto_awesome</span>{' '}
-              格式与字段顺序自动识别，无需手动指定
+              {t('textCreator.autoHint')}
             </span>
           </div>
         </div>
@@ -376,14 +436,14 @@ export default function TextCreator({ platforms, accounts, onTaskUpdate }: TextC
               >
                 {targetPlatforms.map((p) => (
                   <option key={p.id} value={p.id}>
-                    同步到 {p.name}
+                    {t('textCreator.syncTo', { name: p.name })}
                   </option>
                 ))}
               </select>
               <input
                 value={playlistName}
                 onChange={(e) => setPlaylistName(e.target.value)}
-                placeholder="新歌单名称（留空自动命名）"
+                placeholder={t('textCreator.playlistNamePlaceholder')}
                 className="w-full rounded-lg border border-outline-variant bg-surface px-3 py-2 font-body-md text-body-md text-on-surface outline-none placeholder:text-outline focus:border-primary"
               />
               <button
@@ -394,7 +454,7 @@ export default function TextCreator({ platforms, accounts, onTaskUpdate }: TextC
                 <span className="material-symbols-outlined text-base">
                   {syncing ? 'progress_activity' : 'rocket_launch'}
                 </span>
-                {syncing ? '同步中…' : '创建歌单并同步'}
+                {syncing ? t('textCreator.syncing') : t('textCreator.createAndSync')}
               </button>
 
               {syncing && progress && (
@@ -406,7 +466,9 @@ export default function TextCreator({ platforms, accounts, onTaskUpdate }: TextC
                     />
                   </div>
                   <p className="mt-1 font-label-sm text-label-sm text-on-surface-variant">
-                    {progress.stage === 'matching' ? '正在匹配歌曲…' : '正在写入歌单…'}{' '}
+                    {progress.stage === 'matching'
+                      ? t('textCreator.matching')
+                      : t('textCreator.adding')}{' '}
                     {Math.round(progress.ratio * 100)}%
                   </p>
                 </div>
@@ -420,24 +482,25 @@ export default function TextCreator({ platforms, accounts, onTaskUpdate }: TextC
                 <div className="space-y-1 font-label-sm text-label-sm">
                   {report.playlistId ? (
                     <p className="text-on-surface">
-                      <span className="font-medium text-primary">同步完成</span>
-                      ：{report.added}/{report.total} 首已写入「{report.playlistName}」
+                      <span className="font-medium text-primary">{t('textCreator.syncDone')}</span>
+                      {t('textCreator.syncDoneDetail', {
+                        added: report.added,
+                        total: report.total,
+                        name: report.playlistName,
+                      })}
                     </p>
                   ) : (
                     <p className="text-on-surface">
-                      <span className="font-medium text-tertiary">未创建歌单</span>
-                      ：没有匹配到任何歌曲，请检查后重试
+                      <span className="font-medium text-tertiary">
+                        {t('textCreator.noPlaylist')}
+                      </span>
+                      {t('textCreator.noPlaylistDetail')}
                     </p>
                   )}
                   {report.failed.length > 0 && (
                     <ul className="max-h-24 space-y-1 overflow-y-auto text-error">
                       {report.failed.map((f, i) => (
-                        <li key={i}>
-                          · {f.query.title}
-                          {f.reason === 'rate-limited'
-                            ? '（操作频繁被限流，请稍等几分钟再试）'
-                            : `（${f.message}）`}
-                        </li>
+                        <li key={i}>· {failedMessage(f)}</li>
                       ))}
                     </ul>
                   )}
@@ -448,7 +511,7 @@ export default function TextCreator({ platforms, accounts, onTaskUpdate }: TextC
             <div className="rounded-lg border border-dashed border-outline-variant p-4 text-center">
               <span className="material-symbols-outlined text-3xl text-outline">switch_account</span>
               <p className="mt-2 font-label-sm text-label-sm text-on-surface-variant">
-                请先在「账号管理」登录{' '}
+                {t('textCreator.loginFirst')}{' '}
                 {targetPlatforms.find((p) => p.id === target)?.name ?? ''}
               </p>
             </div>
@@ -460,14 +523,20 @@ export default function TextCreator({ platforms, accounts, onTaskUpdate }: TextC
         <div className="mt-4 rounded-lg border border-outline-variant bg-surface-container-low">
           <div className="flex items-center justify-between border-b border-outline-variant px-4 py-2">
             <p className="font-label-md text-label-md text-on-surface">
-              识别出{' '}
-              <span className="font-medium text-primary">{result.songs.length}</span> 首歌曲
+              {t('textCreator.recognizedPrefix')}{' '}
+              <span className="font-medium text-primary">{result.songs.length}</span>{' '}
+              {t('textCreator.recognizedSuffix')}
               {failedCount > 0 && (
-                <span className="ml-2 text-tertiary">{failedCount} 行解析失败</span>
+                <span className="ml-2 text-tertiary">
+                  {t('textCreator.linesFailed', { count: failedCount })}
+                </span>
               )}
               {result.detectedOrder && (
                 <span className="ml-2 rounded-full bg-surface-container-highest px-2 py-0.5 text-label-sm text-on-surface-variant">
-                  已自动识别：{result.detectedOrder === 'title-first' ? '歌名 - 歌手' : '歌手 - 歌名'}
+                  {t('textCreator.autoDetected')}
+                  {result.detectedOrder === 'title-first'
+                    ? t('textCreator.titleArtist')
+                    : t('textCreator.artistTitle')}
                 </span>
               )}
             </p>
@@ -494,7 +563,7 @@ export default function TextCreator({ platforms, accounts, onTaskUpdate }: TextC
                     {s.artist ? (
                       <span className="truncate text-on-surface-variant">- {s.artist}</span>
                     ) : (
-                      <span className="text-tertiary">未识别歌手</span>
+                      <span className="text-tertiary">{t('textCreator.noArtist')}</span>
                     )}
                     {ambiguous && (
                       <div className="ml-auto flex shrink-0 items-center gap-1">
@@ -504,7 +573,7 @@ export default function TextCreator({ platforms, accounts, onTaskUpdate }: TextC
                             <button
                               key={c.title}
                               onClick={() => applyCandidate(i, c.title, c.artist)}
-                              title="点选使用该候选"
+                              title={t('textCreator.pickCandidate')}
                               className={
                                 active
                                   ? 'rounded-lg border border-primary bg-primary px-2 py-0.5 font-label-sm text-label-sm text-on-primary'
@@ -528,8 +597,11 @@ export default function TextCreator({ platforms, accounts, onTaskUpdate }: TextC
             <ul className="space-y-1 border-t border-outline-variant px-4 py-2">
               {result.failedLines.map((f) => (
                 <li key={f.lineNumber} className="font-label-sm text-label-sm text-error">
-                  第 {f.lineNumber} 行：{f.raw || '（空）'}（
-                  {f.reason === 'missing-title' ? '缺少歌名' : '缺少歌手'}）
+                  {t('textCreator.failedLine', {
+                    line: f.lineNumber,
+                    raw: f.raw || t('textCreator.emptyLine'),
+                    reason: failedReason(f.reason),
+                  })}
                 </li>
               ))}
             </ul>
@@ -537,7 +609,7 @@ export default function TextCreator({ platforms, accounts, onTaskUpdate }: TextC
 
           {result.ignoredLines.length > 0 && (
             <p className="border-t border-outline-variant px-4 py-2 font-label-sm text-label-sm text-on-surface-variant">
-              已自动忽略 {result.ignoredLines.length} 行非歌曲内容（分享文案/歌词信息等）
+              {t('textCreator.ignoredLines', { count: result.ignoredLines.length })}
             </p>
           )}
         </div>
@@ -548,10 +620,10 @@ export default function TextCreator({ platforms, accounts, onTaskUpdate }: TextC
           <div className="flex items-center gap-2">
             <span className="material-symbols-outlined text-tertiary">playlist_add_check</span>
             <p className="font-body-md text-body-md font-medium">
-              发现 {pendingChoices.length} 首同名不同歌手的歌曲，请手动选择
+              {t('textCreator.choiceTitle', { count: pendingChoices.length })}
             </p>
             <span className="ml-auto font-label-sm text-label-sm text-on-surface-variant">
-              其余完全匹配的歌曲将自动添加
+              {t('textCreator.choiceHint')}
             </span>
           </div>
           <ul className="mt-3 space-y-2">
@@ -604,7 +676,7 @@ export default function TextCreator({ platforms, accounts, onTaskUpdate }: TextC
             <span className="material-symbols-outlined text-base">
               {syncing ? 'progress_activity' : 'task_alt'}
             </span>
-            {syncing ? '写入中…' : '确认选择并创建歌单'}
+            {syncing ? t('textCreator.writing') : t('textCreator.confirmAndCreate')}
           </button>
           {syncError && <p className="mt-2 font-label-sm text-label-sm text-error">{syncError}</p>}
         </div>

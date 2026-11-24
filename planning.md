@@ -210,6 +210,14 @@ tests/
 - **测试**：回归用例（用户清单 7 行全对、斜杠/逗号乐队名不误判）3 项 + planSync alternatives 4 项，共 131 项全绿；typecheck、lint 通过。
 - 待办：手工验收真实平台同步（该清单应 7 首全部匹配并自动建单）。
 
+### 国际化接入 ✅（中英双语）
+- **范围**：渲染层全量 UI 文案（6 个组件）+ 窗口标题/`<html lang>`；core 与主进程日志保持中文（不面向用户）。
+- **方案**：自研轻量类型安全 i18n（不引入第三方依赖）。`renderer/src/i18n/translations.ts` 扁平键词典（zh-CN 基准 + en-US 以 `Record<TranslationKey, string>` 编译期强制键一致）；`renderer/src/i18n/index.tsx` 提供 `I18nProvider`/`useI18n`（`t()` 支持 `{param}` 插值、`formatTime/formatDate` 按语言格式化）。
+- **持久化**：语言偏好走现有 `settings.set('language', ...)`（SQLite），启动时 `settings.get` 恢复，非法值回退 zh-CN；设置页「语言」行改为中/英切换器。
+- **可翻译性修正**：同步历史 `source` 由中文文本改为稳定代码 `text-import`，展示时翻译（旧数据原样显示）；同步失败/解析失败按稳定 reason 码在渲染层翻译，平台原始错误透传；二维码轮询状态改为状态码（waiting/success/expired/scanned）渲染时翻译。
+- **测试**：`tests/renderer/i18n.test.ts` 6 项（键集合/占位符一致性、插值、未知键回退、normalizeLocale、LOCALES）；共 171 项全绿；typecheck、lint 通过。
+- 待办：手工验收中英切换即时生效、重启后语言保持、同步历史新旧数据展示。
+
 | 风险 | 缓解 |
 |---|---|
 | 平台 API 变更/风控 | 适配器接口解耦；限速 + 指数退避；文件导入作为降级通道 |

@@ -8,10 +8,12 @@ import SyncCenter from './components/SyncCenter'
 import type { SyncTaskRecord } from '@core/models/sync'
 import SettingsView from './components/SettingsView'
 import { createRendererLogger } from './logging/rendererLogger'
+import { useI18n } from './i18n'
 
 const log = createRendererLogger('renderer.app')
 
 export default function App() {
+  const { t } = useI18n()
   const [view, setView] = useState<View>('create')
   const [platforms, setPlatforms] = useState<PlatformMeta[]>([])
   const [accounts, setAccounts] = useState<Record<string, PlatformAccount | null>>({})
@@ -122,7 +124,7 @@ export default function App() {
               ref={searchRef}
               value={search}
               onChange={(e) => handleSearch(e.target.value)}
-              placeholder="搜索歌单"
+              placeholder={t('app.searchPlaceholder')}
               className="w-full bg-transparent font-body-md text-body-md text-on-surface outline-none placeholder:text-outline"
             />
             {search && (
@@ -140,7 +142,7 @@ export default function App() {
           </div>
           <div className="ml-auto flex items-center gap-2 font-label-mono text-label-mono text-outline">
             <span className="material-symbols-outlined text-sm">security</span>
-            本地优先 · 凭证经系统钥匙串加密
+            {t('app.securityNote')}
           </div>
         </header>
 

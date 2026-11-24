@@ -27,7 +27,7 @@
 
 ## 代码风格
 - TypeScript strict，禁止 `any`（用 `unknown` + 类型守卫）。
-- 用户可见文案用简体中文；变量/函数/文件用英文。
+- 用户可见 UI 文案必须走 i18n（`renderer/src/i18n/translations.ts` 同时补 zh-CN/en-US），禁止在组件里硬编码；日志/注释用简体中文；变量/函数/文件用英文。
 - 不写解释性注释；只在「为什么」不直观处写一行。
 - 依赖版本以 package.json 为准，不臆造不存在的包名或版本。
 
@@ -41,7 +41,9 @@
 - ESM 下不要用 `const require = createRequire()` —— 与 electron-vite 注入的 require 冲突；用内联 `createRequire(import.meta.url)(...)`。
 - QQ音乐 Node 模式的 `/login/qr/*`（key/create/check）路由是 **GET**，不是 POST（serverless 模式可以 POST，Node 模式会 405）。
 - 主进程必须吞掉 stdout/stderr 的 EPIPE（NCM logger 写 console 会触发崩溃）。
-- better-sqlite3@13.2.0 已引入（同步历史持久化）。安装后需 `npx electron-builder install-app-deps` rebuild 到 Electron ABI（已验证 Node 与 Electron 双环境可用）。数据库文件在 `userData/sync-history.db`（WAL 模式）。
+- better-sqlite3@13.2.0 已引入（统一应用数据库）。安装后需 `npx electron-builder install-app-deps` rebuild 到 Electron ABI（已验证 Node 与 Electron 双环境可用）。数据库文件在 `userData/app.db`（WAL 模式），含三张表：`sync_tasks`（同步历史）、`app_settings`（应用设置 key-value）、`song_mappings`（跨平台歌曲映射缓存，人工确认优先）。
+- 凭证与 QQ 会话文件（credentials.json / qq-session*.json / qq-device.json）保持文件存储，不进 SQLite（凭证安全隔离）。
+- 数据层模式：`createXxxStore(db)` 依赖注入 + `appDatabase.getDatabase()` 统一入口 + `xxxService.ts` 供 IPC 调用。
 - npm 11 默认拦截安装脚本（如 electron 二进制），需 `npm install-scripts approve <pkg>` 后再 rebuild。
 - 网易云 API 风控敏感：搜索请求需限速（>=500ms）并支持重试；连续快速请求会触发 405 风控。
 - QQ音乐 sealed token 依赖 `QQ_SESSION_SECRET`，该密钥已持久化到 userData，删除会导致全部登录失效。

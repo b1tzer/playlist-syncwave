@@ -1,16 +1,18 @@
 import type { PlatformAccount } from '@core/models/platform'
 import { createRendererLogger } from '../logging/rendererLogger'
+import { useI18n } from '../i18n'
+import type { TranslationKey } from '../i18n/translations'
 
 const log = createRendererLogger('renderer.nav')
 
 export type View = 'create' | 'playlists' | 'sync' | 'accounts' | 'settings'
 
-const NAV_ITEMS: Array<{ id: View; label: string; icon: string; shortcut?: string }> = [
-  { id: 'create', label: '快速创建', icon: 'edit_note', shortcut: '⌘N' },
-  { id: 'playlists', label: '我的歌单', icon: 'queue_music', shortcut: '⌘P' },
-  { id: 'sync', label: '同步中心', icon: 'sync_alt', shortcut: '⌘S' },
-  { id: 'accounts', label: '账号管理', icon: 'switch_account', shortcut: '⌘A' },
-  { id: 'settings', label: '设置', icon: 'settings', shortcut: '⌘,' },
+const NAV_ITEMS: Array<{ id: View; labelKey: TranslationKey; icon: string; shortcut?: string }> = [
+  { id: 'create', labelKey: 'nav.create', icon: 'edit_note', shortcut: '⌘N' },
+  { id: 'playlists', labelKey: 'nav.playlists', icon: 'queue_music', shortcut: '⌘P' },
+  { id: 'sync', labelKey: 'nav.sync', icon: 'sync_alt', shortcut: '⌘S' },
+  { id: 'accounts', labelKey: 'nav.accounts', icon: 'switch_account', shortcut: '⌘A' },
+  { id: 'settings', labelKey: 'nav.settings', icon: 'settings', shortcut: '⌘,' },
 ]
 
 interface SidebarProps {
@@ -21,6 +23,7 @@ interface SidebarProps {
 }
 
 export default function Sidebar({ view, onNavigate, runningTasks, accounts }: SidebarProps) {
+  const { t } = useI18n()
   const loggedInCount = Object.values(accounts).filter((a) => a !== null).length
 
   return (
@@ -54,7 +57,7 @@ export default function Sidebar({ view, onNavigate, runningTasks, accounts }: Si
               <span className={`material-symbols-outlined text-xl ${active ? 'fill' : ''}`}>
                 {item.icon}
               </span>
-              <span className="font-label-md text-label-md flex-1">{item.label}</span>
+              <span className="font-label-md text-label-md flex-1">{t(item.labelKey)}</span>
               {item.id === 'sync' && runningTasks > 0 && (
                 <span className="rounded-full bg-primary px-1.5 py-0.5 font-label-sm text-label-sm font-medium text-on-primary">
                   {runningTasks}
@@ -78,7 +81,12 @@ export default function Sidebar({ view, onNavigate, runningTasks, accounts }: Si
           </div>
           <div className="mt-2 flex items-center gap-2 font-label-mono text-label-mono text-outline">
             <span className="material-symbols-outlined text-sm">dark_mode</span>
-            <span>{loggedInCount}/2 平台在线</span>
+            <span>
+              {t('sidebar.platformsOnline', {
+                count: loggedInCount,
+                total: Object.keys(accounts).length,
+              })}
+            </span>
           </div>
           <div className="mt-1 flex items-center gap-2 font-label-mono text-label-mono text-outline">
             <span className="material-symbols-outlined text-sm">terminal</span>

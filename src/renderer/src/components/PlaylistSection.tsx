@@ -6,6 +6,7 @@ import type {
   PlatformSong,
 } from '@core/models/platform'
 import { createRendererLogger } from '../logging/rendererLogger'
+import { useI18n } from '../i18n'
 
 const log = createRendererLogger('renderer.playlist')
 
@@ -16,6 +17,7 @@ interface PlaylistSectionProps {
 }
 
 export default function PlaylistSection({ platforms, accounts, searchQuery }: PlaylistSectionProps) {
+  const { t } = useI18n()
   const [active, setActive] = useState<string>('')
 
   // 平台列表动态变化时，校正当前选中的平台
@@ -48,11 +50,11 @@ export default function PlaylistSection({ platforms, accounts, searchQuery }: Pl
       setPlaylists(list)
     } catch (e) {
       log.error('playlist.list.fetch-failed', '拉取歌单列表失败', e, { platform: active })
-      setError(e instanceof Error ? e.message : '拉取歌单失败')
+      setError(e instanceof Error ? e.message : t('playlist.fetchFailed'))
     } finally {
       setLoading(false)
     }
-  }, [active, loggedIn])
+  }, [active, loggedIn, t])
 
   useEffect(() => {
     setPlaylists([])
@@ -82,7 +84,7 @@ export default function PlaylistSection({ platforms, accounts, searchQuery }: Pl
       setSongs(list)
     } catch (e) {
       log.error('playlist.songs.fetch-failed', '拉取歌曲失败', e, { platform: active, playlistId: id })
-      setError(e instanceof Error ? e.message : '拉取歌曲失败')
+      setError(e instanceof Error ? e.message : t('playlist.fetchSongsFailed'))
     } finally {
       setLoading(false)
     }
@@ -96,9 +98,11 @@ export default function PlaylistSection({ platforms, accounts, searchQuery }: Pl
             <span className="material-symbols-outlined text-sm">library_music</span>
             <span>MODULE://PLAYLIST_BROWSER</span>
           </div>
-          <h1 className="mt-1 font-headline-lg text-headline-lg font-semibold">我的歌单</h1>
+          <h1 className="mt-1 font-headline-lg text-headline-lg font-semibold">
+            {t('playlist.title')}
+          </h1>
           <p className="mt-1 font-body-md text-body-md text-on-surface-variant">
-            浏览已授权平台的歌单与歌曲，作为同步任务的来源
+            {t('playlist.subtitle')}
           </p>
         </div>
         <div className="flex gap-1 rounded-lg border border-outline-variant bg-surface-container-low p-1">
@@ -126,10 +130,12 @@ export default function PlaylistSection({ platforms, accounts, searchQuery }: Pl
         <div className="mt-6 flex flex-col items-center rounded-lg border border-dashed border-outline-variant bg-surface-container-low px-6 py-14 text-center">
           <span className="material-symbols-outlined text-5xl text-outline">queue_music</span>
           <p className="mt-3 font-body-md text-body-md text-on-surface-variant">
-            登录后查看你的歌单
+            {t('playlist.loginFirst')}
           </p>
           <p className="mt-1 font-label-sm text-label-sm text-outline">
-            前往「账号管理」扫码登录 {platforms.find((p) => p.id === active)?.name ?? active}
+            {t('playlist.loginHint', {
+              platform: platforms.find((p) => p.id === active)?.name ?? active,
+            })}
           </p>
         </div>
       ) : (
@@ -139,12 +145,12 @@ export default function PlaylistSection({ platforms, accounts, searchQuery }: Pl
               <div className="flex items-center justify-between border-b border-outline-variant px-3 py-2">
                 <div className="flex items-center gap-1.5">
                   <span className="font-label-sm text-label-sm text-on-surface-variant">
-                    歌单列表
+                    {t('playlist.listTitle')}
                   </span>
                   <button
                     onClick={handleRefresh}
                     disabled={refreshing || loading}
-                    title="刷新歌单列表"
+                    title={t('playlist.refresh')}
                     className="flex items-center rounded-md p-1 text-on-surface-variant transition-colors hover:bg-surface-container-highest hover:text-primary disabled:opacity-50"
                   >
                     <span
@@ -161,12 +167,12 @@ export default function PlaylistSection({ platforms, accounts, searchQuery }: Pl
               <ul className="max-h-[32rem] space-y-0.5 overflow-y-auto p-1.5">
                 {loading && playlists.length === 0 && (
                   <li className="px-2 py-2 font-label-md text-label-md text-outline">
-                    加载中…
+                    {t('common.loading')}
                   </li>
                 )}
                 {!loading && visiblePlaylists.length === 0 && (
                   <li className="px-2 py-2 font-label-md text-label-md text-outline">
-                    {keyword ? '没有匹配的歌单' : '暂无歌单'}
+                    {keyword ? t('playlist.noMatch') : t('playlist.empty')}
                   </li>
                 )}
                 {visiblePlaylists.map((p) => (
@@ -198,7 +204,9 @@ export default function PlaylistSection({ platforms, accounts, searchQuery }: Pl
           <div className="min-w-0 flex-1 rounded-lg border border-outline-variant bg-surface-container-low">
             <div className="flex items-center justify-between border-b border-outline-variant px-4 py-2">
               <span className="font-label-sm text-label-sm text-on-surface-variant">
-                {activeId ? `歌曲列表 · ${songs.length} 首` : '选择左侧歌单查看歌曲'}
+                {activeId
+                  ? t('playlist.songList', { count: songs.length })
+                  : t('playlist.selectHint')}
               </span>
               {activeId && (
                 <span className="font-label-mono text-label-mono text-outline">
@@ -208,7 +216,9 @@ export default function PlaylistSection({ platforms, accounts, searchQuery }: Pl
             </div>
             {error && <p className="px-4 py-2 font-label-sm text-label-sm text-error">{error}</p>}
             {loading && (
-              <p className="px-4 py-2 font-label-md text-label-md text-outline">加载中…</p>
+              <p className="px-4 py-2 font-label-md text-label-md text-outline">
+                {t('common.loading')}
+              </p>
             )}
             {!loading && activeId && (
               <ul className="max-h-[30rem] divide-y divide-outline-variant overflow-y-auto">

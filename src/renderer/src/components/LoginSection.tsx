@@ -1,8 +1,20 @@
 import { useEffect, useRef, useState } from 'react'
 import type { PlatformAccount, PlatformMeta, QrLoginTicket } from '@core/models/platform'
 import { createRendererLogger } from '../logging/rendererLogger'
+import { useI18n } from '../i18n'
+import type { TranslationKey } from '../i18n/translations'
 
 const log = createRendererLogger('renderer.login')
+
+/** 二维码轮询状态码（渲染时按当前语言翻译） */
+type QrStatus = 'waiting' | 'success' | 'expired' | 'scanned'
+
+const QR_STATUS_LABELS: Record<QrStatus, TranslationKey> = {
+  waiting: 'login.waitScan',
+  success: 'login.success',
+  expired: 'login.expired',
+  scanned: 'login.scanned',
+}
 
 interface LoginSectionProps {
   platforms: PlatformMeta[]
@@ -11,10 +23,11 @@ interface LoginSectionProps {
 }
 
 export default function LoginSection({ platforms, accounts, onAccountChange }: LoginSectionProps) {
+  const { t } = useI18n()
   const [qrFor, setQrFor] = useState<string | null>(null)
   const [qrChannel, setQrChannel] = useState<string>('')
   const [ticket, setTicket] = useState<QrLoginTicket | null>(null)
-  const [qrStatus, setQrStatus] = useState<string>('')
+  const [qrStatus, setQrStatus] = useState<QrStatus | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string>('')
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -33,7 +46,7 @@ export default function LoginSection({ platforms, accounts, onAccountChange }: L
     stopPolling()
     setQrFor(null)
     setTicket(null)
-    setQrStatus('')
+    setQrStatus(null)
     setError('')
     setLoading(false)
   }
@@ -53,15 +66,15 @@ export default function LoginSection({ platforms, accounts, onAccountChange }: L
     setLoading(true)
     setQrFor(platform)
     try {
-      const t = await window.electronAPI.platforms.createQr(platform, activeChannel)
-      setTicket(t)
-      setQrStatus('等待扫码…')
+      const ticket = await window.electronAPI.platforms.createQr(platform, activeChannel)
+      setTicket(ticket)
+      setQrStatus('waiting')
       pollRef.current = setInterval(async () => {
         try {
-          const result = await window.electronAPI.platforms.checkQr(platform, t.key)
+          const result = await window.electronAPI.platforms.checkQr(platform, ticket.key)
           if (result.status === 'success') {
             stopPolling()
-            setQrStatus('登录成功！')
+            setQrStatus('success')
             const status = await window.electronAPI.platforms.loginStatus(platform)
             log.info('login.qr.success', '扫码登录成功', { platform })
             setTicket(null)
@@ -70,10 +83,10 @@ export default function LoginSection({ platforms, accounts, onAccountChange }: L
           } else if (result.status === 'expired') {
             stopPolling()
             log.warn('login.qr.expired', '二维码已过期', { platform })
-            setQrStatus('二维码已过期')
-            setError('二维码已过期，请重新获取')
+            setQrStatus('expired')
+            setError(t('login.expiredHint'))
           } else if (result.status === 'scanned') {
-            setQrStatus('已扫码，请在手机上确认')
+            setQrStatus('scanned')
           }
         } catch (e) {
           // 轮询失败保持现状，避免高频错误日志刷屏
@@ -85,7 +98,7 @@ export default function LoginSection({ platforms, accounts, onAccountChange }: L
       }, 2000)
     } catch (e) {
       log.error('login.qr.create-failed', '获取二维码失败', e, { platform })
-      setError(e instanceof Error ? e.message : '登录失败')
+      setError(e instanceof Error ? e.message : t('login.failed'))
       setQrFor(null)
     } finally {
       setLoading(false)
@@ -121,15 +134,17 @@ export default function LoginSection({ platforms, accounts, onAccountChange }: L
               SQLite AES-256 Local Encrypted
             </span>
           </div>
-          <h1 className="mt-1 font-headline-lg text-headline-lg font-semibold">音乐平台账号</h1>
+          <h1 className="mt-1 font-headline-lg text-headline-lg font-semibold">
+            {t('login.title')}
+          </h1>
           <p className="mt-1 font-body-md text-body-md text-on-surface-variant">
-            管理网易云音乐、QQ音乐授权凭证，支持扫码登录与 Cookie 导入，自动维系无感知后台同步。
+            {t('login.subtitle')}
           </p>
         </div>
         <div className="flex items-center gap-3">
           <span className="flex items-center gap-1.5 rounded-full bg-surface-container-high px-3 py-1.5 font-label-sm text-label-sm text-on-surface-variant">
             <span className="material-symbols-outlined text-base text-primary">verified_user</span>
-            {loggedInCount}/{platforms.length} 平台在线 · Token 有效
+            {t('login.onlineBadge', { count: loggedInCount, total: platforms.length })}
           </span>
         </div>
       </div>
@@ -155,11 +170,11 @@ export default function LoginSection({ platforms, accounts, onAccountChange }: L
                       {account ? (
                         <span className="flex items-center gap-1 rounded-full bg-primary-container/15 px-2 py-0.5 font-label-sm text-label-sm text-primary">
                           <span className="h-1.5 w-1.5 rounded-full bg-primary" />
-                          已授权（活跃）
+                          {t('login.authorized')}
                         </span>
                       ) : (
                         <span className="rounded-full bg-surface-container-highest px-2 py-0.5 font-label-sm text-label-sm text-on-surface-variant">
-                          未连接
+                          {t('login.disconnected')}
                         </span>
                       )}
                     </div>
@@ -180,7 +195,7 @@ export default function LoginSection({ platforms, accounts, onAccountChange }: L
                       className="flex items-center gap-1 rounded-lg border border-outline-variant px-3 py-1.5 font-label-sm text-label-sm text-on-surface-variant transition-colors hover:bg-surface-container-highest hover:text-error"
                     >
                       <span className="material-symbols-outlined text-base">logout</span>
-                      退出登录
+                      {t('login.logout')}
                     </button>
                   </div>
                 ) : (
@@ -190,7 +205,7 @@ export default function LoginSection({ platforms, accounts, onAccountChange }: L
                     className="flex items-center gap-1.5 rounded-lg bg-primary px-4 py-2 font-label-md text-label-md font-medium text-on-primary transition-colors hover:bg-primary/85 disabled:opacity-50"
                   >
                     <span className="material-symbols-outlined text-base">qr_code_scanner</span>
-                    {loading && qrFor === p.id ? '获取二维码…' : '扫码登录'}
+                    {loading && qrFor === p.id ? t('login.gettingQr') : t('login.scanLogin')}
                   </button>
                 )}
               </div>
@@ -199,12 +214,12 @@ export default function LoginSection({ platforms, accounts, onAccountChange }: L
                 <div className="mt-3 flex items-center gap-2 border-t border-outline-variant pt-3 font-label-sm text-label-sm text-on-surface-variant">
                   <span className="flex items-center gap-1">
                     <span className="material-symbols-outlined text-sm">bolt</span>
-                    同步频率：即时监听
+                    {t('login.syncFreq')}
                   </span>
                   <span className="mx-2 h-3 w-px bg-outline-variant" />
                   <span className="flex items-center gap-1">
                     <span className="material-symbols-outlined text-sm">sync_lock</span>
-                    凭证经系统钥匙串加密
+                    {t('login.credentialNote')}
                   </span>
                   <span className="ml-auto font-label-mono text-label-mono text-outline">
                     AUTO-REFRESH
@@ -221,7 +236,7 @@ export default function LoginSection({ platforms, accounts, onAccountChange }: L
           <div className="w-80 rounded-lg border border-outline-variant bg-surface-container p-5">
             <div className="flex items-center justify-between">
               <p className="font-body-md text-body-md font-medium">
-                扫码登录 {qrMeta?.name ?? qrFor}
+                {t('login.qrTitle', { platform: qrMeta?.name ?? qrFor })}
               </p>
               <button
                 onClick={closeQr}
@@ -253,19 +268,19 @@ export default function LoginSection({ platforms, accounts, onAccountChange }: L
               <>
                 <img
                   src={ticket.qrBase64}
-                  alt="登录二维码"
+                  alt={t('login.qrAlt')}
                   className="mx-auto mt-4 h-48 w-48 rounded-lg border border-outline-variant bg-surface"
                 />
                 <p className="mt-3 text-center font-label-md text-label-md text-on-surface-variant">
-                  {qrStatus}
+                  {qrStatus ? t(QR_STATUS_LABELS[qrStatus]) : ''}
                 </p>
                 <p className="mt-1 text-center font-label-sm text-label-sm text-outline">
-                  使用手机端 App 扫码确认登录
+                  {t('login.qrHint')}
                 </p>
               </>
             ) : (
               <p className="py-10 text-center font-label-md text-label-md text-on-surface-variant">
-                正在获取二维码…
+                {t('login.fetchingQr')}
               </p>
             )}
 

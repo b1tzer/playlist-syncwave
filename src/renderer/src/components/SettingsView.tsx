@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { createRendererLogger } from '../logging/rendererLogger'
+import { LOCALES, useI18n } from '../i18n'
 
 const log = createRendererLogger('renderer.settings')
 
@@ -26,6 +27,7 @@ function SettingRow({ icon, title, description, children }: SettingRowProps) {
 }
 
 export default function SettingsView() {
+  const { t, locale, setLocale } = useI18n()
   const [autoLaunch, setAutoLaunch] = useState(false)
   const [reportEnabled, setReportEnabled] = useState(false)
 
@@ -49,26 +51,51 @@ export default function SettingsView() {
         <span className="material-symbols-outlined text-sm">settings_suggest</span>
         <span>PREFERENCES LOCAL ONLY</span>
       </div>
-      <h1 className="mt-1 font-headline-lg text-headline-lg font-semibold">设置</h1>
+      <h1 className="mt-1 font-headline-lg text-headline-lg font-semibold">
+        {t('settings.title')}
+      </h1>
       <p className="mt-1 font-body-md text-body-md text-on-surface-variant">
-        所有配置仅保存在本地，凭证经系统钥匙串加密
+        {t('settings.subtitle')}
       </p>
 
       <div className="mt-6 flex max-w-2xl flex-col gap-3">
-        <SettingRow icon="dark_mode" title="主题" description="深色（跟随 SyncWave 设计规范）">
+        <SettingRow
+          icon="dark_mode"
+          title={t('settings.theme')}
+          description={t('settings.themeDesc')}
+        >
           <span className="rounded-full bg-primary-container/15 px-3 py-1 font-label-sm text-label-sm text-primary">
-            深色
-          </span>
-        </SettingRow>
-        <SettingRow icon="language" title="语言" description="界面显示语言">
-          <span className="rounded-full bg-surface-container-highest px-3 py-1 font-label-sm text-label-sm text-on-surface-variant">
-            简体中文
+            {t('settings.dark')}
           </span>
         </SettingRow>
         <SettingRow
+          icon="language"
+          title={t('settings.language')}
+          description={t('settings.languageDesc')}
+        >
+          <div className="flex gap-1 rounded-lg border border-outline-variant bg-surface-container-highest p-1">
+            {LOCALES.map((l) => (
+              <button
+                key={l}
+                onClick={() => {
+                  log.info('settings.language', '切换语言', { locale: l })
+                  setLocale(l)
+                }}
+                className={`rounded-md px-3 py-1 font-label-sm text-label-sm transition-colors ${
+                  locale === l
+                    ? 'bg-primary text-on-primary'
+                    : 'text-on-surface-variant hover:text-on-surface'
+                }`}
+              >
+                {l === 'zh-CN' ? t('settings.zh') : t('settings.en')}
+              </button>
+            ))}
+          </div>
+        </SettingRow>
+        <SettingRow
           icon="power_settings_new"
-          title="开机启动"
-          description="登录系统后自动运行 SyncWave"
+          title={t('settings.autoLaunch')}
+          description={t('settings.autoLaunchDesc')}
         >
           <button
             role="switch"
@@ -94,8 +121,8 @@ export default function SettingsView() {
         </SettingRow>
         <SettingRow
           icon="shield_lock"
-          title="隐私 · 日志上报"
-          description="默认关闭，开启后脱敏日志才会发送"
+          title={t('settings.logReport')}
+          description={t('settings.logReportDesc')}
         >
           <button
             role="switch"
@@ -121,8 +148,8 @@ export default function SettingsView() {
         </SettingRow>
         <SettingRow
           icon="info"
-          title="关于"
-          description="SyncWave v0.1.0 · 本地优先 · 跨平台歌单同步"
+          title={t('settings.about')}
+          description={t('settings.aboutDesc')}
         >
           <span className="font-label-mono text-label-mono text-outline">
             Electron · React · Tailwind
