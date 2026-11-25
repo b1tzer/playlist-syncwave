@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { createRendererLogger } from '../logging/rendererLogger'
 import { LOCALES, useI18n } from '../i18n'
 import ToggleSwitch from './ToggleSwitch'
+import Tooltip from './Tooltip'
 import { notify } from './toast'
 import { notifyError } from '../utils/notifyError'
 import { applyTheme, isTheme, DEFAULT_THEME, type Theme } from '../theme'
@@ -42,7 +43,6 @@ const SECTION_ORDER = [
   { id: 'general', labelKey: 'settings.sectionGeneral' },
   { id: 'network', labelKey: 'settings.sectionNetwork' },
   { id: 'advanced', labelKey: 'settings.sectionAdvanced' },
-  { id: 'privacy', labelKey: 'settings.sectionPrivacy' },
   { id: 'data', labelKey: 'settings.sectionData' },
   { id: 'about', labelKey: 'settings.sectionAbout' },
 ] as const
@@ -74,7 +74,6 @@ const PRESET_LABEL_KEYS: Record<ThresholdPreset, 'settings.matchLoose' | 'settin
 export default function SettingsView() {
   const { t, locale, setLocale } = useI18n()
   const [autoLaunch, setAutoLaunch] = useState(false)
-  const [reportEnabled, setReportEnabled] = useState(false)
   const [autoUpdateEnabled, setAutoUpdateEnabled] = useState(true)
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null)
   const [syncThreshold, setSyncThreshold] = useState(SYNC_TUNING_DEFAULTS.threshold)
@@ -83,6 +82,10 @@ export default function SettingsView() {
   const [proxyUrl, setProxyUrl] = useState('')
   const [proxyDraft, setProxyDraft] = useState('')
   const [proxyTesting, setProxyTesting] = useState(false)
+  /** 已通过连通性测试的代理地址；仅当与当前输入一致时才允许应用 */
+  const [proxyTestedOk, setProxyTestedOk] = useState('')
+  /** Apply 按钮悬浮即时提示（未测通过时显示引导语，锚点 = 按钮底边中心） */
+  const [proxyApplyTip, setProxyApplyTip] = useState<{ x: number; y: number; text: string } | null>(null)
   const [theme, setTheme] = useState<Theme>(DEFAULT_THEME)
   const [version, setVersion] = useState('')
   const [search, setSearch] = useState('')
@@ -94,7 +97,14 @@ export default function SettingsView() {
 
   // --- 代理 ---
 
+  /** 代理必须先测后用：仅当当前输入与已测通过的地址一致才可应用（点击拦截 + Enter 双保险） */
+  const proxyTestPassed = proxyDraft.trim() !== '' && proxyDraft.trim() === proxyTestedOk
+
   const handleProxyApply = async () => {
+    if (!proxyTestPassed) {
+      notify('warning', t('settings.proxyTestFirst'))
+      return
+    }
     try {
       await window.electronAPI.proxy.set(proxyDraft.trim())
       setProxyUrl(proxyDraft.trim())
@@ -111,6 +121,7 @@ export default function SettingsView() {
       await window.electronAPI.proxy.set('')
       setProxyUrl('')
       setProxyDraft('')
+      setProxyTestedOk('')
       log.info('settings.proxy-clear', '代理已清除')
       notify('success', t('settings.proxyCleared'))
     } catch (e) {
@@ -126,13 +137,16 @@ export default function SettingsView() {
     try {
       const result = await window.electronAPI.proxy.test(url)
       if (result.ok) {
+        setProxyTestedOk(url)
         log.info('settings.proxy-test-ok', '代理连通性测试通过', { latencyMs: result.latencyMs })
         notify('success', t('settings.proxyTestOk', { ms: String(result.latencyMs ?? 0) }))
       } else {
+        setProxyTestedOk('')
         log.warn('settings.proxy-test-failed', '代理连通性测试失败', { error: result.error })
         notifyError(new Error(result.error ?? 'proxy test failed'), t('settings.proxyTestFailed'))
       }
     } catch (e) {
+      setProxyTestedOk('')
       log.error('settings.proxy-test-failed', '代理连通性测试失败', e)
       notifyError(e, t('settings.proxyTestFailed'))
     } finally {
@@ -265,7 +279,6 @@ export default function SettingsView() {
     window.electronAPI.settings
       .getAll()
       .then((all) => {
-        setReportEnabled(all.reportEnabled === true)
         setAutoUpdateEnabled(typeof all.autoUpdateEnabled === 'boolean' ? all.autoUpdateEnabled : true)
         if (typeof all.syncThreshold === 'number') setSyncThreshold(all.syncThreshold)
         if (typeof all.syncRetries === 'number') setSyncRetries(all.syncRetries)
@@ -289,6 +302,8 @@ export default function SettingsView() {
       .then((url) => {
         setProxyUrl(url)
         setProxyDraft(url)
+        // 已生效的代理视为已验证：恢复后可立即重新应用；改动输入后需重新测试
+        setProxyTestedOk(url)
       })
       .catch((e) => {
         log.warn('settings.proxy-read-failed', '读取代理设置失败', e)
@@ -477,16 +492,37 @@ export default function SettingsView() {
           <button
             onClick={() => void handleProxyTest()}
             disabled={proxyTesting || proxyDraft.trim() === ''}
-            className="rounded-lg border border-outline-variant px-3 py-1.5 font-label-md text-label-md text-on-surface transition-colors hover:bg-surface-container-high hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
+            className="rounded-lg border border-outline-variant px-3 py-1.5 font-label-md text-label-md text-on-surface transition-colors hover:bg-surface-container-high hover:text-primary disabled:opacity-50"
           >
             {proxyTesting ? t('settings.proxyTesting') : t('settings.proxyTest')}
           </button>
-          <button
-            onClick={() => void handleProxyApply()}
-            className="rounded-lg border border-outline-variant px-3 py-1.5 font-label-md text-label-md text-on-surface transition-colors hover:bg-surface-container-high hover:text-primary"
+          {/* disabled 按钮不响应鼠标事件：悬浮事件挂外层 span，即时 Tooltip 显示引导语 */}
+          <span
+            className="flex items-center"
+            onMouseEnter={(e) => {
+              if (proxyTestPassed) return
+              const rect = e.currentTarget.getBoundingClientRect()
+              setProxyApplyTip({
+                x: rect.left + rect.width / 2,
+                y: rect.bottom,
+                text: t('settings.proxyTestFirst'),
+              })
+            }}
+            onMouseLeave={() => setProxyApplyTip(null)}
           >
-            {t('settings.proxyApply')}
-          </button>
+            <button
+              onClick={() => void handleProxyApply()}
+              disabled={!proxyTestPassed}
+              aria-disabled={!proxyTestPassed}
+              className={`rounded-lg border px-3 py-1.5 font-label-md text-label-md transition-colors ${
+                proxyTestPassed
+                  ? 'border-primary text-primary hover:bg-primary/10'
+                  : 'border-outline-variant text-on-surface hover:bg-surface-container-high disabled:opacity-50 disabled:hover:bg-transparent'
+              }`}
+            >
+              {t('settings.proxyApply')}
+            </button>
+          </span>
           {proxyUrl !== '' && (
             <button
               onClick={() => void handleProxyClear()}
@@ -576,29 +612,6 @@ export default function SettingsView() {
       ),
     },
     {
-      section: 'privacy',
-      icon: 'shield_lock',
-      title: t('settings.logReport'),
-      desc: t('settings.logReportDesc'),
-      control: (
-        <ToggleSwitch
-          checked={reportEnabled}
-          ariaLabel={t('settings.logReport')}
-          onChange={(next) => {
-            setReportEnabled(next)
-            window.electronAPI.settings
-              .set('reportEnabled', next)
-              .then(() => log.info('settings.log-report', '日志上报设置已保存', { enabled: next }))
-              .catch((e) => {
-                setReportEnabled(!next)
-                log.error('settings.log-report', '日志上报设置保存失败', e, { enabled: next })
-                notifyError(e, t('settings.saveFailed'))
-              })
-          }}
-        />
-      ),
-    },
-    {
       section: 'data',
       icon: 'folder_delete',
       title: t('settings.clearCache'),
@@ -644,7 +657,7 @@ export default function SettingsView() {
           <button
             onClick={() => void handleCopyVersion()}
             disabled={!version}
-            className="flex items-center gap-1 rounded-lg border border-outline-variant px-2.5 py-1 font-label-sm text-label-sm text-on-surface transition-colors hover:bg-surface-container-high hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
+            className="flex items-center gap-1 rounded-lg border border-outline-variant px-2.5 py-1 font-label-sm text-label-sm text-on-surface transition-colors hover:bg-surface-container-high hover:text-primary disabled:opacity-50"
           >
             <span className="material-symbols-outlined text-sm">content_copy</span>
             {t('settings.copyVersion')}
@@ -757,6 +770,8 @@ export default function SettingsView() {
       ) : (
         <div className="pb-4">{SECTION_ORDER.map((s) => renderSection(s.id))}</div>
       )}
+
+      {proxyApplyTip && <Tooltip x={proxyApplyTip.x} y={proxyApplyTip.y} text={proxyApplyTip.text} />}
     </div>
   )
 }

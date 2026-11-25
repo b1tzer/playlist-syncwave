@@ -36,7 +36,7 @@ export default function Tooltip({ x, y, text }: TooltipProps) {
     <div
       ref={ref}
       role="tooltip"
-      className={`pointer-events-none fixed z-50 rounded-md bg-inverse-surface px-2.5 py-1 font-label-sm text-label-sm text-inverse-on-surface shadow-lg ${
+      className={`pointer-events-none fixed z-50 rounded-md border border-outline-variant bg-surface-container-highest px-2.5 py-1 font-label-sm text-label-sm text-on-surface shadow-[0_4px_16px_var(--sw-menu-shadow)] ${
         pos.visible ? '' : 'invisible'
       }`}
       style={{ left: pos.x, top: pos.y }}

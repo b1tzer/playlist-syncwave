@@ -97,7 +97,7 @@ const api = {
     test: (url: string): Promise<{ ok: boolean; latencyMs?: number; error?: string }> =>
       ipcRenderer.invoke('proxy:test', url),
   },
-  /** 渲染进程日志上报：主进程校验后写入统一日志管线 */
+  /** 渲染进程日志投递：主进程校验后写入统一日志管线 */
   log: (entry: LogEntry): void => {
     ipcRenderer.send('log:write', entry)
   },

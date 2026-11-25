@@ -6,6 +6,7 @@ import { useI18n } from '../i18n'
 import type { TranslationKey, TranslateParams } from '../i18n/translations'
 import { syncItemTitle } from '../sync/helpers'
 import SongList from './SongList'
+import PlatformLogo from './PlatformLogo'
 import ProgressBar from './ProgressBar'
 import LoadMoreSentinel from './LoadMoreSentinel'
 
@@ -52,6 +53,39 @@ const STATUS_META: Record<SyncTaskStatus, { icon: string; color: string; labelKe
   interrupted: { icon: 'pause_circle', color: 'text-secondary', labelKey: 'syncHistory.statusInterrupted' },
   stopped: { icon: 'stop_circle', color: 'text-secondary', labelKey: 'syncHistory.statusStopped' },
   failed: { icon: 'error_outline', color: 'text-error', labelKey: 'syncHistory.statusFailed' },
+}
+
+/** 统计项筛选按钮：多选状态下高亮，点击切换 */
+function FilterChip({
+  label,
+  count,
+  countClass,
+  active,
+  onClick,
+  title,
+}: {
+  label: string
+  count: number
+  countClass: string
+  active: boolean
+  onClick: () => void
+  title?: string
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={active}
+      title={title}
+      onClick={onClick}
+      className={`rounded-md px-2 py-0.5 transition-colors ${
+        active
+          ? 'bg-surface-container-high font-medium text-on-surface'
+          : 'text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface'
+      }`}
+    >
+      {label} <span className={`font-medium ${countClass}`}>{count}</span>
+    </button>
+  )
 }
 
 /** 失败/跳过项的原因文案（稳定 reason 码翻译，平台原始错误透传） */
@@ -250,8 +284,22 @@ export default function SyncHistory({
   const [visibleCount, setVisibleCount] = useState(TASK_PAGE_SIZE)
   /** 任务列表排序：默认最新优先（按创建时间），可切换为最早优先 */
   const [sortOrder, setSortOrder] = useState<'newest' | 'oldest'>('newest')
+  /** 状态多选筛选：空集合表示默认「全部任务」 */
+  const [statusFilter, setStatusFilter] = useState<SyncTaskStatus[]>([])
+  const filteredTasks = useMemo(
+    () =>
+      statusFilter.length === 0
+        ? tasks
+        : tasks.filter((task) => statusFilter.includes(task.status)),
+    [tasks, statusFilter],
+  )
+  const toggleStatusFilter = (status: SyncTaskStatus) => {
+    setStatusFilter((prev) =>
+      prev.includes(status) ? prev.filter((s) => s !== status) : [...prev, status],
+    )
+  }
   const sortedTasks = useMemo(() => {
-    const sorted = [...tasks]
+    const sorted = [...filteredTasks]
     sorted.sort((a, b) => {
       const am = a.createdAtMs ?? 0
       const bm = b.createdAtMs ?? 0
@@ -262,7 +310,7 @@ export default function SyncHistory({
         : a.createdAt.localeCompare(b.createdAt)
     })
     return sorted
-  }, [tasks, sortOrder])
+  }, [filteredTasks, sortOrder])
   const visibleTasks = sortedTasks.slice(0, visibleCount)
   const running = tasks.filter((task) => task.status === 'running').length
   const done = tasks.filter((task) => task.status === 'done').length
@@ -284,9 +332,6 @@ export default function SyncHistory({
           <h1 className="mt-1 font-headline-lg text-headline-lg font-semibold">
             {t('syncHistory.title')}
           </h1>
-          <p className="mt-1 font-body-md text-body-md text-on-surface-variant">
-            {t('syncHistory.subtitle')}
-          </p>
         </div>
         <button
           onClick={handleNewTask}
@@ -297,33 +342,55 @@ export default function SyncHistory({
         </button>
       </div>
 
-      <div className="mt-6 flex items-center gap-2 font-label-sm text-label-sm text-on-surface-variant">
+      <div className="mt-6 flex flex-wrap items-center gap-2 font-label-sm text-label-sm text-on-surface-variant">
         <span className="material-symbols-outlined text-sm">terminal</span>
         <span>{t('syncHistory.logTitle')}</span>
         <span className="mx-2 h-3 w-px bg-outline-variant" />
-        <span>
-          {t('syncHistory.allTasks')}{' '}
-          <span className="font-medium text-on-surface">{tasks.length}</span>
-        </span>
-        <span>
-          {t('syncHistory.running')} <span className="font-medium text-tertiary">{running}</span>
-        </span>
-        <span>
-          {t('syncHistory.done')} <span className="font-medium text-primary">{done}</span>
-        </span>
-        <span>
-          {t('syncHistory.interrupted')}{' '}
-          <span className="font-medium text-secondary">{interrupted}</span>
-        </span>
-        {stopped > 0 && (
-          <span>
-            {t('syncHistory.statusStopped')}{' '}
-            <span className="font-medium text-secondary">{stopped}</span>
-          </span>
+        <FilterChip
+          label={t('syncHistory.allTasks')}
+          count={tasks.length}
+          countClass="text-on-surface"
+          active={statusFilter.length === 0}
+          onClick={() => setStatusFilter([])}
+          title={t('syncHistory.filterHint')}
+        />
+        <FilterChip
+          label={t('syncHistory.running')}
+          count={running}
+          countClass="text-tertiary"
+          active={statusFilter.includes('running')}
+          onClick={() => toggleStatusFilter('running')}
+        />
+        <FilterChip
+          label={t('syncHistory.done')}
+          count={done}
+          countClass="text-primary"
+          active={statusFilter.includes('done')}
+          onClick={() => toggleStatusFilter('done')}
+        />
+        <FilterChip
+          label={t('syncHistory.interrupted')}
+          count={interrupted}
+          countClass="text-secondary"
+          active={statusFilter.includes('interrupted')}
+          onClick={() => toggleStatusFilter('interrupted')}
+        />
+        {(stopped > 0 || statusFilter.includes('stopped')) && (
+          <FilterChip
+            label={t('syncHistory.statusStopped')}
+            count={stopped}
+            countClass="text-secondary"
+            active={statusFilter.includes('stopped')}
+            onClick={() => toggleStatusFilter('stopped')}
+          />
         )}
-        <span>
-          {t('syncHistory.failed')} <span className="font-medium text-error">{failed}</span>
-        </span>
+        <FilterChip
+          label={t('syncHistory.failed')}
+          count={failed}
+          countClass="text-error"
+          active={statusFilter.includes('failed')}
+          onClick={() => toggleStatusFilter('failed')}
+        />
         {pendingChoicesCount > 0 && (
           <button
             onClick={() => {
@@ -379,21 +446,23 @@ export default function SyncHistory({
       </div>
 
       <div className="mt-4 flex flex-col gap-3">
-        {tasks.length === 0 && (
+        {sortedTasks.length === 0 && (
           <div className="flex flex-col items-center rounded-lg border border-dashed border-outline-variant bg-surface-container-low px-6 py-14 text-center">
             <span className="material-symbols-outlined text-5xl text-outline">sync_alt</span>
             <p className="mt-3 font-body-md text-body-md text-on-surface-variant">
-              {t('syncHistory.empty')}
+              {tasks.length === 0 ? t('syncHistory.empty') : t('syncHistory.filterEmpty')}
             </p>
             <p className="mt-1 font-label-sm text-label-sm text-outline">
-              {t('syncHistory.emptyHint')}
+              {tasks.length === 0 ? t('syncHistory.emptyHint') : t('syncHistory.filterEmptyHint')}
             </p>
             <button
-              onClick={handleNewTask}
+              onClick={tasks.length === 0 ? handleNewTask : () => setStatusFilter([])}
               className="mt-4 flex items-center gap-2 rounded-lg border border-outline-variant px-4 py-2 font-label-md text-label-md text-primary transition-colors hover:bg-surface-container-high"
             >
-              <span className="material-symbols-outlined text-sm">add</span>
-              {t('syncHistory.firstTask')}
+              <span className="material-symbols-outlined text-sm">
+                {tasks.length === 0 ? 'add' : 'filter_alt_off'}
+              </span>
+              {tasks.length === 0 ? t('syncHistory.firstTask') : t('syncHistory.allTasks')}
             </button>
           </div>
         )}
@@ -402,6 +471,7 @@ export default function SyncHistory({
           const expanded = expandedId === task.id
           const intervenable = intervenableIds.includes(task.id)
           const statusMeta = STATUS_META[task.status]
+          const target = platforms.find((p) => p.id === task.targetPlatform)
           return (
             <div
               key={task.id}
@@ -422,8 +492,28 @@ export default function SyncHistory({
                     {statusMeta.icon}
                   </span>
                   <p className="truncate font-body-md text-body-md font-medium">{task.name}</p>
-                  <span className="rounded-full bg-surface-container-highest px-2 py-0.5 font-label-sm text-label-sm text-on-surface-variant">
-                    {t(statusMeta.labelKey)}
+                  <span className="flex shrink-0 items-center gap-2 font-label-sm text-label-sm text-on-surface-variant">
+                    <span className="flex items-center gap-1">
+                      <span className="material-symbols-outlined text-sm">description</span>
+                      {task.source === 'text-import'
+                        ? t('syncHistory.sourceTextImport')
+                        : task.source === 'playlist-import'
+                          ? t('syncHistory.sourcePlaylistImport')
+                          : task.source}
+                    </span>
+                    <span className="material-symbols-outlined text-sm text-outline">
+                      arrow_forward
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <PlatformLogo
+                        platform={task.targetPlatform}
+                        name={target?.name ?? task.targetPlatform}
+                        icon={target?.icon ?? 'library_music'}
+                        size="h-4 w-4"
+                        iconSize="text-sm"
+                      />
+                      {target?.name ?? task.targetPlatform}
+                    </span>
                   </span>
                   <span className="material-symbols-outlined text-sm text-outline">
                     {expanded ? 'expand_less' : 'expand_more'}
@@ -446,6 +536,9 @@ export default function SyncHistory({
                       {t('syncHistory.retryTask')}
                     </button>
                   )}
+                  <span className="rounded-full bg-surface-container-highest px-2 py-0.5 font-label-sm text-label-sm text-on-surface-variant">
+                    {t(statusMeta.labelKey)}
+                  </span>
                   <span className="font-label-mono text-label-mono text-outline">
                     {taskTimeText(task, formatDateTime)}
                   </span>
@@ -465,21 +558,8 @@ export default function SyncHistory({
               </div>
 
               <div className="mt-3 flex items-center gap-2 font-label-sm text-label-sm text-on-surface-variant">
-                <span className="flex items-center gap-1">
-                  <span className="material-symbols-outlined text-sm">description</span>
-                  {task.source === 'text-import'
-                    ? t('syncHistory.sourceTextImport')
-                    : task.source === 'playlist-import'
-                      ? t('syncHistory.sourcePlaylistImport')
-                      : task.source}
-                </span>
-                <span className="material-symbols-outlined text-sm text-outline">arrow_forward</span>
-                <span className="flex items-center gap-1">
-                  <span className="material-symbols-outlined text-sm">library_music</span>
-                  {platforms.find((p) => p.id === task.targetPlatform)?.name ?? task.targetPlatform}
-                </span>
                 {task.status === 'running' && (
-                  <span className="ml-auto flex items-center gap-1 text-tertiary">
+                  <span className="flex items-center gap-1 text-tertiary">
                     <span className="material-symbols-outlined text-sm">refresh</span>
                     {t('syncHistory.matchingProgress', {
                       current: Math.round(task.progress * task.total),
@@ -488,7 +568,7 @@ export default function SyncHistory({
                   </span>
                 )}
                 {(task.status === 'done' || task.status === 'failed' || task.status === 'stopped') && (
-                  <span className="ml-auto">
+                  <span>
                     {t('syncHistory.success')} <span className="text-primary">{task.added}</span>
                     {task.failed > 0 && (
                       <>

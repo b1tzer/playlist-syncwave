@@ -16,11 +16,11 @@ describe('settingsStore — 应用设置持久化', () => {
 
   it('set 后可读回，类型保持', () => {
     store.set('autoLaunch', true)
-    store.set('reportEnabled', false)
+    store.set('autoUpdateEnabled', true)
     store.set('batchSize', 120)
     store.set('theme', 'dark')
     expect(store.get('autoLaunch', false)).toBe(true)
-    expect(store.get('reportEnabled', true)).toBe(false)
+    expect(store.get('autoUpdateEnabled', false)).toBe(true)
     expect(store.get('batchSize', 0)).toBe(120)
     expect(store.get('theme', 'light')).toBe('dark')
   })

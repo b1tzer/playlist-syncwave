@@ -19,7 +19,6 @@ export const SETTINGS_DEFAULTS = {
   theme: 'dark',
   language: 'zh-CN',
   autoUpdateEnabled: true,
-  reportEnabled: false,
   proxyUrl: '',
 } as const
 

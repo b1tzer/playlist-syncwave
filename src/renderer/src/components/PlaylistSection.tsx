@@ -1389,6 +1389,7 @@ export default function PlaylistSection({
             {!loading && activeId && (
               <SongList
                 songs={songs}
+                showHeader
                 flashIds={songFlashIds}
                 onFlashEnd={clearSongFlash}
                 className="min-h-0 flex-1"

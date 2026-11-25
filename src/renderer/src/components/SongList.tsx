@@ -9,6 +9,8 @@ interface SongListProps {
   showIndex?: boolean
   /** 是否显示封面 */
   showCover?: boolean
+  /** 是否显示列头（歌单歌曲主列表开启，搜索结果等紧凑列表不需要） */
+  showHeader?: boolean
   /** 滚动容器最大高度类名，如 max-h-64；省略时可由 className 控制伸缩 */
   maxHeightClass?: string
   /** 列表容器附加类名（边框、圆角、间距等） */
@@ -49,6 +51,7 @@ export default function SongList({
   songs,
   showIndex = true,
   showCover = true,
+  showHeader = false,
   maxHeightClass,
   className = '',
   renderAction,
@@ -57,6 +60,7 @@ export default function SongList({
   flashIds,
   onFlashEnd,
 }: SongListProps) {
+  const { t } = useI18n()
   // 整列缺失时隐藏该列，避免全空占位
   const hasAlbum = songs.some((s) => s.album !== undefined)
   const hasDuration = songs.some((s) => s.durationMs !== undefined)
@@ -75,8 +79,31 @@ export default function SongList({
     <ul
       className={`divide-y divide-outline-variant overflow-y-auto ${maxHeightClass ?? ''} ${className}`}
     >
+      {showHeader && (
+        <li
+          aria-hidden
+          className="sticky top-0 z-10 flex items-center gap-3 bg-surface-container px-4 py-1.5 font-label-sm text-label-sm text-on-surface-variant"
+        >
+          {showIndex && (
+            <span className="w-6 shrink-0 text-right font-label-mono text-label-mono">
+              {t('song.columnIndex')}
+            </span>
+          )}
+          {showCover && <span className="w-9 shrink-0" />}
+          <span className="min-w-0 flex-1">{t('song.columnTitle')}</span>
+          <span className="w-1/4 min-w-0">{t('song.columnArtist')}</span>
+          {hasAlbum && <span className="w-1/4 min-w-0">{t('song.columnAlbum')}</span>}
+          {hasDuration && (
+            <span className="w-12 shrink-0 text-right font-label-mono text-label-mono">
+              {t('song.columnDuration')}
+            </span>
+          )}
+          {renderAction && <span className="w-9 shrink-0" />}
+        </li>
+      )}
       {songs.map((s, i) => {
         const subtitle = renderSubtitle?.(s)
+        const action = renderAction?.(s)
         const flashing = flashIds?.has(s.id) ?? false
         const entered = enteredIds.has(s.id)
         return (
@@ -121,7 +148,11 @@ export default function SongList({
                 {formatDuration(s.durationMs)}
               </span>
             )}
-            {renderAction?.(s)}
+            {showHeader && renderAction ? (
+              <span className="flex w-9 shrink-0 justify-end">{action}</span>
+            ) : (
+              action
+            )}
           </li>
         )
       })}

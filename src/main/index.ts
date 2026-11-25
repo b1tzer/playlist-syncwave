@@ -61,7 +61,7 @@ import {
 } from './localPlaylistService'
 import { loadWindowState, trackWindowState } from './windowState'
 import { beginWebLogin } from './webLoginService'
-import { buildApplicationMenu } from './menu'
+import { buildApplicationMenu, installWindowShortcuts } from './menu'
 import { setupAutoUpdater, checkForUpdates, quitAndInstall, setAutoUpdateEnabled } from './updater'
 import { notifySyncResult, notifySyncStopped } from './notifications'
 import { createPlaylistCacheService } from './playlistCacheService'
@@ -210,11 +210,13 @@ function createWindow(): void {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      devTools: isDev,
     },
   })
 
   if (state.maximized) win.maximize()
   trackWindowState(win)
+  installWindowShortcuts(win)
 
   // 渲染进程崩溃兜底：除用户主动刷新导致的 killed 外均弹重启提示
   win.webContents.on('render-process-gone', (_event, details) => {

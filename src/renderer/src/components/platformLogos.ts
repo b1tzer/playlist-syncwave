@@ -1,5 +1,5 @@
 import netease from '@renderer/assets/music_logos/netease.svg'
-import qqmusic from '@renderer/assets/music_logos/qqmusic.png'
+import qqmusic from '@renderer/assets/music_logos/qqmusic.svg'
 import kugou from '@renderer/assets/music_logos/kugou.png'
 import kuwo from '@renderer/assets/music_logos/kuwo.png'
 import migu from '@renderer/assets/music_logos/migu.png'

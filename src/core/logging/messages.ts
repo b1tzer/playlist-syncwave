@@ -173,7 +173,5 @@ export const LOG_MESSAGE_EN: Record<string, string> = {
   恢复语言偏好失败: 'Failed to restore language preference',
   开机启动设置已保存: 'Auto-launch setting saved',
   开机启动设置保存失败: 'Failed to save auto-launch setting',
-  日志上报设置已保存: 'Log report setting saved',
-  日志上报设置保存失败: 'Failed to save log report setting',
   窗口运行时错误: 'Window runtime error',
 }

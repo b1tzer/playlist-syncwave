@@ -420,7 +420,7 @@ tests/             # Vitest 单元测试（core/main/platforms/renderer）
 - **B1 打包分发 ✅**：electron-builder 配置（`electron-builder.yml`：appId/productName/图标/mac dmg+zip/win nsis/linux AppImage/asarUnpack native 模块）+ `dist` 脚本 + `build/icon.svg`→`icon.png`（1024）。验证：`npm run build` + `npx electron-builder --mac --dir` 产出 SyncWave.app，better-sqlite3 正确解包。签名未配置（发布前用 CSC_LINK/CSC_KEY_PASSWORD）。
 - **B2 单实例锁 ✅**：`requestSingleInstanceLock` 失败即退出；二次启动聚焦/还原已有窗口，防 SQLite 并发写。typecheck 通过。
 - **B3 窗口状态记忆 ✅**：`main/windowState.ts` 持久化窗口 bounds/maximized 到 userData，resize/move 防抖 500ms 保存、close 立即保存；恢复时校验与可见显示器相交（显示器变化后自动回退居中）。typecheck、lint 通过。
-- **B4 应用菜单与快捷键 ✅**：`main/menu.ts` 构建标准菜单（mac 含 appMenu/editMenu/viewMenu/windowMenu，Edit 菜单恢复剪贴板快捷键）；导航菜单 CmdOrCtrl+N（快速创建）/CmdOrCtrl+2..5（歌单/同步/账号/设置），经 `app:navigate` 广播到渲染层切换视图；菜单文案按 settings.language 中英生成，语言变更时重建。typecheck、lint、264 项测试通过。
+- **B4 应用菜单与快捷键 ✅**：`main/menu.ts` 构建标准菜单（mac 含 appMenu/editMenu/viewMenu/windowMenu，Edit 菜单恢复剪贴板快捷键）；导航菜单 CmdOrCtrl+N（快速创建）/CmdOrCtrl+2..5（歌单/同步/账号/设置），经 `app:navigate` 广播到渲染层切换视图；菜单文案按 settings.language 中英生成，语言变更时重建。typecheck、lint、264 项测试通过。⚠️ 已变更：导航改 CmdOrCtrl+1..5（Cmd+N 保留别名），View 菜单按开发/正式分流并新增 Cmd/Ctrl+,，见末尾「应用快捷键收敛」补记。
 - **B5 开机启动真实现 ✅**：新增 `app:get-auto-launch`/`app:set-auto-launch` IPC，打包环境对接 `app.setLoginItemSettings`（win 补 `setAppUserModelId`），开发环境仅持久化偏好；SettingsView 开关改读系统登录项真实状态。typecheck、lint、264 项测试通过。
 - **B6 自动更新 ✅**：接入 `electron-updater`（generic provider，`SYNCWAVE_UPDATE_URL` 环境变量配置发布源）；打包环境启动 10s 后静默检查、自动下载、退出时安装；`main/updater.ts` 状态广播（checking/available/not-available/downloading/downloaded/error）+ `update:check`/`update:quit-and-install` IPC；设置页「自动更新」行（检查按钮/进度/重启安装）+ 帮助菜单「检查更新」入口；开发模式明确拒绝并提示。typecheck、lint、264 项测试、build 通过。
 - **B7 系统通知 ✅**：`main/notifications.ts` 系统通知模块（仅窗口失焦时发送，点击聚焦窗口，中英双语随语言设置）；接入同步完成/部分完成/全部未匹配/停止、账号凭证失效、新版本下载就绪四类事件。typecheck、lint、264 项测试通过。
@@ -480,7 +480,7 @@ tests/             # Vitest 单元测试（core/main/platforms/renderer）
   - 组件复用：抽离 `renderer/src/components/SongSearchResults.tsx`（SongList + 分页哨兵 + 三态按钮），歌单详情「添加歌曲」与本地歌单「从平台添加」两处共用；本地歌单搜索结果由自绘行改为 SongList。
 - **验证**：酷狗搜索 flat 结构 + 分页透传 + 嵌套兼容 3 处断言（1 项改写 + 1 项新增），网易云搜索断言补 offset 分页。全量 375 项测试、typecheck、lint 通过。待手工验收：酷狗歌单内搜索出结果、滚动提前加载下一页、按钮三态、点击歌单列表收起搜索面板。
 - **追加修复**：① 搜索修复后仍无结果的根因是 dev 进程主进程未随代码修改重启（主进程日志最后启动时间早于修改时间，IPC 返回空但无报错），重启后生效——非代码缺陷；② 添加/移除歌曲成功后左侧歌单卡片歌曲数未即时同步，`handleAddSong`/`handleRemoveSong` 增补 `setPlaylists` 就地 ±1（`songCount` 为 undefined 的平台不动，主进程已标记缓存失效后台重新验证兜底）。
-- **追加优化 — 登录态恢复提速（Ctrl+R 秒回）**：reload 后渲染层 `accounts` 内存丢失且初始化 `setAccounts` 等全部平台 `Promise.allSettled` 完成才一次设置，最慢平台（Apple Music 重抓 developer token 等）拖慢整体，期间全部显示未连接。修复：① 主进程新增 `main/loginStatusCache.ts` 登录态内存缓存——`platform:login-status` 命中缓存直接返回（渲染层 reload 主进程不重启，秒回），首次查询写入；扫码登录成功/登出/保活判定失效时清除，网页登录成功直接写入；② 渲染层初始化改为逐平台独立完成即 `setAccounts`，慢平台不阻塞快平台，失败平台保留 3s 重试。
+- **追加优化 — 登录态恢复提速（Ctrl+R 秒回）**：reload 后渲染层 `accounts` 内存丢失且初始化 `setAccounts` 等全部平台 `Promise.allSettled` 完成才一次设置，最慢平台（Apple Music 重抓 developer token 等）拖慢整体，期间全部显示未连接。修复：① 主进程新增 `main/loginStatusCache.ts` 登录态内存缓存——`platform:login-status` 命中缓存直接返回（渲染层 reload 主进程不重启，秒回），首次查询写入；扫码登录成功/登出/保活判定失效时清除，网页登录成功直接写入；② 渲染层初始化改为逐平台独立完成即 `setAccounts`，慢平台不阻塞快平台，失败平台保留 3s 重试。（该优化服务的是开发调试刷新路径，仍保留；正式包已不提供刷新快捷键，见末尾「应用快捷键收敛」补记）
 - **追加优化 — 异常提示统一右上角 toast（不给用户看代码）**：歌单详情区顶端错误条与搜索区内联错误条移除，所有异常统一走 `renderer/src/utils/notifyError.ts`——右上角 toast 展示，平台中文可读文案作为详情，技术性报错（状态码/网络错误/堆栈等）过滤为通用标题；覆盖歌单拉取/打开/重命名/删除/增删歌曲/搜索/同步确认/登录异常/导入导出等全部错误路径；同步失败内联错误（TextCreator）与确认对话框内联错误一并移除（toast 已提示）。主进程歌单拉取（列表/歌曲，含分页）补 30s 超时包装，平台接口永久挂起时转为「请求超时」错误走 toast，不再一直 loading。
 - **追加优化 — 慢加载网络延迟提示**：拉取（歌单列表/歌曲区）超过 3s 未完成，待显示区域文案从「加载中」切换为「网络较慢，正在获取中…」并保持转圈动效（`SLOW_FETCH_THRESHOLD_MS` 常量 + loading 监听 effect），加载结束自动复位；loading 改为对应区域垂直水平居中显示（原左上角一行文字）。
 - **追加修复 — 网易云显示收藏歌单**：`fetchPlaylists` 原仅过滤 `specialType=5`，收藏的他人歌单（`subscribed=true`）透出到列表。补过滤（`subscribed !== true`，缺失字段视为自有），与酷狗「仅显示自有歌单」规则一致；过滤规则变更 bump `PLAYLIST_CACHE_SCHEMA_VERSION` → 5 使旧缓存重新验证；新增过滤测试。
@@ -528,7 +528,33 @@ tests/             # Vitest 单元测试（core/main/platforms/renderer）
   - 主题三态（`theme.ts`）：`Theme = 'light'|'dark'|'system'`（默认仍深色，设计规范深色优先）；system 模式渲染层监听 `prefers-color-scheme` 媒体查询；主进程启动恢复 + `settings:set` 时同步 `nativeTheme.themeSource`，原生菜单/滚动条与界面一致。
   - `SettingsView` 重写：分区（外观/通用/网络/高级/隐私/数据/关于）；设置搜索（按标题/描述过滤，命中自动展开高级区）；阈值改语义预设分段控件（显示对应数值）；重试/间隔滑块 350ms 防抖回写（恢复完成前不回写）；高级区默认折叠 + 「恢复默认」按钮；所有开关与主题切换失败回滚 + toast；语言保存失败回滚（i18n provider）；代理新增「测试」连通性（`main/proxy.ts testProxy`，独立 axios 实例请求 Cloudflare `cp.cloudflare.com/generate_204` 探测端点，8s 超时，不改全局单例）；关于页版本号可复制；数据区「清空歌曲缓存」两步确认（`playlistCacheStore.clearAll` 物理删除，与 markStale 的兜底语义不同，返回删除行数）。
   - `ToggleSwitch` 与滑块/分段控件补 `aria-label`/`aria-pressed`；i18n 中英补齐全部新键。
+  - 追加需求（同任务内）：代理改为「先测后用」——仅连通性测试通过且输入未再改动时才真正应用（测试失败或修改输入即失效；恢复已生效代理视为已测）。交互细节三轮迭代：初版 Apply 禁用 + `cursor-not-allowed`，悬浮出现禁止光标体验差；二版按钮常可点击、点击弹 warning 引导；终版对齐歌单移除歌曲效果——未测通过时 Apply 置灰禁用、外层 span 悬浮即时 Tooltip 显示「请先测试代理连接」（无禁止光标），Enter 键同拦截并弹 warning 兜底。Tooltip 配色由 Material inverse 反色（浅色主题下深底白字，不协调）改为跟随主题的 surface-container-highest + outline-variant 边框（对齐 ContextMenu 浮层），浅色/深色均与界面一致。
 - **验证**：新增 4 项测试（tuning 不变式 3 项 + cacheStore clearAll 1 项），全量 383 项测试、typecheck、lint 通过。待手工验收：主题三态随系统切换、搜索过滤、代理测试、清空缓存后列表重新拉取。
+
+### 补记 — 同步中心信息布局与状态多选筛选 ✅
+- **需求**：同步中心任务卡片信息层级调整（「来源 → 目标平台」紧跟任务名、目标平台显示品牌 logo、状态徽标移到时间前）；统计行「全部任务 / 进行中 / 已完成 / 已中断 / 已停止 / 异常拦截」支持点选多选过滤，默认全部任务；删除标题下方啰嗦的副标题提示；登录卡片按钮文案由「退出登录」简化为「退出」。
+- **改动**：`SyncHistory.tsx` 把 source→target 从第二行上移到任务名后，用 `PlatformLogo` 展示目标平台品牌 logo（未收录平台回退 material-symbols），状态徽标从左侧移到右侧操作区紧邻时间之前，第二行仅保留匹配进度 / 成功失败统计并改为左对齐；统计项改为 `FilterChip`（`aria-pressed` 高亮），多选状态存于 `statusFilter: SyncTaskStatus[]`（空集合＝全部任务，点「全部任务」重置，取消最后一个状态也回到全部），排序与分页基于过滤后列表，无命中时显示筛选专用空态与一键重置；i18n 中英补 `syncHistory.filterHint/filterEmpty/filterEmptyHint`，删除 `syncHistory.subtitle` 中英键与标题下 `<p>`，登录按钮中文改为「退出」。
+- **验证**：全量 383 项测试、typecheck、lint 通过。待手工验收：多选筛选组合、无结果空态与重置、任务卡片 logo 与目标平台展示、状态徽标位置。
+
+### 补记 — 歌曲列表表头 ✅
+- **需求**：歌曲列表缺少列含义提示，增加「# / 歌名 / 歌手 / 专辑 / 时长」表头（用户最初提「歌单列表」实指歌曲列表，误加在歌单侧栏的表头已撤销）。
+- **改动**：`SongList.tsx` 新增 `showHeader` 开关（默认关闭），开启时渲染与数据行同宽度的列头（# 列右对齐、封面列留空、歌名 flex 占满、歌手/专辑各 1/4、时长 `w-12` 固定宽右对齐），整列缺失时与数据行同步隐藏该列表头；表头样式用 `bg-surface-container` + `text-on-surface-variant`、`px-4 py-1.5` 与数据行对齐，沿用列表 `divide-y` 分隔线，匹配整体 Material 设计系统；表头加 `sticky top-0 z-10`，滚动歌曲时固定在列表容器顶部；行尾操作列统一包裹 `w-9` 容器、表头同步预留等宽占位（否则 flex-1 歌名列宽度不同，时长/歌手/专辑列整体错位）；平台歌单详情与本地歌单详情两处开启，搜索结果等紧凑列表保持无表头；i18n 中英新增 `song.columnIndex/columnTitle/columnArtist/columnAlbum/columnDuration`（中文 # 列亦为 `#`）。
+- **验证**：全量 383 项测试、typecheck、lint 通过。待手工验收：表头与各列视觉对齐、专辑/时长列缺失时表头同步隐藏。
+
+### 补记 — 移除日志上报开关 ✅
+- **背景**：「日志上报」设置开关为死开关——`reportEnabled` 仅写入 settings 表，无任何消费方与上传端点（日志传输只有 Console 与本地 File 两种，日志全部落盘于本地 `userData/logs/`），与 PRD/README「开启后仅发送脱敏日志」表述不符。经确认后决定整体移除而非实现上报。
+- **改动**：删除 `SettingsView` 隐私分区及其日志上报开关、`settingsService` 默认值、i18n 中英键（`logReport/logReportDesc/sectionPrivacy`）与日志消息文案；设置页分区由（外观/通用/网络/高级/隐私/数据/关于）改为（外观/通用/网络/高级/数据/关于）；preload 注释「渲染进程日志上报」改为「渲染进程日志投递」（该 IPC 仅本地日志管线投递，与上报无关）；settingsStore 测试示例键换用 `autoUpdateEnabled`。README 删除「日志上报默认关闭」；PRD FR-6 删除隐私分区开关条目、8.1「日志脱敏，上报需用户显式同意」改述为「日志全量脱敏」。
+- **验证**：全量 383 项测试、typecheck、lint 通过。
+
+### 补记 — 应用快捷键收敛 ✅
+- **需求**：导航快捷键原从 CmdOrCtrl+2 起（Cmd+1 空档）、macOS 惯例 `Cmd+,` 打开设置未覆盖、正式包不应暴露刷新与开发者工具。
+- **行业做法**：Electron 默认 viewMenu 自带 Reload/Force Reload/DevTools，网页套壳类应用（Slack、Discord、Boostnote）保留刷新，因为内容本就是网页；偏原生的工具（VS Code）把 Cmd+R 让给「Open Recent」，刷新收进命令面板 `Developer: Reload Window`；Electron 也提供 `registerAccelerator: false` / `acceleratorWorksWhenHidden: false` 支持「可见不启用」。本项目是本地 SQLite + 平台 API，没有「网页重连」语义，且输入框有未提交草稿，故正式包不提供刷新键，开发调试保留。
+- **改动**：
+  - `main/menu.ts`：导航改 `CmdOrCtrl+1..5`（快速创建/歌单/同步/账号/设置），`CmdOrCtrl+N` 改由窗口级隐藏别名承接；导航菜单标签由「视图」改为「导航」，避免与标准 View 菜单重名。
+  - View 菜单改为显式模板（放大/缩小/实际大小/全屏），Reload/Force Reload/Toggle DevTools 仅 `NODE_ENV=development` 加入；菜单文案随 settings.language 中英生成。
+  - 新增 `installWindowShortcuts(win)`：`before-input-event` 处理 `Cmd/Ctrl+,`（设置）与 `Cmd/Ctrl+N`（快速创建），正式包吞掉 `Cmd/Ctrl+R`（含 Shift）与 F5；`main/index.ts` 创建窗口时安装，并设 `webPreferences.devTools: isDev`。
+  - Edit 菜单与剪贴板快捷键保留；不注册 globalShortcut。
+- **验证**：typecheck、lint、全量 383 项测试通过（未新增测试，数量不变）。待手工验收：Cmd/Ctrl+1..5 与 N/逗号快捷键、开发包刷新与 DevTools 可用、正式包刷新键无效且 View 菜单无对应入口。
 
 ---
 

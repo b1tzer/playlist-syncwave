@@ -702,6 +702,7 @@ export default function LocalPlaylistPanel({
                     durationMs: s.durationMs,
                   }))}
                   showIndex
+                  showHeader
                   renderAction={(song) => (
                     <button
                       onClick={() => void handleRemoveSong(Number(song.id))}
