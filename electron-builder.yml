@@ -23,9 +23,8 @@ files:
 asarUnpack:
   - '**/*.node'
 
-# 自动更新发布源（GitHub Releases）：发布时设置 GH_TOKEN 后执行
+# 自动更新唯一发布源（GitHub Releases）：发布时设置 GH_TOKEN 后执行
 #   npx electron-builder --publish always
-# 国内备用源在 src/main/updater.ts 的 FALLBACK_FEEDS 中配置（运行时 fallback）
 publish:
   provider: github
   owner: b1tzer

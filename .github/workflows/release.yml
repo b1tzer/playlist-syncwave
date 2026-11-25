@@ -1,4 +1,4 @@
-# 发布流程：tag(v*) 触发 → 校验 tag 版本 → 三平台未签名构建 → draft release → 人工转正式 → Gitee 备用源同步
+# 发布流程：tag(v*) 触发 → 校验 tag 版本 → 三平台未签名构建 → draft release → 人工转正式
 # 本项目不购买代码签名/公证证书，构建不校验也不提示签名凭据；用户按平台提示手动放行安装
 # workflow_dispatch 仅用于构建预演（不发布）
 # 回滚只能发更高版本，不要重发同版本覆盖
@@ -8,8 +8,6 @@ on:
   push:
     tags:
       - 'v*'
-  release:
-    types: [published]
   workflow_dispatch:
 
 permissions:
@@ -18,7 +16,6 @@ permissions:
 jobs:
   verify:
     name: verify · tag 版本
-    if: github.event_name != 'release'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -38,7 +35,6 @@ jobs:
   build:
     name: build · ${{ matrix.target }}
     needs: verify
-    if: github.event_name != 'release'
     strategy:
       fail-fast: false
       matrix:
@@ -122,45 +118,3 @@ jobs:
             gh release create "$tag" "${assets[@]}" --draft --title "SyncWave $tag" --generate-notes
           fi
           echo "已生成 draft release: ${tag}（人工复核安装包与更新元数据后转正式发布）"
-
-  sync-gitee:
-    name: sync gitee fallback feed
-    if: github.event_name == 'release' && github.event.action == 'published'
-    runs-on: ubuntu-latest
-    env:
-      GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
-      RELEASE_TAG: ${{ github.event.release.tag_name }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
-      - name: 未配置 token 则跳过
-        if: env.GITEE_TOKEN == ''
-        run: echo "GITEE_TOKEN 未配置，跳过 Gitee 备用源同步"
-
-      - name: 下载正式发布资产
-        if: env.GITEE_TOKEN != ''
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release download "$RELEASE_TAG" --dir dist --clobber
-
-      - name: 推送到 Gitee release 分支
-        if: env.GITEE_TOKEN != ''
-        run: |
-          set -euo pipefail
-          version=$(node -p "require('./package.json').version")
-          tmpdir=$(mktemp -d)
-          git clone --depth 1 "https://gitee.com/bibobibo_309/playlist-syncwave.git" "$tmpdir/repo"
-          cd "$tmpdir/repo"
-          git fetch origin release 2>/dev/null || true
-          git checkout -B release origin/release 2>/dev/null || git checkout -B release
-          mkdir -p releases
-          cp "${GITHUB_WORKSPACE}/dist/"* releases/
-          git add -A
-          git -c user.name='release-bot' -c user.email='release-bot@users.noreply.github.com' \
-            commit -m "release: v${version}" || echo "nothing to commit"
-          git remote set-url origin "https://bibobibo_309:${GITEE_TOKEN}@gitee.com/bibobibo_309/playlist-syncwave.git"
-          git push origin release

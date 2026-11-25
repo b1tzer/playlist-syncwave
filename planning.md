@@ -94,7 +94,7 @@ tests/             # Vitest 单元测试（core/main/platforms/renderer）
 
 ### 3.5 桌面体验与设置
 - 桌面能力：单实例锁与二次启动聚焦、窗口状态记忆（防抖 500ms 保存、跨显示器校验）、应用菜单（中英随语言重建）、开机启动真实设置、系统通知（仅窗口失焦、四类事件）、崩溃恢复对话框与重启、版本号显示、自动更新
-- 自动更新：主源 GitHub Releases（`electron-builder.yml` 的 `publish`），国内备用源 `src/main/updater.ts` 的 `FALLBACK_FEEDS`（Gitee raw）；状态广播 `checking/available/not-available/downloading/downloaded/error`；开发模式拒绝检查
+- 自动更新：唯一源为 GitHub Releases（`electron-builder.yml` 的 `publish`），无备用源；状态广播 `checking/available/not-available/downloading/downloaded/error`；开发模式拒绝检查
 - 快捷键：`main/menu.ts` 统一定义——导航 `CmdOrCtrl+1..5`（快速创建/歌单/同步/账号/设置），`CmdOrCtrl+N` 为隐藏别名；`before-input-event` 处理 `Cmd/Ctrl+,`（设置）与正式包吞掉 `Cmd/Ctrl+R`（含 Shift）/F5；View 菜单 Reload/DevTools 仅开发模式，`webPreferences.devTools: isDev`；不注册 globalShortcut
 - 设置页：分区（外观/通用/网络/高级/数据/关于）+ 设置搜索（命中自动展开高级区）+ 主题三态 `light/dark/system`（默认深色；渲染层 `prefers-color-scheme` 联动，主进程同步 `nativeTheme.themeSource`）+ 阈值语义预设（宽松 0.45 / 平衡 0.6 / 严格 0.75）+ 重试/间隔滑块（350ms 防抖回写）+ 高级区默认折叠与「恢复默认」+ 开关失败回滚 + 代理「先测后用」（`main/proxy.ts testProxy` 独立 axios 请求 Cloudflare 204，测试通过且输入未改动才应用，未通过时 Apply 置灰、外层 span 悬浮 Tooltip、Enter 同样拦截）+ 清空歌曲缓存两步确认（`playlistCacheStore.clearAll` 物理删除）
 - 调优参数单一事实源 `core/sync/tuning.ts`：`SYNC_TUNING_DEFAULTS`（threshold 0.6 / retries 2 / interval 500ms）、`SYNC_TUNING_RANGE`（0.4~0.9 / 0~5 / 300~3000ms）、`THRESHOLD_PRESETS`（0.45/0.6/0.75）；引擎、主进程、设置页三处同源引用
@@ -123,7 +123,7 @@ tests/             # Vitest 单元测试（core/main/platforms/renderer）
 | 缓存 schema | `PLAYLIST_CACHE_SCHEMA_VERSION=5` | `src/core/cachePolicy.ts:11` |
 | 缓存常量 | 列表 TTL 10min / 歌曲 TTL 30min / 令牌桶 3 个、10s 补 1 | `src/core/cachePolicy.ts:17-36` |
 | 同步调优 | 默认 0.6 / 2 / 500ms；预设 0.45 / 0.6 / 0.75 | `src/core/sync/tuning.ts:17-40` |
-| 更新源 | GitHub Releases 主源 + Gitee raw 备用 | `electron-builder.yml:26-32`、`src/main/updater.ts:14-29` |
+| 更新源 | GitHub Releases（唯一源） | `electron-builder.yml:26-32`、`src/main/updater.ts:14-15` |
 | 测试数 | 383 | `npm run test` 输出 |
 
 **构建**：本地未执行 `electron-builder` 打包；tag 推送后由发布工作流在 CI 完成三平台未签名构建、更新元数据生成与 draft release（见第 8 节，尚未执行）。
@@ -171,7 +171,7 @@ tests/             # Vitest 单元测试（core/main/platforms/renderer）
 
 **桌面与打包**
 - [x] 快捷键 `Cmd/Ctrl+1..5`、`Cmd/Ctrl+N`、`Cmd/Ctrl+,`；开发包刷新与 DevTools 可用，正式包不可用
-- [x] 单实例、窗口状态记忆、开机启动、系统通知、崩溃恢复、自动更新（GitHub 主源 + Gitee 备用）
+- [x] 单实例、窗口状态记忆、开机启动、系统通知、崩溃恢复、自动更新（GitHub Releases）
 - [x] macOS dmg/zip 与 Windows nsis 安装包产出、安装与首次启动
 - [x] 未签名安装包在 macOS（右键打开）与 Windows（仍要运行）的放行路径可完成安装与首次启动
 
@@ -188,7 +188,7 @@ tests/             # Vitest 单元测试（core/main/platforms/renderer）
 | ADR-005 | 字段顺序不使用本地词典，由平台搜索验证裁决 | 已采用；强结构信号 + 投票仅决定预览默认顺序 |
 | ADR-006 | 发布前迁移压缩为单一基线 `version=6` | 已采用；正式发布后仅追加（≥7），每条迁移须幂等且对全新库安全 |
 | ADR-007 | 缓存手动刷新限流用令牌桶替代固定间隔 | 已采用（3 个令牌 / 10s 补充） |
-| ADR-008 | 自动更新 GitHub Releases 主源 + Gitee 备用源 | 已采用 |
+| ADR-008 | 自动更新只用 GitHub Releases，不设备用源 | 已采用（Gitee 单文件 100MB 配额无法托管安装包） |
 | ADR-009 | 发布由 `v*` tag 触发，先产出 draft release 人工复核再转正式 | 已采用；回滚必须发更高版本 |
 | ADR-010 | 不购买代码签名/公证证书，发布未签名包，用户按平台指引放行 | 已决定；工作流不校验也不提示签名凭据 |
 
@@ -214,7 +214,7 @@ tests/             # Vitest 单元测试（core/main/platforms/renderer）
 - **校验**：tag 必须与 `package.json` 的 `version` 一致；不校验签名凭据（本项目不购买签名/公证证书，构建不提示）
 - **构建**：mac（dmg/zip）、win（nsis）、linux（AppImage）三平台独立 job，均执行 lint/typecheck/test/build 后 `electron-builder --<target> --publish never`（`CSC_IDENTITY_AUTO_DISCOVERY: 'false'`），上传安装包与 `latest*.yml` 到 Artifacts
 - **draft release**：汇总 Artifacts、校验 `latest.yml`/`latest-mac.yml`/`latest-linux.yml` 三份更新元数据齐全，创建 GitHub draft release；人工复核安装包与元数据后转正式
-- **备用源同步**：正式 release 的 `published` 事件触发 Gitee 同步，把资产推到 `release` 分支供 `updater.ts` 的 `FALLBACK_FEEDS` 使用；`GITEE_TOKEN` 未配置则跳过
+- **更新源**：仅 GitHub Releases（`electron-builder.yml` 的 `publish`），未配置备用源（Gitee 单文件 100MB 配额无法托管安装包）
 - **用户安装**：未签名包在 macOS 需右键打开，在 Windows 需选择「仍要运行」（见 `README.md`「发布流程」）
 - **版本记录**：`CHANGELOG.md` 随版本更新；回滚只发更高版本，不重发同版本
 - **工具链边界**：当前 electron-builder 26.18.0 不强制更新清单签名；升级到 27 时发布构建需 `electron-builder create-update-key` 生成的 Ed25519 key（`ELECTRON_BUILDER_UPDATE_SIGN_KEY`），不在发布窗口升级

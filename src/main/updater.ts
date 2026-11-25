@@ -12,42 +12,7 @@ const { autoUpdater } = createRequire(import.meta.url)(
 const log = logCenter.logger('updater')
 
 // --- 更新源配置 ---
-// 主源：GitHub Releases，由 electron-builder.yml 的 publish 配置打包进 app-update.yml，无需在此声明。
-// 备用源（主源检查失败后依次尝试）：国内 git 服务静态托管。generic 源要求 url 目录下
-// 同时存在 latest-mac.yml / latest.yml / latest-linux.yml 与对应安装包（如 Gitee raw 目录）。
-type FeedOptions = Parameters<typeof autoUpdater.setFeedURL>[0]
-
-const FALLBACK_FEEDS: Array<{ name: string; options: FeedOptions }> = [
-  {
-    name: 'gitee',
-    options: {
-      provider: 'generic',
-      // Gitee 仓库 release 分支下的 releases/ 目录，需包含 latest*.yml 与安装包
-      url: 'https://gitee.com/bibobibo_309/playlist-syncwave/raw/release/releases',
-    },
-  },
-]
-
-/** 依序尝试更新源：默认源（app-update.yml）→ 备用源；任一成功即返回，全部失败抛出 */
-async function checkFeeds(): Promise<void> {
-  for (let i = 0; i <= FALLBACK_FEEDS.length; i++) {
-    const feed = i === 0 ? undefined : FALLBACK_FEEDS[i - 1]
-    if (feed) {
-      log.info('updater.fallback', '主源不可用，切换备用更新源', { feed: feed.name })
-      autoUpdater.setFeedURL(feed.options)
-    }
-    try {
-      await autoUpdater.checkForUpdates()
-      return
-    } catch (e) {
-      log.warn('updater.feed-failed', '当前更新源检查失败，尝试下一个', {
-        feed: feed?.name ?? 'default',
-        error: e instanceof Error ? e.message : String(e),
-      })
-    }
-  }
-  throw new Error('所有更新源均检查失败')
-}
+// 唯一更新源为 GitHub Releases，由 electron-builder.yml 的 publish 配置打包进 app-update.yml，无需在此声明。
 
 export type UpdateStatus =
   | { state: 'checking' }
@@ -75,7 +40,9 @@ function scheduleAutoCheck(): void {
   clearTimeout(autoCheckTimer)
   if (!enabled) return
   autoCheckTimer = setTimeout(() => {
-    checkFeeds().catch((e) => log.warn('updater.check-failed', '启动静默检查失败', e))
+    autoUpdater
+      .checkForUpdates()
+      .catch((e) => log.warn('updater.check-failed', '启动静默检查失败', e))
   }, 10_000)
 }
 
@@ -121,10 +88,10 @@ export function setAutoUpdateEnabled(next: boolean): void {
   log.info('updater.enabled-changed', '自动更新开关已变更', { enabled: next })
 }
 
-/** 手动检查更新（设置页按钮）：同样走多源 fallback；开发模式未打包，直接拒绝 */
+/** 手动检查更新（设置页按钮）；开发模式未打包，直接拒绝 */
 export async function checkForUpdates(): Promise<void> {
   if (!app.isPackaged) throw new Error('开发模式不支持自动更新')
-  await checkFeeds()
+  await autoUpdater.checkForUpdates()
 }
 
 /** 下载完成后重启并安装 */
