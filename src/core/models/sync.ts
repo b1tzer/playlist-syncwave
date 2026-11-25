@@ -110,6 +110,16 @@ export interface SyncReport {
   firstGenre?: string
 }
 
+/** 同步执行检查点：供主进程定期持久化，中断后恢复执行所需的最小状态 */
+export interface SyncCheckpoint {
+  /** 当前阶段：matching 逐首搜索 / adding 写入歌单 */
+  stage: 'matching' | 'adding'
+  /** adding 阶段：已创建的目标歌单 ID */
+  playlistId?: string
+  /** adding 阶段：已成功添加的歌曲数 */
+  added?: number
+}
+
 export interface SyncOptions {
   /** 匹配阈值，默认 0.6 */
   threshold?: number
@@ -129,6 +139,8 @@ export interface SyncOptions {
   skipCheck?: () => boolean
   /** 逐首明细回调（matched/choice/failed/skipped 各触发一次） */
   onStep?: (item: SyncItemResult) => void
+  /** 检查点回调：阶段切换与批次写入后触发，主进程据此定期保存状态 */
+  onCheckpoint?: (checkpoint: SyncCheckpoint) => void
 }
 
 /** 引擎被中止（用户停止任务）时抛出；partial 携带已产生的明细供收敛为 stopped 报告 */
@@ -199,6 +211,8 @@ export interface SyncTaskRecord {
   detail: SyncItemResult[]
   /** 原始输入清单（同步发起时的 queries）：重新执行时直接复用，旧任务可能为空数组 */
   rawInput: MatchQuery[]
+  /** 执行中已创建的目标歌单 ID（adding 阶段检查点）：中断恢复时继续写入剩余批次 */
+  playlistId?: string
 }
 
 /**

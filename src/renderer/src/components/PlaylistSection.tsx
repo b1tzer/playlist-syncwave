@@ -13,7 +13,7 @@ import type {
 } from '@core/models/platform'
 import type { MatchQuery } from '@core/models/match'
 import type { PendingConfirmSession, SyncTaskRecord } from '@core/models/sync'
-import { MANUAL_REFRESH_COOLDOWN_MS, VISIBLE_REFRESH_CHECK_MS } from '@core/cachePolicy'
+import { VISIBLE_REFRESH_CHECK_MS } from '@core/cachePolicy'
 import { toM3u } from '@core/export/toM3u'
 import { toCsv } from '@core/export/toCsv'
 import { createRendererLogger } from '../logging/rendererLogger'
@@ -148,8 +148,6 @@ export default function PlaylistSection({
   // 滚动分页加载防重入（歌单/歌曲共用）
   const loadingMoreRef = useRef(false)
   const [refreshing, setRefreshing] = useState(false)
-  // 手动刷新冷却倒计时（秒）：与主进程限流阈值同口径，防连点触发平台风控
-  const [refreshCooldown, setRefreshCooldown] = useState(0)
   const [error, setError] = useState<string>('')
 
   // --- 缓存兜底 + 后台重新验证的行级更新 ---
@@ -308,9 +306,6 @@ export default function PlaylistSection({
           force,
           silent,
         )
-        if (res.throttled && !silent) {
-          notify('warning', t('playlist.refreshThrottled'))
-        }
         log.info('playlist.list.fetch', '拉取歌单列表第一页', {
           platform: active,
           count: res.items.length,
@@ -445,18 +440,11 @@ export default function PlaylistSection({
     }
   }, [])
 
-  // 手动刷新冷却倒计时（仅按钮 UX 防连点；真实限流由主进程令牌桶控制）
-  useEffect(() => {
-    if (refreshCooldown <= 0) return
-    const timer = setInterval(() => setRefreshCooldown((s) => s - 1), 1000)
-    return () => clearInterval(timer)
-  }, [refreshCooldown])
-
+  // 手动强制刷新：主进程等待真实请求完成才返回，期间按钮置灰，完成后恢复可点
   const handleRefresh = async () => {
-    if (refreshCooldown > 0 || refreshing || syncRunning) return
+    if (refreshing || syncRunning) return
     log.info('playlist.list.refresh', '手动强制刷新歌单列表', { platform: active })
     setRefreshing(true)
-    setRefreshCooldown(Math.ceil(MANUAL_REFRESH_COOLDOWN_MS / 1000))
     await fetchPlaylists(true)
     setRefreshing(false)
   }
@@ -1097,12 +1085,8 @@ export default function PlaylistSection({
                   </span>
                   <button
                     onClick={() => void handleRefresh()}
-                    disabled={refreshing || loading || refreshCooldown > 0}
-                    title={
-                      refreshCooldown > 0
-                        ? t('playlist.refreshCooldown', { seconds: refreshCooldown })
-                        : t('playlist.refresh')
-                    }
+                    disabled={refreshing || loading}
+                    title={t('playlist.refresh')}
                     className="flex items-center rounded-md p-1 text-on-surface-variant transition-colors hover:bg-surface-container-highest hover:text-primary disabled:opacity-50"
                   >
                     <span

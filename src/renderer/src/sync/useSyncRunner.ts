@@ -152,6 +152,8 @@ export function useSyncRunner() {
             progress: 1,
             failedDetail: rep.failed.map((f) => syncFailedText(t, f)),
             detail: finalDetail,
+            // 停止时可能已建单并写入部分批次：保留歌单 ID，重启后可续写
+            playlistId: rep.playlistId || undefined,
           })
           notify(
             'warning',
@@ -208,6 +210,7 @@ export function useSyncRunner() {
           progress: 1,
           failedDetail: rep.failed.map((f) => syncFailedText(t, f)),
           detail: finalDetail,
+          playlistId: rep.playlistId || undefined,
         })
       } catch (e) {
         const msg = e instanceof Error ? e.message : t('sync.failedGeneric')

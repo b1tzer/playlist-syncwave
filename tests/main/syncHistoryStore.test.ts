@@ -156,6 +156,27 @@ describe('syncHistoryStore — SQLite 持久化', () => {
     expect(store.listTasks()[0].rawInput).toEqual(rawInput)
   })
 
+  it('playlistId 检查点往返无损（中断恢复续写）', () => {
+    store.upsertTask(makeTask({ id: 'p', status: 'running', playlistId: 'pl-123' }))
+    expect(store.listTasks()[0].playlistId).toBe('pl-123')
+    // 未填写时为空（读取为 undefined，写入后回读保持一致）
+    store.upsertTask(makeTask({ id: 'q' }))
+    expect(store.listTasks().find((t) => t.id === 'q')?.playlistId).toBeUndefined()
+  })
+
+  it('playlistId 更新保护：后续不带 playlistId 的写入不覆盖已保存的歌单 ID', () => {
+    store.upsertTask(makeTask({ id: 'keep', status: 'running', playlistId: 'pl-keep' }))
+    // 渲染层进度/明细更新不带 playlistId：不得清空主进程已写入的歌单 ID
+    store.upsertTask(makeTask({ id: 'keep', status: 'running', progress: 0.5 }))
+    expect(store.getTask('keep')?.playlistId).toBe('pl-keep')
+  })
+
+  it('getTask 按 id 查询单条任务', () => {
+    store.upsertTask(makeTask({ id: 'g', playlistId: 'pl-x' }))
+    expect(store.getTask('g')?.playlistId).toBe('pl-x')
+    expect(store.getTask('missing')).toBeNull()
+  })
+
   it('旧库（无 detail 列）升级：迁移框架补齐后可正常读写（T9）', () => {
     // 模拟 T9 之前的旧表结构
     db.exec(`

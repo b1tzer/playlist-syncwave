@@ -48,12 +48,11 @@ export interface PendingConfirmInfo {
   choices: SyncChoice[]
 }
 
-/** 歌单数据拉取结果：缓存兜底优先（throttled 表示手动刷新被限流拦截；stale 表示已返回缓存、后台正在重新验证） */
+/** 歌单数据拉取结果：缓存兜底优先（stale 表示已返回缓存、后台正在重新验证） */
 export interface PlaylistFetchResult<T> {
   data: T
   fromCache: boolean
   stale?: boolean
-  throttled?: boolean
 }
 
 /** 分页拉取结果：items 为当前页切片，total 为全量数量 */
@@ -62,7 +61,6 @@ export interface PagedFetchResult<T> {
   total: number
   fromCache: boolean
   stale?: boolean
-  throttled?: boolean
 }
 
 /** 后台重新验证结果：渲染层据 changedIds/addedIds/removedIds 做行级更新动画 */
@@ -276,6 +274,12 @@ const api = {
       ipcRenderer.invoke('sync-history:upsert', task),
     remove: (id: string): Promise<void> => ipcRenderer.invoke('sync-history:remove', id),
     clear: (): Promise<void> => ipcRenderer.invoke('sync-history:clear'),
+    /** 主进程执行中定期落库后广播任务快照（含恢复执行），渲染层据此实时刷新界面 */
+    onTaskUpdated: (callback: (task: SyncTaskRecord) => void): (() => void) => {
+      const listener = (_event: unknown, task: SyncTaskRecord) => callback(task)
+      ipcRenderer.on('sync-history:task-updated', listener)
+      return () => ipcRenderer.removeListener('sync-history:task-updated', listener)
+    },
   },
 
   settings: {

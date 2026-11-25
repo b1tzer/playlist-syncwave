@@ -31,8 +31,5 @@ export const REFRESH_BUCKET_CAPACITY = 3
  */
 export const REFRESH_BUCKET_REFILL_MS = 10_000
 
-/** 手动刷新按钮的 UI 冷却（秒）：防连点，主进程令牌桶负责真实限流 */
-export const MANUAL_REFRESH_COOLDOWN_MS = 10_000
-
 /** 打开状态下定期检查缓存是否过期并重新验证的周期 */
 export const VISIBLE_REFRESH_CHECK_MS = 60_000

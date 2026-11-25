@@ -203,27 +203,27 @@ describe('playlistCacheService — 缓存兜底 + 后台重新验证（SWR）/ �
     await vi.waitFor(() => expect(fetchSongs).toHaveBeenCalledTimes(2))
   })
 
-  it('令牌桶：允许短时间连续强制刷新（容量内），超出后 throttled 返回缓存', async () => {
+  it('令牌桶只约束自动刷新：桶空时 silent 强刷静默降级返回缓存（不发起请求）', async () => {
     const h = makeHarness()
     const fetchFn = vi.fn(async () => sampleList())
     // 无缓存首拉不消耗令牌
     await h.service.playlists('netease', fetchFn)
 
     for (let i = 0; i < REFRESH_BUCKET_CAPACITY; i++) {
-      const r = await h.service.playlists('netease', fetchFn, { force: true })
-      expect(r.throttled).toBeUndefined()
+      const r = await h.service.playlists('netease', fetchFn, { force: true, silent: true })
+      expect(r.fromCache).toBe(true)
       expect(r.stale).toBe(true)
     }
     await vi.waitFor(() => expect(fetchFn).toHaveBeenCalledTimes(1 + REFRESH_BUCKET_CAPACITY))
 
-    // 桶空：强制刷新被限流，返回缓存并标记 throttled（非 silent）
-    const throttled = await h.service.playlists('netease', fetchFn, { force: true })
-    expect(throttled.throttled).toBe(true)
-    expect(throttled.fromCache).toBe(true)
+    // 桶空：silent 自动刷新静默降级，返回缓存且不发起后台验证（无 stale 标记）
+    const degraded = await h.service.playlists('netease', fetchFn, { force: true, silent: true })
+    expect(degraded.fromCache).toBe(true)
+    expect(degraded.stale).toBeUndefined()
     expect(fetchFn).toHaveBeenCalledTimes(1 + REFRESH_BUCKET_CAPACITY)
   })
 
-  it('令牌桶按速率补充：等待一个补充周期后恢复一次调用额度', async () => {
+  it('令牌桶按速率补充：等待一个补充周期后自动刷新恢复一次调用额度', async () => {
     const h = makeHarness()
     const fetchFn = vi.fn(async () => sampleList())
     await h.service.playlists('netease', fetchFn)
@@ -232,33 +232,137 @@ describe('playlistCacheService — 缓存兜底 + 后台重新验证（SWR）/ �
     }
     await vi.waitFor(() => expect(fetchFn).toHaveBeenCalledTimes(1 + REFRESH_BUCKET_CAPACITY))
 
-    // 立即强刷：限流
-    expect((await h.service.playlists('netease', fetchFn, { force: true })).throttled).toBe(true)
+    // 立即再刷：限流降级，不再请求
+    const blocked = await h.service.playlists('netease', fetchFn, { force: true, silent: true })
+    expect(blocked.stale).toBeUndefined()
+    expect(fetchFn).toHaveBeenCalledTimes(1 + REFRESH_BUCKET_CAPACITY)
 
     // 推进一个补充周期：恢复 1 个令牌，可再请求一次
     h.advance(REFRESH_BUCKET_REFILL_MS)
     const ok = await h.service.playlists('netease', fetchFn, { force: true, silent: true })
-    expect(ok.throttled).toBeUndefined()
+    expect(ok.stale).toBe(true)
+    await vi.waitFor(() => expect(fetchFn).toHaveBeenCalledTimes(2 + REFRESH_BUCKET_CAPACITY))
 
-    // 再次立即强刷：令牌耗尽又被限流
-    expect((await h.service.playlists('netease', fetchFn, { force: true })).throttled).toBe(true)
+    // 再次立即：令牌耗尽又被降级
+    const blockedAgain = await h.service.playlists('netease', fetchFn, { force: true, silent: true })
+    expect(blockedAgain.stale).toBeUndefined()
+    expect(fetchFn).toHaveBeenCalledTimes(2 + REFRESH_BUCKET_CAPACITY)
   })
 
-  it('silent 模式限流时不标记 throttled（可见性自动刷新静默降级）', async () => {
+  it('手动强刷绕过令牌桶：桶空时仍立即请求接口并返回最新数据', async () => {
     const h = makeHarness()
     const fetchFn = vi.fn(async () => sampleList())
     await h.service.playlists('netease', fetchFn)
+
+    // 自动刷新耗尽令牌
     for (let i = 0; i < REFRESH_BUCKET_CAPACITY; i++) {
       await h.service.playlists('netease', fetchFn, { force: true, silent: true })
     }
+    await vi.waitFor(() => expect(fetchFn).toHaveBeenCalledTimes(1 + REFRESH_BUCKET_CAPACITY))
 
-    // silent：限流静默返回缓存，不标记（渲染层不弹 toast）
-    const silent = await h.service.playlists('netease', fetchFn, { force: true, silent: true })
-    expect(silent.throttled).toBeUndefined()
-    expect(silent.fromCache).toBe(true)
+    // 手动强刷（非 silent）：不受令牌桶约束，立即请求接口并等待真实结果
+    const changed = [
+      { id: '1', name: 'A2', songCount: 2 },
+      { id: '2', name: 'B', songCount: 1 },
+    ]
+    fetchFn.mockResolvedValueOnce(changed)
+    const result = await h.service.playlists('netease', fetchFn, { force: true })
+    expect(result.fromCache).toBe(false)
+    expect(result.stale).toBeUndefined()
+    expect(result.data).toEqual(changed)
+    expect(fetchFn).toHaveBeenCalledTimes(2 + REFRESH_BUCKET_CAPACITY)
 
-    // 非 silent：标记 throttled
-    expect((await h.service.playlists('netease', fetchFn, { force: true })).throttled).toBe(true)
+    // 缓存已更新：TTL 内再次读取拿到新数据
+    const again = await h.service.playlists('netease', fetchFn)
+    expect(again.fromCache).toBe(true)
+    expect(again.stale).toBeUndefined()
+    expect(again.data).toEqual(changed)
+  })
+
+  it('手动强刷有变化：返回最新数据并推送行级 diff', async () => {
+    const h = makeHarness()
+    const fetchFn = vi.fn(async () => sampleList())
+    await h.service.playlists('netease', fetchFn)
+
+    h.advance(PLAYLIST_LIST_TTL_MS + 1)
+    const changed = [
+      { id: '1', name: 'A2', songCount: 2 },
+      { id: '2', name: 'B', songCount: 1 },
+    ]
+    fetchFn.mockResolvedValueOnce(changed)
+    const refreshed = vi.fn()
+    const result = await h.service.playlists('netease', fetchFn, { force: true, onRefreshed: refreshed })
+    expect(result.fromCache).toBe(false)
+    expect(result.data).toEqual(changed)
+    expect(refreshed).toHaveBeenCalledWith({
+      status: 'updated',
+      data: changed,
+      changed: true,
+      changedIds: ['1'],
+      addedIds: ['2'],
+      removedIds: [],
+    })
+  })
+
+  it('手动强刷无变化：走 unchanged 判断，仅刷新时间参数并返回缓存兜底', async () => {
+    const h = makeHarness()
+    const fetchFn = vi.fn(async () => sampleList())
+    await h.service.playlists('netease', fetchFn)
+
+    h.advance(PLAYLIST_LIST_TTL_MS + 1)
+    const refreshed = vi.fn()
+    const result = await h.service.playlists('netease', fetchFn, { force: true, onRefreshed: refreshed })
+    expect(result.fromCache).toBe(true)
+    expect(result.data).toEqual(sampleList())
+    expect(refreshed).toHaveBeenCalledWith({ status: 'unchanged' })
+
+    // 时间参数已刷新：再次读取不再触发后台（fetch 仍是 2 次）
+    const again = await h.service.playlists('netease', fetchFn)
+    expect(again.stale).toBeUndefined()
+    expect(again.data).toEqual(sampleList())
+    expect(fetchFn).toHaveBeenCalledTimes(2)
+  })
+
+  it('手动强刷失败：返回缓存兜底并推送 failed', async () => {
+    const h = makeHarness()
+    const fetchFn = vi.fn(async () => sampleList())
+    await h.service.playlists('netease', fetchFn)
+
+    h.advance(PLAYLIST_LIST_TTL_MS + 1)
+    fetchFn.mockRejectedValueOnce(new Error('网络错误'))
+    const refreshed = vi.fn()
+    const result = await h.service.playlists('netease', fetchFn, { force: true, onRefreshed: refreshed })
+    expect(result.fromCache).toBe(true)
+    expect(result.data).toEqual(sampleList())
+    expect(refreshed).toHaveBeenCalledWith({ status: 'failed' })
+  })
+
+  it('手动强刷等待真实请求完成才返回（刷新期间按钮置灰直至完成）', async () => {
+    const h = makeHarness()
+    const fetchFn = vi.fn(async () => sampleList())
+    await h.service.playlists('netease', fetchFn)
+
+    const changed = [
+      { id: '1', name: 'A2', songCount: 2 },
+      { id: '2', name: 'B', songCount: 1 },
+    ]
+    let resolveFetch: (v: PlatformPlaylist[]) => void = () => {}
+    fetchFn.mockImplementationOnce(
+      () => new Promise<PlatformPlaylist[]>((resolve) => (resolveFetch = resolve)),
+    )
+    let settled = false
+    const pending = h.service.playlists('netease', fetchFn, { force: true }).then((r) => {
+      settled = true
+      return r
+    })
+    // 请求未完成：调用方仍在等待（未返回）
+    await Promise.resolve()
+    expect(settled).toBe(false)
+    resolveFetch(changed)
+    const result = await pending
+    expect(result.fromCache).toBe(false)
+    expect(result.data).toEqual(changed)
+    expect(fetchFn).toHaveBeenCalledTimes(2)
   })
 
   it('列表与歌曲各自独立限流桶，互不挤占', async () => {
@@ -268,22 +372,26 @@ describe('playlistCacheService — 缓存兜底 + 后台重新验证（SWR）/ �
     await h.service.playlists('netease', fetchList)
     await h.service.songs('netease', '1', fetchSongs)
 
-    // 列表耗尽令牌
+    // 列表自动刷新耗尽令牌
     for (let i = 0; i < REFRESH_BUCKET_CAPACITY; i++) {
       await h.service.playlists('netease', fetchList, { force: true, silent: true })
     }
-    expect((await h.service.playlists('netease', fetchList, { force: true })).throttled).toBe(true)
+    await vi.waitFor(() => expect(fetchList).toHaveBeenCalledTimes(1 + REFRESH_BUCKET_CAPACITY))
+    // 列表桶空：自动刷新静默降级，不再请求
+    const degraded = await h.service.playlists('netease', fetchList, { force: true, silent: true })
+    expect(degraded.stale).toBeUndefined()
+    expect(fetchList).toHaveBeenCalledTimes(1 + REFRESH_BUCKET_CAPACITY)
 
-    // 歌曲桶不受列表影响，仍可强制刷新
+    // 歌曲桶不受列表影响，手动强刷仍请求接口
     const songs = await h.service.songs('netease', '1', fetchSongs, { force: true })
-    expect(songs.throttled).toBeUndefined()
+    expect(songs.fromCache).toBe(true)
+    expect(fetchSongs).toHaveBeenCalledTimes(2)
   })
 
   it('无缓存强制刷新不受限流（首次拉取直接放行）', async () => {
     const h = makeHarness()
     const fetchFn = vi.fn(async () => sampleList())
     const result = await h.service.playlists('netease', fetchFn, { force: true })
-    expect(result.throttled).toBeUndefined()
     expect(result.fromCache).toBe(false)
     expect(result.stale).toBeUndefined()
     expect(fetchFn).toHaveBeenCalledTimes(1)
@@ -312,7 +420,6 @@ describe('playlistCacheService — 缓存兜底 + 后台重新验证（SWR）/ �
       .mockResolvedValueOnce(sampleList())
     await expect(h.service.playlists('netease', fetchFn)).rejects.toThrow('网络错误')
     const retry = await h.service.playlists('netease', fetchFn, { force: true })
-    expect(retry.throttled).toBeUndefined()
     expect(retry.fromCache).toBe(false)
     expect(retry.data).toEqual(sampleList())
     expect(fetchFn).toHaveBeenCalledTimes(2)

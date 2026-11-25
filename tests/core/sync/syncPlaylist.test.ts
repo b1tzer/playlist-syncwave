@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { executeSync, planSync, syncPlaylist } from '@core/sync/syncPlaylist'
+import { executeSync, planSync, resumeSync, syncPlaylist } from '@core/sync/syncPlaylist'
 import {
   SearchError,
   SyncAbortedError,
@@ -787,5 +787,112 @@ describe('同步引擎 — 介入控制与任务明细（T9）', () => {
       expect(e).toBeInstanceOf(SyncAbortedError)
       expect(target.createPlaylist).not.toHaveBeenCalled()
     }
+  })
+})
+
+describe('同步引擎 — 检查点与断点续写（定期保存/重启恢复）', () => {
+  it('executeSync 建单与每批写入后触发 onCheckpoint（playlistId + added）', async () => {
+    const index: Record<string, PlatformSong[]> = {}
+    for (let i = 1; i <= 3; i++) index[`歌${i}`] = [song(String(i), `歌${i}`, '某人')]
+    const target = makeTarget(index)
+    const checkpoints: Array<{ stage: string; playlistId?: string; added?: number }> = []
+    const plan = await planSync(
+      [1, 2, 3].map((i) => ({ title: `歌${i}`, artist: '某人' })),
+      target,
+      { searchIntervalMs: 0 },
+    )
+    await executeSync(plan, [], 'x', target, {
+      batchSize: 2,
+      onCheckpoint: (cp) => checkpoints.push(cp),
+    })
+    expect(checkpoints[0]).toEqual({ stage: 'adding', playlistId: 'pl-x', added: 0 })
+    expect(checkpoints[1]).toEqual({ stage: 'adding', playlistId: 'pl-x', added: 2 })
+    expect(checkpoints[2]).toEqual({ stage: 'adding', playlistId: 'pl-x', added: 3 })
+  })
+
+  it('planSync 每首歌处理后触发 matching 检查点', async () => {
+    const target = makeTarget({
+      晴天: [song('1', '晴天', '周杰伦')],
+      稻香: [song('2', '稻香', '周杰伦')],
+    })
+    const checkpoints: string[] = []
+    await planSync([{ title: '晴天' }, { title: '稻香' }], target, {
+      searchIntervalMs: 0,
+      onCheckpoint: (cp) => checkpoints.push(cp.stage),
+    })
+    expect(checkpoints).toEqual(['matching', 'matching'])
+  })
+
+  it('resumeSync：从 addedSoFar 处续写剩余批次，不重复写入已添加部分', async () => {
+    const index: Record<string, PlatformSong[]> = {}
+    for (let i = 1; i <= 5; i++) index[`歌${i}`] = [song(String(i), `歌${i}`, '某人')]
+    const target = makeTarget(index)
+    // 模拟中断前：已建单且已添加前 2 首（批次大小 1）
+    const detail = [1, 2, 3, 4, 5].map((i) => ({
+      index: i - 1,
+      query: { title: `歌${i}`, artist: '某人' },
+      status: 'matched' as const,
+      songId: String(i),
+    }))
+    const report = await resumeSync('pl-断点', 2, detail, '断点歌单', target, { batchSize: 1 })
+    expect(report.status).toBe('done')
+    expect(report.added).toBe(5)
+    const calls = (target.addSongs as ReturnType<typeof vi.fn>).mock.calls
+    expect(calls).toHaveLength(3)
+    expect(calls.map((c) => c[1])).toEqual([['3'], ['4'], ['5']])
+  })
+
+  it('resumeSync：不建新单，报告 playlistId 为续写目标', async () => {
+    const target = makeTarget({})
+    const detail = [
+      {
+        index: 0,
+        query: { title: '晴天' },
+        status: 'matched' as const,
+        songId: '1',
+      },
+    ]
+    const report = await resumeSync('pl-existing', 0, detail, 'x', target)
+    expect(report.playlistId).toBe('pl-existing')
+    expect(target.createPlaylist).not.toHaveBeenCalled()
+    expect(target.addSongs).toHaveBeenCalledWith('pl-existing', ['1'])
+  })
+
+  it('resumeSync：续写中批次失败记 add-failed，其余批次继续', async () => {
+    const index: Record<string, PlatformSong[]> = {}
+    for (let i = 1; i <= 3; i++) index[`歌${i}`] = [song(String(i), `歌${i}`, '某人')]
+    const target = makeTarget(index)
+    let call = 0
+    target.addSongs = vi.fn(async () => {
+      call++
+      if (call === 2) throw new Error('续写失败')
+    })
+    const detail = [1, 2, 3].map((i) => ({
+      index: i - 1,
+      query: { title: `歌${i}`, artist: '某人' },
+      status: 'matched' as const,
+      songId: String(i),
+    }))
+    const report = await resumeSync('pl-x', 0, detail, 'x', target, { batchSize: 1 })
+    expect(report.added).toBe(2)
+    expect(report.failed).toHaveLength(1)
+    expect(report.failed[0].reason).toBe('add-failed')
+    expect(report.items.find((i) => i.index === 1)).toMatchObject({
+      status: 'failed',
+      reason: 'add-failed',
+    })
+  })
+
+  it('executeSync 用户确认的明细实时触发 onStep（供主进程检查点持久化）', async () => {
+    const target = makeTarget({
+      勇气: [song('2', '勇气', '棉子'), song('3', '勇气', '金志文')],
+    })
+    const plan = await planSync([{ title: '勇气' }], target, { searchIntervalMs: 0 })
+    expect(plan.choices).toHaveLength(1)
+    const steps: Array<{ status: string; songId?: string }> = []
+    await executeSync(plan, [{ choiceIndex: 0, songId: '2' }], 'x', target, {
+      onStep: (item) => steps.push({ status: item.status, songId: item.songId }),
+    })
+    expect(steps).toEqual([{ status: 'matched', songId: '2' }])
   })
 })

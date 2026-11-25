@@ -15,8 +15,6 @@ export interface FetchResult<T> {
   fromCache: boolean
   /** 已返回缓存兜底，后台正在重新验证（更新经 onRefreshed 推送） */
   stale?: boolean
-  /** 强制刷新被限流拦截（返回缓存数据）；silent 模式下不标记，静默降级 */
-  throttled?: boolean
 }
 
 /** 后台重新验证结果：渲染层据 changedIds/addedIds 做行级更新动画 */
@@ -38,7 +36,7 @@ interface DiffResult {
 
 interface ResourceOptions<T> {
   force: boolean
-  /** 静默刷新（切回前台/切回页面/打开时自动触发）：限流时不标记 throttled，不打扰用户 */
+  /** 静默刷新（切回前台/切回页面/打开时自动触发）：限流时静默降级返回缓存，不打扰用户 */
   silent: boolean
   ttlMs: number
   /** 限流令牌桶 key：列表与歌曲各自独立，短时突发 + 长期总量受控 */
@@ -132,8 +130,13 @@ const SONG_FIELDS: (keyof PlatformSong)[] = [
  * 可见性自动）时后台重新请求接口，逐行 diff：有更新 → 整单替换写入并推送
  * 行级 diff；无更新 → 仅刷新时间参数。
  *
- * 限流采用令牌桶（按列表/歌曲各自独立）：允许短时间连续多次调用，
- * 同时以固定速率补充令牌控制一段时间内的整体调用量。
+ * 用户手动强刷（force 且非 silent）优先级最高：绕过令牌桶立即请求接口，
+ * 并等待真实请求完成后再返回（渲染层据返回值更新数据、解除按钮置灰）；
+ * 无变化/失败同样走 diff 判断逻辑（unchanged 仅刷新时间参数、failed 保留缓存兜底）。
+ *
+ * 自动刷新（TTL 过期重验 / 可见性静默强刷）走令牌桶限流（按列表/歌曲各自独立）：
+ * 允许短时间连续多次调用，同时以固定速率补充令牌控制一段时间内的整体调用量，
+ * 令牌不足时静默降级返回缓存。
  * 单飞保证并发请求共享同一次平台请求。
  */
 export function createPlaylistCacheService(store: PlaylistCacheStore, now: () => number = Date.now) {
@@ -149,33 +152,41 @@ export function createPlaylistCacheService(store: PlaylistCacheStore, now: () =>
     return bucket
   }
 
-  /** 后台重新验证：有缓存兜底返回后执行，成功/失败都推送给渲染层 */
-  async function revalidateInBackground<T>(
+  /** 重新验证（单飞共享）：请求接口并逐行 diff，成功/失败都推送给渲染层 */
+  function startRevalidate<T>(
     key: string,
     options: ResourceOptions<T>,
     baseline: T,
-  ): Promise<void> {
-    if (flights.has(key)) return // 已有在途请求（自动/手动/无缓存拉取共享）
-    const promise = (async (): Promise<void> => {
+  ): Promise<RefreshEvent<T>> {
+    // 已有在途请求（自动/手动/无缓存拉取共享）
+    const inFlight = flights.get(key) as Promise<RefreshEvent<T>> | undefined
+    if (inFlight) return inFlight
+    const promise = (async (): Promise<RefreshEvent<T>> => {
       try {
         const fresh = await options.fetch()
         const diff = options.diff(baseline, fresh)
         if (diff.changed) {
           options.save(fresh)
-          options.onRefreshed({ status: 'updated', data: fresh, ...diff })
-        } else {
-          // 接口返回与缓存一致：不做数据写入，仅刷新时间参数
-          options.touch()
-          options.onRefreshed({ status: 'unchanged' })
+          const event: RefreshEvent<T> = { status: 'updated', data: fresh, ...diff }
+          options.onRefreshed(event)
+          return event
         }
+        // 接口返回与缓存一致：不做数据写入，仅刷新时间参数
+        options.touch()
+        const event: RefreshEvent<T> = { status: 'unchanged' }
+        options.onRefreshed(event)
+        return event
       } catch {
         // 刷新失败：缓存兜底保留
-        options.onRefreshed({ status: 'failed' })
+        const event: RefreshEvent<T> = { status: 'failed' }
+        options.onRefreshed(event)
+        return event
       } finally {
         flights.delete(key)
       }
     })()
     flights.set(key, promise)
+    return promise
   }
 
   async function fetchResource<T>(key: string, options: ResourceOptions<T>): Promise<FetchResult<T>> {
@@ -189,19 +200,25 @@ export function createPlaylistCacheService(store: PlaylistCacheStore, now: () =>
 
     // 有缓存：先兜底返回，再决定是否后台重新验证（走令牌桶限流）
     if (cached !== null) {
+      // 用户手动强刷（force 且非 silent）：优先级最高，绕过令牌桶，
+      // 立即请求接口并等待真实结果返回（渲染层据返回值更新数据、解除按钮置灰）
+      if (options.force && !options.silent) {
+        const event = await startRevalidate(key, options, cached.data)
+        if (event.status === 'updated' && event.data) {
+          return { data: event.data, fromCache: false }
+        }
+        // unchanged / failed：返回缓存兜底（unchanged 已刷新时间参数）
+        return { data: cached.data, fromCache: true }
+      }
       // 已有在途验证：共享，无需再取令牌
       if (flights.has(key)) {
         return { data: cached.data, fromCache: true, stale: true }
       }
       if (!bucketFor(options.bucketKey).tryTake()) {
-        // 令牌不足：静默降级返回缓存；用户显式强刷才标记 throttled（渲染层 toast 提示）
-        return {
-          data: cached.data,
-          fromCache: true,
-          throttled: options.force && !options.silent ? true : undefined,
-        }
+        // 令牌不足：静默降级返回缓存（自动刷新不打扰用户）
+        return { data: cached.data, fromCache: true }
       }
-      void revalidateInBackground(key, options, cached.data)
+      void startRevalidate(key, options, cached.data)
       return { data: cached.data, fromCache: true, stale: true }
     }
 
@@ -224,7 +241,7 @@ export function createPlaylistCacheService(store: PlaylistCacheStore, now: () =>
   }
 
   return {
-    /** 平台歌单列表（force 强制重新验证；silent 静默模式限流时不标记 throttled） */
+    /** 平台歌单列表（force 强制重新验证：非 silent 手动强刷绕过限流并等待完成；silent 自动刷新走令牌桶） */
     playlists(
       platform: string,
       fetchFn: () => Promise<PlatformPlaylist[]>,
@@ -251,7 +268,7 @@ export function createPlaylistCacheService(store: PlaylistCacheStore, now: () =>
       })
     },
 
-    /** 歌单歌曲（force 强制重新验证；silent 静默模式限流时不标记 throttled） */
+    /** 歌单歌曲（force 强制重新验证：非 silent 手动强刷绕过限流并等待完成；silent 自动刷新走令牌桶） */
     songs(
       platform: string,
       playlistId: string,

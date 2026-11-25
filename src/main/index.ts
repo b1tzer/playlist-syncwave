@@ -5,7 +5,6 @@ import {
   ipcMain,
   safeStorage,
   shell,
-  type IpcMainInvokeEvent,
 } from 'electron'
 import { join, basename } from 'node:path'
 import { setDefaultResultOrder } from 'node:dns'
@@ -13,31 +12,33 @@ import { readFileSync, writeFileSync, statSync } from 'node:fs'
 import { platformModules } from '../platforms'
 import { registerPlatform, getPlatform, resolveAdapter, listPlatforms } from './platformRegistry'
 import type { AdapterContext } from '../platforms/meta'
-import { choiceNeededReport, executeSync, planSync } from '@core/sync/syncPlaylist'
+import { executeSync } from '@core/sync/syncPlaylist'
 import {
-  SearchError,
   SyncAbortedError,
-  type SyncItemResult,
   type SyncMatchedResource,
-  type SyncPlan,
-  type SyncReport,
   type SyncSelection,
-  type SyncTarget,
 } from '@core/models/sync'
 import type { MatchQuery } from '@core/models/match'
-import { normalize } from '@core/matcher/matchSong'
 import { logCenter } from './logging/logCenter'
 import { upsertSyncTask, listSyncTasks, removeSyncTask, clearSyncTasks } from './syncHistoryService'
 import { getSetting, setSetting, getAllSettings, syncTuning } from './settingsService'
 import { restoreProxy, getProxySetting, setProxySetting } from './proxy'
 import { applySecurityHeaders } from './security'
 import {
-  saveAutoMapping,
   saveConfirmedMapping,
   clearMappings,
   mappingStats,
-  findMappings,
 } from './mappingService'
+import {
+  pendingSyncs,
+  stoppedReport,
+  createTaskCheckpoint,
+  runSyncPipeline,
+  resumePendingSyncTask,
+  beginRunningSync,
+  abortRunningSync,
+  skipRunningSync,
+} from './syncPipeline'
 import { startKeepAliveScheduler, stopKeepAliveScheduler } from './keepAliveService'
 import {
   listLocalPlaylists,
@@ -54,7 +55,7 @@ import { buildApplicationMenu } from './menu'
 import { setupAutoUpdater, checkForUpdates, quitAndInstall, setAutoUpdateEnabled } from './updater'
 import { notifySyncResult, notifySyncStopped } from './notifications'
 import { createPlaylistCacheService } from './playlistCacheService'
-import { getDatabase } from './appDatabase'
+import { getDatabase, takePendingResumeTasks } from './appDatabase'
 import type { SyncTaskRecord, SyncChoice } from '@core/models/sync'
 
 // 部分网络环境 IPv6 无路由（连接报 EHOSTUNREACH，IPv6 立即失败不会触发
@@ -503,7 +504,6 @@ ipcMain.handle('platform:user-playlists', (_event, platform: string, force?: boo
         count: result.data.length,
         fromCache: result.fromCache,
         stale: result.stale === true,
-        throttled: result.throttled === true,
         force: force === true,
       })
       return result
@@ -590,7 +590,6 @@ ipcMain.handle(
           ...page,
           fromCache: result.fromCache,
           stale: result.stale === true,
-          throttled: result.throttled === true,
         }
       },
       { platform, playlistId, offset, limit },
@@ -638,7 +637,6 @@ ipcMain.handle(
           ...page,
           fromCache: result.fromCache,
           stale: result.stale === true,
-          throttled: result.throttled === true,
         }
       },
       { platform, offset, limit },
@@ -731,75 +729,8 @@ ipcMain.handle(
     ),
 )
 
-/** 待确认的同步会话：choice-needed 后缓存 plan，等待用户选择 */
-const pendingSyncs = new Map<
-  string,
-  { platform: string; plan: SyncPlan; target: SyncTarget; playlistName: string; batchSize?: number }
->()
-
-/** 执行中的同步任务：支持停止（abort）与跳过当前歌曲（skip 标志，一次性消耗） */
-interface RunningSync {
-  abort: AbortController
-  skip: { requested: boolean }
-}
-const runningSyncs = new Map<string, RunningSync>()
-
-/** 平台调用超时包装：请求永久挂起会卡死任务，超时转为可重试错误让引擎放弃当前项 */
-const REQUEST_TIMEOUT_MS = 60_000
-function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => {
-      reject(new SearchError(`请求超时（${Math.round(ms / 1000)}s），已放弃等待`, true))
-    }, ms)
-  })
-  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer))
-}
-
-/** 引擎中止后收敛为 stopped 报告（已完成部分保留，渲染层据此归因任务状态） */
-function stoppedReport(partial: SyncAbortedError['partial'], playlistName: string): SyncReport {
-  return {
-    status: 'stopped',
-    playlistName,
-    playlistId: partial.playlistId ?? '',
-    total: partial.total,
-    matched: partial.matched ?? 0,
-    added: partial.added ?? 0,
-    failed: partial.failed,
-    choices: [],
-    items: partial.items,
-  }
-}
-
-/** 注册运行中的同步任务并构建引擎控制选项（abort / skip / step / progress 广播） */
-function beginRunningSync(
-  event: IpcMainInvokeEvent,
-  taskId: string,
-  notify: (ratio: number, stage: 'matching' | 'adding') => void,
-): {
-  signal: AbortSignal
-  skipCheck: () => boolean
-  onStep: (item: SyncItemResult) => void
-  onProgress: (ratio: number, stage: 'matching' | 'adding') => void
-} {
-  const ctrl = new AbortController()
-  const skip = { requested: false }
-  runningSyncs.set(taskId, { abort: ctrl, skip })
-  return {
-    signal: ctrl.signal,
-    skipCheck: () => {
-      const requested = skip.requested
-      skip.requested = false
-      return requested
-    },
-    onStep: (item) => {
-      if (!event.sender.isDestroyed()) {
-        event.sender.send('sync:step', { taskId, item })
-      }
-    },
-    onProgress: notify,
-  }
-}
+// 运行控制（runningSyncs / abort / skip）与执行核心已提取到 syncPipeline，
+// 由同步发起与重启恢复执行共用；此处不再保留本地副本。
 
 ipcMain.handle(
   'platform:sync-playlist',
@@ -820,106 +751,42 @@ ipcMain.handle(
     ipcLog.time(
       'platform.sync-playlist',
       async () => {
-        const services = getPlatform(platform)
-        const credential = services.getCredential()
-        if (!credential) throw new Error('尚未登录目标平台')
-        const adapter = await resolveAdapter(platform)
         const taskId = payload.taskId || `sync-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-        const target: SyncTarget = {
-          searchSongs: (keyword, limit) =>
-            withTimeout(adapter.searchSongs(credential, keyword, limit), REQUEST_TIMEOUT_MS),
-          createPlaylist: (name) =>
-            withTimeout(adapter.createPlaylist(credential, name), REQUEST_TIMEOUT_MS),
-          addSongs: (playlistId, songIds) =>
-            withTimeout(adapter.addSongsToPlaylist(credential, playlistId, songIds), REQUEST_TIMEOUT_MS),
-          lookupMapping: (query) => {
-            // 重新执行：上次任务已匹配到的目标资源直接命中复用，无需重新搜索
-            if (payload.reuseMatches && payload.reuseMatches.length > 0) {
-              const key = `${normalize(query.title)}|${normalize(query.artist ?? '')}`
-              const reused = payload.reuseMatches.find((m) => m.key === key)
-              if (reused) return { songId: reused.songId, confirmed: true, resource: reused.matchedSong }
-            }
-            const rows = findMappings(platform, query)
-            const confirmed = rows.find((r) => r.confirmed === 1)
-            if (confirmed) return { songId: confirmed.songId, confirmed: true }
-            return null
-          },
-          saveMapping: (query, songId) => {
-            // 只缓存非人工确认的自动匹配（人工确认经 confirm-sync 单独写入）
-            saveAutoMapping(platform, query, {
-              id: songId,
-              title: query.title,
-              artist: query.artist ?? '',
-            }, 1)
-          },
-        }
+        // 主进程侧检查点持久化：执行中定期落库，应对渲染进程崩溃/应用突然中断
+        const checkpoint = createTaskCheckpoint(taskId)
         const notify = (ratio: number, stage: 'matching' | 'adding') => {
+          checkpoint.onProgress(ratio)
           if (!event.sender.isDestroyed()) {
             event.sender.send('sync:progress', { platform, taskId, ratio, stage })
           }
         }
-        const controlOptions = beginRunningSync(event, taskId, notify)
-
+        const control = beginRunningSync(taskId)
         try {
-          const plan = await planSync(payload.queries, target, {
-            ...syncTuning(),
-            ...controlOptions,
-          })
-
-          // 歌单名留空时自动命名：今日日期 + 第一首歌风格
-          const autoName = [payload.autoNameDate, plan.firstGenre].filter(Boolean).join(' ')
-          const finalName = (payload.playlistName ?? '').trim() || autoName || '未命名歌单'
-
-          if (plan.choices.length > 0) {
-            pendingSyncs.set(taskId, {
-              platform,
-              plan,
-              target,
-              playlistName: finalName,
-              batchSize: payload.batchSize,
-            })
-            ipcLog.info('platform.sync-playlist', '同步需要用户确认', {
-              platform,
-              taskId,
-              playlistName: finalName,
-              total: plan.total,
-              matched: plan.matched.length,
-              choices: plan.choices.length,
-              failed: plan.failed.length,
-            })
-            return { taskId, report: choiceNeededReport(finalName, plan) }
-          }
-
-          const report = await executeSync(plan, [], finalName, target, {
-            batchSize: payload.batchSize,
-            ...syncTuning(),
-            ...controlOptions,
-          })
-          // 目标平台新建了歌单：标记列表缓存过期，下次访问先兜底再重新验证
-          if (report.playlistId !== '') {
-            playlistCacheStore.markStalePlaylists(platform)
-          }
-          ipcLog.info('platform.sync-playlist', '同步完成', {
+          const report = await runSyncPipeline({
             platform,
             taskId,
-            playlistName: finalName,
-            playlistId: report.playlistId,
-            total: report.total,
-            added: report.added,
-            failed: report.failed.length,
+            queries: payload.queries,
+            playlistName: payload.playlistName,
+            autoNameDate: payload.autoNameDate,
+            batchSize: payload.batchSize,
+            reuseMatches: payload.reuseMatches,
+            signal: control.signal,
+            skipCheck: control.skipCheck,
+            onStep: (item) => {
+              if (!event.sender.isDestroyed()) {
+                event.sender.send('sync:step', { taskId, item })
+              }
+              checkpoint.onStep(item)
+            },
+            onProgress: notify,
+            onCheckpoint: checkpoint.onCheckpoint,
+            onChoiceNeeded: (plan, finalName, target, batchSize) => {
+              pendingSyncs.set(taskId, { platform, plan, target, playlistName: finalName, batchSize })
+            },
           })
-          notifySyncResult(finalName, report.added, report.failed.length)
           return { taskId, report }
-        } catch (e) {
-          if (e instanceof SyncAbortedError) {
-            const fallbackName = (payload.playlistName ?? '').trim() || payload.autoNameDate || '未命名歌单'
-            ipcLog.info('platform.sync-playlist', '同步被用户停止', { platform, taskId })
-            notifySyncStopped(fallbackName)
-            return { taskId, report: stoppedReport(e.partial, fallbackName) }
-          }
-          throw e
         } finally {
-          runningSyncs.delete(taskId)
+          control.done()
         }
       },
       { platform, taskId: payload.taskId, playlistName: payload.playlistName, total: payload.queries.length },
@@ -931,9 +798,7 @@ ipcMain.handle('platform:stop-sync', (_event, taskId: string) =>
   ipcLog.time(
     'platform.stop-sync',
     async () => {
-      const running = runningSyncs.get(taskId)
-      if (running) {
-        running.abort.abort()
+      if (abortRunningSync(taskId)) {
         ipcLog.info('platform.stop-sync', '已请求停止同步任务', { taskId })
       }
       // 待确认会话也允许停止（等同放弃选择）
@@ -950,9 +815,7 @@ ipcMain.handle('platform:skip-sync', (_event, taskId: string) =>
   ipcLog.time(
     'platform.skip-sync',
     async () => {
-      const running = runningSyncs.get(taskId)
-      if (running) {
-        running.skip.requested = true
+      if (skipRunningSync(taskId)) {
         ipcLog.info('platform.skip-sync', '已请求跳过当前歌曲', { taskId })
       }
     },
@@ -1187,17 +1050,29 @@ ipcMain.handle(
             saveConfirmedMapping(platform, choice, selection.songId)
           }
         }
+        // 主进程侧检查点持久化：写入阶段定期落库（playlistId/added），中断后可续写
+        const checkpoint = createTaskCheckpoint(taskId)
         const notify = (ratio: number, stage: 'matching' | 'adding') => {
+          checkpoint.onProgress(ratio)
           if (!event.sender.isDestroyed()) {
             event.sender.send('sync:progress', { platform, taskId, ratio, stage })
           }
         }
-        const controlOptions = beginRunningSync(event, taskId, notify)
+        const control = beginRunningSync(taskId)
         try {
           const report = await executeSync(pending.plan, selections, pending.playlistName, pending.target, {
             batchSize: pending.batchSize,
             ...syncTuning(),
-            ...controlOptions,
+            signal: control.signal,
+            skipCheck: control.skipCheck,
+            onProgress: notify,
+            onStep: (item) => {
+              if (!event.sender.isDestroyed()) {
+                event.sender.send('sync:step', { taskId, item })
+              }
+              checkpoint.onStep(item)
+            },
+            onCheckpoint: checkpoint.onCheckpoint,
           })
           if (report.playlistId !== '') {
             playlistCacheStore.markStalePlaylists(platform)
@@ -1212,7 +1087,7 @@ ipcMain.handle(
           }
           throw e
         } finally {
-          runningSyncs.delete(taskId)
+          control.done()
         }
       },
       { platform, taskId, selections: selections.length },
@@ -1225,6 +1100,17 @@ app.whenReady().then(() => {
   restoreProxy()
   applySecurityHeaders()
   createWindow()
+  // 重启自动继续执行：恢复上次异常退出残留的 running 任务（复用已匹配数据/续写已建歌单）
+  const pendingResume = takePendingResumeTasks()
+  if (pendingResume.length > 0) {
+    log.info('app.resume-pending-sync', '发现待恢复的同步任务，自动继续执行', {
+      count: pendingResume.length,
+      taskIds: pendingResume.map((t) => t.id),
+    })
+    for (const task of pendingResume) {
+      void resumePendingSyncTask(task)
+    }
+  }
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })

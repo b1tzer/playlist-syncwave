@@ -63,6 +63,7 @@ export async function planSync(
       failed.push({ query, reason: 'skipped', message: skipped.message ?? '' })
       options.onStep?.(skipped)
       options.onProgress?.((i + 1) / queries.length, 'matching')
+      options.onCheckpoint?.({ stage: 'matching' })
       log.info('plan.item-skipped', '歌曲被用户跳过', { title: query.title })
       continue
     }
@@ -87,6 +88,7 @@ export async function planSync(
           songId: hit.songId,
         })
         options.onProgress?.((i + 1) / queries.length, 'matching')
+        options.onCheckpoint?.({ stage: 'matching' })
         continue
       }
     }
@@ -260,6 +262,8 @@ export async function planSync(
     options.onStep?.(step)
 
     options.onProgress?.((i + 1) / queries.length, 'matching')
+    // 每首歌处理完触发检查点：主进程定期持久化，中断后可从此处附近恢复
+    options.onCheckpoint?.({ stage: 'matching' })
     if (i < queries.length - 1) await sleep(searchIntervalMs)
   }
 
@@ -320,6 +324,8 @@ export async function executeSync(
         item.status = skipped ? 'skipped' : 'failed'
         item.reason = fail.reason
         item.message = fail.message
+        // 明细状态变化实时广播：主进程检查点持久化与详情清单展示保持一致
+        options.onStep?.(item)
       }
       if (skipped) {
         log.info('execute.choice-skipped', '同歌不同作者，用户选择跳过', {
@@ -343,6 +349,8 @@ export async function executeSync(
         artist: candidate.artist,
         album: candidate.album,
       }
+      // 明细状态变化实时广播：主进程检查点持久化与详情清单展示保持一致
+      options.onStep?.(item)
     }
   }
 
@@ -387,6 +395,8 @@ export async function executeSync(
 
   const playlistId = await target.createPlaylist(playlistName)
   log.info('execute.playlist-created', '目标歌单已创建', { playlistName, playlistId })
+  // 建单检查点：中断恢复时据此跳过匹配阶段，直接续写剩余批次
+  options.onCheckpoint?.({ stage: 'adding', playlistId, added: 0 })
 
   let added = 0
   const batchCount = Math.ceil(pending.length / batchSize)
@@ -430,6 +440,8 @@ export async function executeSync(
       }
     }
     options.onProgress?.((b + 1) / Math.max(batchCount, 1), 'adding')
+    // 批次检查点：每批写入后持久化已添加数量，中断后从此处继续
+    options.onCheckpoint?.({ stage: 'adding', playlistId, added })
   }
 
   log.info('execute.complete', '同步执行完成', {
@@ -452,6 +464,106 @@ export async function executeSync(
     items,
     firstGenre: plan.firstGenre,
   }
+}
+
+/**
+ * 断点续写：目标歌单已创建（中断恢复），跳过匹配阶段，从已添加数量处继续写入剩余批次。
+ * detail 中 matched 项按原始 index 排序重建待写清单；此前已写入的批次（addedSoFar）不再重复写入。
+ */
+export async function resumeSync(
+  playlistId: string,
+  addedSoFar: number,
+  detail: SyncItemResult[],
+  playlistName: string,
+  target: SyncTarget,
+  options: SyncOptions = {},
+): Promise<SyncReport> {
+  const batchSize = options.batchSize ?? 500
+  const failed: SyncFailedItem[] = []
+  const items: SyncItemResult[] = detail.map((item) => ({ ...item }))
+
+  const pending: Array<{ query: MatchQuery; songId: string }> = items
+    .filter(
+      (it): it is SyncItemResult & { songId: string } =>
+        it.status === 'matched' && typeof it.songId === 'string' && it.songId !== '',
+    )
+    .sort((a, b) => a.index - b.index)
+    .map((it) => ({ query: it.query, songId: it.songId }))
+
+  log.info('resume.start', '恢复同步：继续写入剩余批次', {
+    playlistName,
+    playlistId,
+    pending: pending.length,
+    addedSoFar,
+  })
+
+  const baseReport = {
+    playlistName,
+    playlistId,
+    total: items.length,
+    matched: pending.length,
+    added: addedSoFar,
+    failed,
+    choices: [],
+    items,
+  }
+
+  // 已写入部分不再重复添加，从检查点之后继续
+  const remaining = pending.slice(addedSoFar)
+  let added = addedSoFar
+  const batchCount = Math.ceil(remaining.length / batchSize)
+  for (let b = 0; b < batchCount; b++) {
+    if (options.signal?.aborted) {
+      throw new SyncAbortedError({
+        items,
+        failed,
+        total: items.length,
+        matched: pending.length,
+        added,
+        playlistId,
+      })
+    }
+    const batch = remaining.slice(b * batchSize, (b + 1) * batchSize)
+    try {
+      await target.addSongs(playlistId, batch.map((m) => m.songId))
+      added += batch.length
+      log.debug('resume.batch-added', '恢复同步批次写入成功', {
+        playlistId,
+        batch: b + 1,
+        totalBatches: batchCount,
+        count: batch.length,
+      })
+    } catch (e) {
+      const message = errorMessage(e)
+      log.error('resume.batch-failed', '恢复同步批次写入失败', e, {
+        playlistId,
+        batch: b + 1,
+        count: batch.length,
+      })
+      for (const pendingItem of batch) {
+        failed.push({ query: pendingItem.query, reason: 'add-failed', message })
+        const item = items.find((it) => it.query === pendingItem.query)
+        if (item) {
+          item.status = 'failed'
+          item.reason = 'add-failed'
+          item.message = message
+        }
+      }
+    }
+    options.onProgress?.((b + 1) / Math.max(batchCount, 1), 'adding')
+    // 批次检查点：恢复执行同样定期持久化，可再次中断续写
+    options.onCheckpoint?.({ stage: 'adding', playlistId, added })
+  }
+
+  log.info('resume.complete', '恢复同步完成', {
+    playlistName,
+    playlistId,
+    total: items.length,
+    added,
+    failed: failed.length,
+  })
+
+  return { status: 'done', ...baseReport, added, failed }
 }
 
 /** 存在同歌不同作者时的 choice-needed 报告（未建单） */

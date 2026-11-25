@@ -38,7 +38,7 @@ describe('runMigrations — 版本化迁移', () => {
     expect(row.version).toBeGreaterThanOrEqual(1)
   })
 
-  it('旧库补齐 created_at_ms 列（v3），存量行默认为 0', () => {
+  it('基线补齐 created_at_ms 列，存量行默认为 0', () => {
     runMigrations(db)
     const cols = (db.pragma('table_info(sync_tasks)') as Array<{ name: string }>).map((c) => c.name)
     expect(cols).toContain('created_at_ms')
@@ -54,7 +54,7 @@ describe('runMigrations — 版本化迁移', () => {
     expect(row.created_at_ms).toBe(0)
   })
 
-  it('v5：从任务 id 回填 created_at_ms，历史任务可显示带年月日的完整时间', () => {
+  it('基线：从任务 id 回填 created_at_ms，历史任务可显示带年月日的完整时间', () => {
     // 模拟迁移前的老库数据：T9 之前无 detail 列，created_at 仅时刻
     db.prepare(
       `INSERT INTO sync_tasks
@@ -96,5 +96,20 @@ describe('runMigrations — 版本化迁移', () => {
       detail: string
     }
     expect(row.detail).toBe('[]')
+  })
+
+  it('全新库（无任何业务表）执行迁移不报错：补丁跳过，由 Store 建最新表', () => {
+    const fresh = new Database(':memory:')
+    expect(() => runMigrations(fresh)).not.toThrow()
+    // 记录基线版本，未来 v7+ 正常追加执行
+    const row = fresh
+      .prepare('SELECT COALESCE(MAX(version), 0) AS v FROM schema_migrations')
+      .get() as { v: number }
+    expect(row.v).toBe(6)
+    // 迁移不建业务表：建表仍由各 Store 负责
+    const tables = fresh
+      .prepare(`SELECT name FROM sqlite_master WHERE type = 'table'`)
+      .all() as Array<{ name: string }>
+    expect(tables.map((t) => t.name)).not.toContain('sync_tasks')
   })
 })

@@ -164,6 +164,21 @@ export default function App() {
     return off
   }, [])
 
+  // 主进程执行中定期落库后广播任务快照（含重启后的自动恢复执行）：
+  // 渲染层据此实时刷新列表，无需重新全量查询（落库已在主进程完成，这里只更新内存）
+  useEffect(() => {
+    const off = window.electronAPI.syncHistory.onTaskUpdated((task) => {
+      setTasks((prev) => {
+        const idx = prev.findIndex((x) => x.id === task.id)
+        if (idx === -1) return [task, ...prev]
+        const next = [...prev]
+        next[idx] = task
+        return next
+      })
+    })
+    return off
+  }, [])
+
   // 主进程保活调度可能导致凭证续期或失效，收到广播后重新查询该平台登录态
   useEffect(() => {
     const off = window.electronAPI.platforms.onAccountsChanged((platform) => {
@@ -324,6 +339,7 @@ export default function App() {
           progress: 1,
           failedDetail: failedDetailLines(rep.failed),
           detail: rep.items,
+          playlistId: rep.playlistId || undefined,
         })
         resetConfirmSession()
         notify(
@@ -367,6 +383,7 @@ export default function App() {
         progress: 1,
         failedDetail: failedDetailLines(rep.failed),
         detail: rep.items,
+        playlistId: rep.playlistId || undefined,
       })
     } catch (e) {
       const msg = e instanceof Error ? e.message : t('sync.failedGeneric')

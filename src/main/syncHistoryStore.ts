@@ -17,15 +17,16 @@ interface TaskRow {
   failed_detail: string
   detail: string
   raw_input: string
+  playlist_id: string
 }
 
 const INTERRUPTED_DETAIL = ['任务中断：应用在同步完成前退出']
 
 const UPSERT_SQL = `
 INSERT INTO sync_tasks
-  (id, name, target_platform, source, status, total, added, failed, created_at, created_at_ms, progress, failed_detail, detail, raw_input)
+  (id, name, target_platform, source, status, total, added, failed, created_at, created_at_ms, progress, failed_detail, detail, raw_input, playlist_id)
 VALUES
-  (@id, @name, @targetPlatform, @source, @status, @total, @added, @failed, @createdAt, @createdAtMs, @progress, @failedDetail, @detail, @rawInput)
+  (@id, @name, @targetPlatform, @source, @status, @total, @added, @failed, @createdAt, @createdAtMs, @progress, @failedDetail, @detail, @rawInput, @playlistId)
 ON CONFLICT(id) DO UPDATE SET
   name = excluded.name,
   target_platform = excluded.target_platform,
@@ -39,7 +40,11 @@ ON CONFLICT(id) DO UPDATE SET
   progress = excluded.progress,
   failed_detail = excluded.failed_detail,
   detail = excluded.detail,
-  raw_input = excluded.raw_input
+  raw_input = excluded.raw_input,
+  playlist_id = CASE
+    WHEN excluded.playlist_id = '' THEN playlist_id
+    ELSE excluded.playlist_id
+  END
 `
 
 function parseStringArray(raw: string): string[] {
@@ -90,6 +95,7 @@ function rowToTask(row: TaskRow): SyncTaskRecord {
     failedDetail: parseStringArray(row.failed_detail),
     detail: parseDetail(row.detail),
     rawInput: parseRawInput(row.raw_input),
+    playlistId: row.playlist_id || undefined,
   }
 }
 
@@ -109,7 +115,8 @@ CREATE TABLE IF NOT EXISTS sync_tasks (
   progress REAL NOT NULL,
   failed_detail TEXT NOT NULL,
   detail TEXT NOT NULL DEFAULT '[]',
-  raw_input TEXT NOT NULL DEFAULT '[]'
+  raw_input TEXT NOT NULL DEFAULT '[]',
+  playlist_id TEXT NOT NULL DEFAULT ''
 )
 `)
 
@@ -131,7 +138,16 @@ CREATE TABLE IF NOT EXISTS sync_tasks (
         failedDetail: JSON.stringify(task.failedDetail),
         detail: JSON.stringify(task.detail),
         rawInput: JSON.stringify(task.rawInput ?? []),
+        playlistId: task.playlistId ?? '',
       })
+    },
+
+    /** 按 id 查询单条任务（不存在返回 null） */
+    getTask(id: string): SyncTaskRecord | null {
+      const row = db.prepare('SELECT * FROM sync_tasks WHERE id = ?').get(id) as unknown as
+        | TaskRow
+        | undefined
+      return row ? rowToTask(row) : null
     },
 
     /**

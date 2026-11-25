@@ -8,6 +8,7 @@ import { createMappingStore, type MappingStore } from './mappingStore'
 import { createPlaylistCacheStore, type PlaylistCacheStore } from './playlistCacheStore'
 import { createLocalPlaylistStore, type LocalPlaylistStore } from './localPlaylistStore'
 import { runMigrations } from './migrations'
+import type { SyncTaskRecord } from '@core/models/sync'
 import type { SqliteDb } from './sqlite'
 
 /** 应用 SQLite 数据库：统一打开连接，初始化全部业务表 */
@@ -20,6 +21,12 @@ export interface AppDatabase {
 }
 
 let instance: AppDatabase | null = null
+
+/**
+ * 上次异常退出留下的 running 任务快照（finalizeInterrupted 归因前捕获）：
+ * app ready 后由恢复执行流程消费，实现「重启自动继续执行」。
+ */
+let pendingResumeSnapshot: SyncTaskRecord[] = []
 
 /** 旧版 sync-history.db 存在时，把数据搬到 app.db 后删除旧文件 */
 function migrateLegacyHistory(db: SqliteDb): void {
@@ -74,8 +81,21 @@ export function getDatabase(): AppDatabase {
     }
     // 旧库数据迁移（幂等：旧文件删掉后不再执行）
     migrateLegacyHistory(db)
-    // 上次异常退出可能留下 running 残留，启动时归为 failed
+    // 先快照 running 残留（供恢复执行），再归因：无法自动恢复的任务由恢复流程补充失败原因
+    pendingResumeSnapshot = instance.syncHistory
+      .listTasks()
+      .filter((t) => t.status === 'running')
     instance.syncHistory.finalizeInterrupted()
   }
   return instance
+}
+
+/**
+ * 取出待恢复的 running 任务快照（一次性消费）。
+ * 必须在 getDatabase 初始化之后调用：快照在 finalizeInterrupted 归因前捕获。
+ */
+export function takePendingResumeTasks(): SyncTaskRecord[] {
+  const tasks = pendingResumeSnapshot
+  pendingResumeSnapshot = []
+  return tasks
 }
