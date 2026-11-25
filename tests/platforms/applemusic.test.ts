@@ -37,7 +37,7 @@ function makeJwt(payload: Record<string, unknown>): string {
 const WEB_TOKEN = makeJwt({ iss: 'AMPWebPlay', exp: 4102444800 })
 
 /** 凭证串（devTokenAt 默认现在，避免触发重抓） */
-function cred(overrides: Partial<{ mediaUserToken: string; developerToken: string; devTokenAt: number }> = {}): string {
+function cred(overrides: Partial<{ mediaUserToken: string; developerToken: string; devTokenAt: number; nickname: string; email: string }> = {}): string {
   return JSON.stringify({
     v: 1,
     mediaUserToken: 'user-tok',
@@ -92,6 +92,68 @@ describe('AppleMusicAdapter — 社区路径 HTTP 映射', () => {
     const parsed = JSON.parse(value) as { mediaUserToken: string; developerToken: string }
     expect(parsed.mediaUserToken).toBe('session-1')
     expect(parsed.developerToken).toBe(WEB_TOKEN)
+  })
+
+  it('webLoginSetup：页面抓到的昵称与邮箱写入凭证，登录态据此显示', async () => {
+    const { handler } = makeHandler((_method, url) => {
+      const page = webFrontResponder(url)
+      if (page) return page
+      throw new Error(`unexpected request: ${url.href}`)
+    })
+    const adapter = new AppleMusicAdapter(handler, {})
+    const value = await adapter.webLoginSetup('session-2', {
+      nickname: '页面上的名字',
+      email: 'user@example.com',
+    })
+    expect(JSON.parse(value) as { nickname?: string; email?: string }).toMatchObject({
+      nickname: '页面上的名字',
+      email: 'user@example.com',
+    })
+
+    const { handler: statusHandler } = makeHandler(() => json(STOREFRONT))
+    const statusAdapter = new AppleMusicAdapter(statusHandler, {})
+    expect(await statusAdapter.getLoginStatus(value)).toEqual({
+      platform: 'applemusic',
+      userId: 'cn',
+      nickname: '页面上的名字',
+      account: 'user@example.com',
+    })
+  })
+
+  it('最小凭证：只有 mediaUserToken 时保活自动补 developer token', async () => {
+    const { handler } = makeHandler((_method, url) => {
+      const page = webFrontResponder(url)
+      if (page) return page
+      if (url.pathname === '/v1/me/storefront') return json(STOREFRONT)
+      throw new Error(`unexpected request: ${url.href}`)
+    })
+    const adapter = new AppleMusicAdapter(handler, {})
+    const minimal = JSON.stringify({
+      v: 1,
+      mediaUserToken: 'user-tok',
+      developerToken: '',
+      devTokenAt: 0,
+    })
+    const kept = await adapter.keepAlive(minimal)
+    expect(kept.alive).toBe(true)
+    expect(kept.cookie).toBeTruthy()
+    const parsed = JSON.parse(kept.cookie!) as { developerToken: string; devTokenAt: number }
+    expect(parsed.developerToken).toBe(WEB_TOKEN)
+    expect(parsed.devTokenAt).toBeGreaterThan(0)
+  })
+
+  it('withWebLoginProfile：后台抓到的昵称与邮箱补进已有凭证', () => {
+    const { handler } = makeHandler(() => json({}))
+    const adapter = new AppleMusicAdapter(handler, {})
+    const updated = adapter.withWebLoginProfile(cred(), {
+      nickname: '后台抓到的名字',
+      email: 'user@example.com',
+    })
+    expect(JSON.parse(updated) as Record<string, unknown>).toMatchObject({
+      mediaUserToken: 'user-tok',
+      nickname: '后台抓到的名字',
+      email: 'user@example.com',
+    })
   })
 
   it('登录态：/v1/me/storefront 200 返回 storefront 作为账号标识', async () => {

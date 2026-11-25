@@ -809,7 +809,6 @@ const kugouModule: PlatformModule = {
   meta: {
     id: 'kugou',
     name: '酷狗音乐',
-    apiLabel: 'KuGouMusic API: v1.6.3 (Direct)',
     icon: 'music_note',
     capabilities: { read: true, write: true },
   },

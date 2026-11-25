@@ -11,6 +11,8 @@ interface PlatformLogoProps {
   size?: string
   /** 图标字号类 */
   iconSize?: string
+  /** 追加到 img/span 上的类名 */
+  className?: string
 }
 
 /** 平台品牌 logo（未收录的平台回退 material-symbols 图标） */
@@ -20,11 +22,12 @@ export default function PlatformLogo({
   icon,
   size = 'h-5 w-5',
   iconSize = 'text-base',
+  className = '',
 }: PlatformLogoProps) {
   const src = PLATFORM_LOGOS[platform]
   return src ? (
-    <img src={src} alt={name} className={`${size} object-contain`} />
+    <img src={src} alt={name} className={`${size} object-contain ${className}`} />
   ) : (
-    <span className={`material-symbols-outlined ${iconSize}`}>{icon}</span>
+    <span className={`material-symbols-outlined ${iconSize} ${className}`}>{icon}</span>
   )
 }

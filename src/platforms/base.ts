@@ -4,6 +4,7 @@ import type {
   PlatformSong,
   QrLoginResult,
   QrLoginTicket,
+  WebLoginProfile,
 } from '@core/models/platform'
 import { createLogger, type Logger } from '@core/logging'
 
@@ -55,9 +56,15 @@ export interface PlatformAdapter {
   /**
    * 网页登录完成回调（可选）：主进程从登录窗口 cookie 提取会话值后调用，
    * 平台据此补全其余凭证（如 Apple Music 抓取 developer token）并返回完整凭证串。
-   * 未实现时主进程直接以会话值作为凭证保存。
+   * profile 为登录页面上顺带抓到的资料（可能为空），未实现时主进程直接以会话值作为凭证保存。
    */
-  webLoginSetup?(sessionValue: string): Promise<string>
+  webLoginSetup?(sessionValue: string, profile?: WebLoginProfile): Promise<string>
+
+  /**
+   * 把后台抓到的网页登录资料补进已保存凭证（无需重新联网）。
+   * 未实现时已有凭证原样保留。
+   */
+  withWebLoginProfile?(credential: string, profile: WebLoginProfile): string
 }
 
 function unsupported(platform: string, method: string): Error {
@@ -75,6 +82,8 @@ export interface QrCheckRaw {
 export interface LoginStatusRaw {
   userId?: string
   nickname?: string
+  /** 登录账号（如邮箱）；平台未提供时缺省 */
+  account?: string
 }
 
 /** 保活结果：模板方法与平台原语共用，主进程据此更新凭证或清除登录态 */
@@ -154,7 +163,12 @@ export abstract class BasePlatformAdapter implements PlatformAdapter {
       if (!raw.userId) return null
       const nickname = raw.nickname ?? '未知用户'
       this.log.debug('login.status', '查询登录状态', { userId: raw.userId, nickname })
-      return { platform: this.platform, userId: raw.userId, nickname }
+      return {
+        platform: this.platform,
+        userId: raw.userId,
+        nickname,
+        ...(raw.account ? { account: raw.account } : {}),
+      }
     })
   }
 

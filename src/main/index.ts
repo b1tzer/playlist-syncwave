@@ -39,7 +39,11 @@ import {
   abortRunningSync,
   skipRunningSync,
 } from './syncPipeline'
-import { startKeepAliveScheduler, stopKeepAliveScheduler } from './keepAliveService'
+import {
+  broadcastAccountsChanged,
+  startKeepAliveScheduler,
+  stopKeepAliveScheduler,
+} from './keepAliveService'
 import {
   clearCachedLoginStatus,
   getCachedLoginStatus,
@@ -393,7 +397,8 @@ ipcMain.handle('platform:create-qr', (_event, platform: string, channel?: string
 
 /**
  * 网页登录（无扫码接口的平台，如 Apple Music）：
- * 主进程打开登录窗口 → 用户登录 → 提取会话 cookie → 交给适配器补全凭证 → 保存并返回账号。
+ * cookie 到手立即落最小凭证并返回临时登录态，界面不再等待后台抓取；
+ * 凭证校验、昵称/邮箱补全在后台串行执行，完成后广播 accounts:changed 刷新。
  * 用户关闭窗口或超时返回 null。
  */
 ipcMain.handle('platform:begin-web-login', (_event, platform: string) =>
@@ -405,30 +410,96 @@ ipcMain.handle('platform:begin-web-login', (_event, platform: string) =>
       if (services.meta.loginType !== 'web' || !webLogin) {
         throw new Error('该平台不支持网页登录')
       }
-      const sessionValue = await beginWebLogin(
+      const adapter = await resolveAdapter(platform)
+
+      // 后台任务串行：先校验凭证，再把页面抓到的资料补进凭证
+      let chain: Promise<void> = Promise.resolve()
+      const queue = (task: () => Promise<void>) => {
+        chain = chain.then(task).catch((e) => {
+          ipcLog.warn('platform.web-login-background', '后台登录任务失败', {
+            platform,
+            message: e instanceof Error ? e.message : String(e),
+          })
+        })
+      }
+      const notify = () => broadcastAccountsChanged(platform)
+
+      const loginResult = await beginWebLogin(
         webLogin.url,
         webLogin.cookieName,
         webLogin.cookieUrl,
         services.meta.name,
+        webLogin.profileSelector,
+        webLogin.accountProbe,
+        {
+          onCookie: (cookie) => {
+            // 先落最小凭证：其他页面立即视为已登录，首次请求会自动补齐 developer token
+            services.saveCredential(
+              JSON.stringify({
+                v: 1,
+                mediaUserToken: cookie,
+                developerToken: '',
+                devTokenAt: 0,
+              }),
+            )
+            setCachedLoginStatus(platform, {
+              platform,
+              userId: '',
+              nickname: services.meta.name,
+              pending: true,
+            })
+            notify()
+            queue(async () => {
+              try {
+                const provisional = services.getCredential()
+                if (!provisional) return
+                const kept = await adapter.keepAlive(provisional)
+                if (kept.cookie) services.saveCredential(kept.cookie)
+                const credential = services.getCredential() ?? provisional
+                const account = await adapter.getLoginStatus(credential)
+                if (!account) throw new Error('登录未生效')
+                setCachedLoginStatus(platform, account)
+                ipcLog.info('platform.begin-web-login', '凭证校验完成，登录态已刷新', {
+                  platform,
+                })
+              } catch (e) {
+                services.logout()
+                clearCachedLoginStatus(platform)
+                throw e
+              } finally {
+                notify()
+              }
+            })
+          },
+          onProfile: (profile) => {
+            queue(async () => {
+              const current = services.getCredential()
+              if (!current) return
+              const updated =
+                profile && adapter.withWebLoginProfile
+                  ? adapter.withWebLoginProfile(current, profile)
+                  : current
+              if (updated !== current) services.saveCredential(updated)
+              const account = await adapter.getLoginStatus(updated)
+              if (account) setCachedLoginStatus(platform, account)
+              ipcLog.debug('platform.begin-web-login', '后台账号资料已补全（不记录值）', {
+                platform,
+                hasNickname: Boolean(profile?.nickname),
+                hasEmail: Boolean(profile?.email),
+              })
+              notify()
+            })
+          },
+        },
       )
-      if (!sessionValue) {
+      if (!loginResult) {
         ipcLog.info('platform.begin-web-login', '网页登录取消', { platform })
         return null
       }
-      const adapter = await resolveAdapter(platform)
-      const credential = adapter.webLoginSetup
-        ? await adapter.webLoginSetup(sessionValue)
-        : sessionValue
-      // 校验登录态后再落库，避免存下无效凭证
-      const account = await adapter.getLoginStatus(credential)
-      if (!account) {
-        ipcLog.warn('platform.begin-web-login', '登录未生效', { platform })
-        throw new Error('登录未生效，请重试')
-      }
-      services.saveCredential(credential)
-      setCachedLoginStatus(platform, account)
-      ipcLog.info('platform.begin-web-login', '网页登录成功，凭证已保存', { platform })
-      return account
+      ipcLog.info('platform.begin-web-login', '会话 cookie 已到手，立即返回登录态', {
+        platform,
+      })
+      return { platform, userId: '', nickname: services.meta.name, pending: true }
     },
     { platform },
   ),

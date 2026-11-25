@@ -348,7 +348,6 @@ const qqMusicModule: PlatformModule = {
   meta: {
     id: 'qqmusic',
     name: 'QQ音乐',
-    apiLabel: 'QQ Music API: Node Mode (Direct)',
     icon: 'equalizer',
     capabilities: { read: true, write: true },
     loginChannels: [

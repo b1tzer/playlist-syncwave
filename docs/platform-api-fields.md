@@ -1332,14 +1332,18 @@
 ### 4.1 登录
 
 - **无扫码接口**：`createQrLogin`/`checkQrLogin` 直接抛错，UI 隐藏扫码渠道，走应用内网页登录窗口。
-- 凭证 = `{ mediaUserToken, developerToken, devTokenAt }` 序列化串；developer token 过期自动重抓（401 时强制重抓重试一次）。
+- 凭证 = `{ mediaUserToken, developerToken, devTokenAt, nickname?, email? }` 序列化串；developer token 过期自动重抓（401 时强制重抓重试一次）。
+- 展示用昵称来自页面而非 API（✅ 实测抓取：Playwright 登录态 DOM）：账号菜单展开时用户名渲染在 `[data-testid="account-menu-trigger"] .user__name`，节点形如 `<span class="user__name svelte-czde0s">账号名</span>`；刷新后约 4.2s 出现。cookie 到手后登录窗口立即隐藏、界面先显示已登录，昵称改在隐藏窗口里轮询该选择器最多 15s，读不到不影响登录；官方文档无用户资料端点，账号标识仍取 storefront。
+- 登录邮箱（✅ 实测抓取：Playwright 登录态，当前已采集）：顶部账号菜单只显示昵称与「帮助/设置/退出登录」；隐藏的登录窗口再跳 `/cn/account/settings`，同源 iframe `iframe[src*="includes/commerce/navigator"]` 内 `[data-test="settings-content-apple-id"]` 的文本可正则匹配出 Apple ID 邮箱（上限 15s，抓不到照常登录）；抓到后经 `accounts:changed` 刷新账号卡片。邮箱属敏感 PII，仅写本地加密凭证，日志不记录。
 
 ### 4.2 登录态与保活
 
 | 接口 | 说明 |
 |---|---|
-| `GET /v1/me/storefront` | 登录态校验；`data[0].id` 为 storefront（如 `cn`），缓存供搜索拼接目录路径。403 判定登录失效；429 抛 rate-limited |
+| `GET /v1/me/storefront` | 登录态校验；`data[0].id` 为 storefront（如 `cn`），作 `PlatformAccount.userId` 并缓存供搜索拼接目录路径（非账号 ID）。403 判定登录失效；429 抛 rate-limited |
 | 保活 | 校验 developer token 时效 → 必要时重抓 → 调 storefront 校验；token 更新时返回新凭证由主进程持久化 |
+| 页面昵称（非接口） | 见 4.1；凭证有 `nickname` 时作 `PlatformAccount.nickname`，否则回退「Apple Music 用户」 |
+| 账户页邮箱（非接口） | 见 4.1；凭证有 `email` 时作 `PlatformAccount.account`，UI 优先显示「账号: 邮箱」，否则显示「UID: 地区码」 |
 
 ### 4.3 歌单与歌曲（读，均 `/v1/me/` 需用户 token）
 
@@ -1384,6 +1388,9 @@
 | QQ音乐 | `genre`（搜索条目恒为 0 → 实际恒 undefined；**不再调用** `/song/genre`） | `PlatformSong.genre` |
 | Apple Music | `attributes.genreNames[0]` | `PlatformSong.genre` |
 | （网易云 / 酷狗） | （上游不提供 genre 字段） | `PlatformSong.genre`（恒 undefined） |
+| Apple Music | 页面账号菜单 `[data-testid="account-menu-trigger"] .user__name`（✅ 实测抓取：Playwright 登录态 DOM，非 API；抓不到时回退固定文案） | `PlatformAccount.nickname` |
+| Apple Music | `/v1/me/storefront` `data[0].id`（地区码，非账号 ID） | `PlatformAccount.userId` |
+| Apple Music | 账户页 iframe `[data-test="settings-content-apple-id"]` 文本中的邮箱（✅ 实测抓取：Playwright 登录态 DOM，非 API；抓不到时 UI 回退 UID） | `PlatformAccount.account` |
 
 ## 6. 实测结论与待确认
 

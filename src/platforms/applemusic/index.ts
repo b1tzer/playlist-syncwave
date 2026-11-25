@@ -1,6 +1,7 @@
 import type {
   PlatformPlaylist,
   PlatformSong,
+  WebLoginProfile,
 } from '@core/models/platform'
 import { SearchError } from '@core/models/sync'
 import type { PlatformModule } from '../meta'
@@ -38,6 +39,10 @@ interface AppleCredential {
   developerToken: string
   /** developer token 抓取时间（epoch ms），用于过期判定 */
   devTokenAt: number
+  /** 登录页面顺带抓到的昵称（抓不到时缺省，展示用回退文案） */
+  nickname?: string
+  /** 账户设置页抓到的 Apple ID 邮箱（抓不到时缺省） */
+  email?: string
 }
 
 function parseCredential(credential: string): AppleCredential {
@@ -45,11 +50,14 @@ function parseCredential(credential: string): AppleCredential {
     const obj = asObject(JSON.parse(credential) as unknown)
     const mediaUserToken = pickString(obj.mediaUserToken)
     const developerToken = pickString(obj.developerToken)
-    if (!mediaUserToken || !developerToken) throw new Error()
+    // developerToken 允许为空：登录初期先落最小凭证，首次请求时由 ensureDeveloperToken 补齐
+    if (!mediaUserToken) throw new Error()
     return {
       mediaUserToken,
-      developerToken,
+      developerToken: developerToken ?? '',
       devTokenAt: Number(obj.devTokenAt) || 0,
+      nickname: pickString(obj.nickname) || undefined,
+      email: pickString(obj.email) || undefined,
     }
   } catch {
     throw new Error('Apple Music：登录凭证无效，请重新登录')
@@ -62,6 +70,8 @@ function serializeCredential(c: AppleCredential): string {
     mediaUserToken: c.mediaUserToken,
     developerToken: c.developerToken,
     devTokenAt: c.devTokenAt,
+    ...(c.nickname ? { nickname: c.nickname } : {}),
+    ...(c.email ? { email: c.email } : {}),
   })
 }
 
@@ -136,14 +146,29 @@ export class AppleMusicAdapter extends BasePlatformAdapter {
   // 网页登录凭证构造：拿 media-user-token 换完整凭证
   // ==============================
 
-  async webLoginSetup(sessionValue: string): Promise<string> {
+  async webLoginSetup(sessionValue: string, profile?: WebLoginProfile): Promise<string> {
     const developerToken = await this.fetchWebDeveloperToken()
     const at = Date.now()
     this.devTokenCache = { token: developerToken, at }
+    this.log.debug('login.web.credential-built', '网页登录凭证已构造（不记录字段值）', {
+      hasNickname: Boolean(profile?.nickname),
+      hasEmail: Boolean(profile?.email),
+    })
     return serializeCredential({
       mediaUserToken: sessionValue,
       developerToken,
       devTokenAt: at,
+      nickname: profile?.nickname,
+      email: profile?.email,
+    })
+  }
+
+  withWebLoginProfile(credential: string, profile: WebLoginProfile): string {
+    const saved = parseCredential(credential)
+    return serializeCredential({
+      ...saved,
+      ...(profile.nickname ? { nickname: profile.nickname } : {}),
+      ...(profile.email ? { email: profile.email } : {}),
     })
   }
 
@@ -308,7 +333,14 @@ export class AppleMusicAdapter extends BasePlatformAdapter {
       const storefrontId = pickString(asObject(asArray(res.data)[0]).id)
       if (!storefrontId) return {}
       this.storefront = storefrontId
-      return { userId: storefrontId, nickname: 'Apple Music 用户' }
+      // 页面抓到的昵称/邮箱随凭证保存；老凭证没有时沿用回退文案
+      const saved = parseCredential(credential)
+      const nickname = saved.nickname ?? 'Apple Music 用户'
+      this.log.debug('login.status.fields', '账号资料字段齐备情况（不记录值）', {
+        hasNickname: Boolean(saved.nickname),
+        hasEmail: Boolean(saved.email),
+      })
+      return { userId: storefrontId, nickname, ...(saved.email ? { account: saved.email } : {}) }
     } catch (e) {
       // 用户 token 失效按未登录处理（主进程据此显示未登录态）；网络异常继续上抛
       if (e instanceof AppleAuthError) {
@@ -538,7 +570,6 @@ const appleMusicModule: PlatformModule = {
   meta: {
     id: 'applemusic',
     name: 'Apple Music',
-    apiLabel: 'Apple Music Web API (Community)',
     icon: 'library_music',
     capabilities: {
       read: true,
@@ -552,6 +583,14 @@ const appleMusicModule: PlatformModule = {
       url: WEB_INDEX_URL,
       cookieName: 'media-user-token',
       cookieUrl: 'https://music.apple.com',
+      // 实测：登录后账号菜单把昵称渲染在 .user__name
+      profileSelector: '[data-testid="account-menu-trigger"] .user__name',
+      // 实测：设置页账户 iframe 内 [data-test="settings-content-apple-id"] 含 Apple ID 邮箱
+      accountProbe: {
+        url: 'https://music.apple.com/cn/account/settings',
+        frameSelector: 'iframe[src*="includes/commerce/navigator"]',
+        emailSelector: '[data-test="settings-content-apple-id"]',
+      },
     },
   },
   createAdapter: () => {

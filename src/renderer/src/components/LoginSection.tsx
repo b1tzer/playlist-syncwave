@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { PlatformAccount, PlatformMeta, QrLoginTicket } from '@core/models/platform'
 import { createRendererLogger } from '../logging/rendererLogger'
 import { useI18n } from '../i18n'
@@ -168,6 +168,39 @@ export default function LoginSection({ platforms, accounts, onAccountChange }: L
 
   const loggedInCount = platforms.filter((p) => accounts[p.id] !== null).length
 
+  // 网格列宽 = 内容最长的卡片宽度（所有卡片等宽、文字不缩略；auto-fit 放不下自动折单列）
+  const gridRef = useRef<HTMLDivElement>(null)
+  const [cardMinWidth, setCardMinWidth] = useState<number | null>(null)
+
+  useLayoutEffect(() => {
+    let cancelled = false
+    const measure = () => {
+      const grid = gridRef.current
+      if (!grid) return
+      // 临时把列宽压到 0，让每张卡片溢出，读取完整内容宽度（scrollWidth）
+      const prevTemplate = grid.style.gridTemplateColumns
+      grid.style.setProperty('grid-template-columns', '0px')
+      let max = 0
+      grid.querySelectorAll<HTMLElement>('[data-card]').forEach((card) => {
+        max = Math.max(max, card.scrollWidth)
+      })
+      grid.style.gridTemplateColumns = prevTemplate
+      if (!cancelled && max > 0) {
+        setCardMinWidth((prev) => (prev === max ? prev : max))
+      }
+    }
+    measure()
+    // 字体加载完成后重测一次，避免首次测量偏小
+    if (document.fonts?.ready) {
+      document.fonts.ready.then(() => {
+        if (!cancelled) measure()
+      })
+    }
+    return () => {
+      cancelled = true
+    }
+  }, [platforms, accounts, t])
+
   return (
     <div>
       <div className="flex items-start justify-between">
@@ -184,51 +217,55 @@ export default function LoginSection({ platforms, accounts, onAccountChange }: L
         </div>
       </div>
 
-      <div className="mt-6 grid grid-cols-1 gap-3 xl:grid-cols-2">
+      <div
+        ref={gridRef}
+        className="mt-6 grid gap-3"
+        style={
+          cardMinWidth
+            ? { gridTemplateColumns: `repeat(auto-fit, minmax(${cardMinWidth}px, 1fr))` }
+            : undefined
+        }
+      >
         {platforms.map((p) => {
           const account = accounts[p.id] ?? null
+          const status = account ? t('login.authorized') : t('login.disconnected')
           return (
             <div
               key={p.id}
+              data-card
               className="rounded-lg border border-outline-variant bg-surface-container-low p-4"
             >
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between gap-3">
                 <div className="flex items-center gap-3">
-                  <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-surface-container-highest text-tertiary">
-                    <PlatformLogo
-                      platform={p.id}
-                      name={p.name}
-                      icon={p.icon}
-                      size="h-6 w-6"
-                      iconSize="text-xl"
-                    />
-                  </span>
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <p className="font-body-md text-body-md font-medium">{p.name}</p>
-                      {account ? (
-                        <span className="flex items-center gap-1 rounded-full bg-primary-container/15 px-2 py-0.5 font-label-sm text-label-sm text-primary">
-                          <span className="h-1.5 w-1.5 rounded-full bg-primary" />
-                          {t('login.authorized')}
-                        </span>
-                      ) : (
-                        <span className="rounded-full bg-surface-container-highest px-2 py-0.5 font-label-sm text-label-sm text-on-surface-variant">
-                          {t('login.disconnected')}
-                        </span>
-                      )}
-                    </div>
-                    <p className="font-label-mono text-label-mono text-outline">{p.apiLabel}</p>
+                  <PlatformLogo
+                    platform={p.id}
+                    name={p.name}
+                    icon={p.icon}
+                    size="h-8 w-8"
+                    iconSize="text-2xl"
+                    className="shrink-0"
+                  />
+                  <div className="flex items-baseline gap-2 whitespace-nowrap">
+                    <p className="font-body-md text-body-md font-medium">{p.name}</p>
+                    {account && (
+                      <>
+                        <p className="font-label-md text-label-md text-on-surface-variant">
+                          {account.nickname}
+                        </p>
+                        <p className="font-label-sm text-label-sm text-outline">
+                          {account.pending
+                            ? t('login.pending')
+                            : account.account
+                              ? t('login.account', { value: account.account })
+                              : t('login.uid', { value: account.userId })}
+                        </p>
+                      </>
+                    )}
                   </div>
                 </div>
 
-                {account ? (
-                  <div className="flex items-center gap-3">
-                    <div className="text-right">
-                      <p className="font-label-md text-label-md">{account.nickname}</p>
-                      <p className="font-label-mono text-label-mono text-outline">
-                        UID: {account.userId}
-                      </p>
-                    </div>
+                <div className="flex shrink-0 items-center gap-3">
+                  {account ? (
                     <button
                       onClick={() => logout(p.id)}
                       className="flex items-center gap-1 rounded-lg border border-outline-variant px-3 py-1.5 font-label-sm text-label-sm text-on-surface-variant transition-colors hover:bg-surface-container-highest hover:text-error"
@@ -236,25 +273,35 @@ export default function LoginSection({ platforms, accounts, onAccountChange }: L
                       <span className="material-symbols-outlined text-sm">logout</span>
                       {t('login.logout')}
                     </button>
-                  </div>
-                ) : (
-                  <button
-                    onClick={() => startLogin(p.id)}
-                    disabled={loading}
-                    className="flex items-center gap-1.5 rounded-lg bg-primary px-4 py-2 font-label-md text-label-md font-medium text-on-primary transition-colors hover:bg-primary/85 disabled:opacity-50"
-                  >
-                    <span className="material-symbols-outlined text-sm">
-                      {p.loginType === 'web' ? 'open_in_new' : 'qr_code_scanner'}
-                    </span>
-                    {p.loginType === 'web'
-                      ? loading
-                        ? t('login.webWaiting')
-                        : t('login.webLogin')
-                      : loading && qrFor === p.id
-                        ? t('login.gettingQr')
-                        : t('login.scanLogin')}
-                  </button>
-                )}
+                  ) : (
+                    <button
+                      onClick={() => startLogin(p.id)}
+                      disabled={loading}
+                      className="flex items-center gap-1.5 rounded-lg bg-primary px-4 py-2 font-label-md text-label-md font-medium text-on-primary transition-colors hover:bg-primary/85 disabled:opacity-50"
+                    >
+                      <span className="material-symbols-outlined text-sm">
+                        {p.loginType === 'web' ? 'open_in_new' : 'qr_code_scanner'}
+                      </span>
+                      {p.loginType === 'web'
+                        ? loading
+                          ? t('login.webWaiting')
+                          : t('login.webLogin')
+                        : loading && qrFor === p.id
+                          ? t('login.gettingQr')
+                          : t('login.scanLogin')}
+                    </button>
+                  )}
+                  {/* 红绿灯：绿 = 已授权在线，红 = 未连接 */}
+                  <span
+                    title={status}
+                    aria-label={status}
+                    className={`h-2.5 w-2.5 shrink-0 rounded-full ${
+                      account
+                        ? 'bg-primary shadow-[0_0_6px] shadow-primary/60'
+                        : 'bg-error shadow-[0_0_6px] shadow-error/40'
+                    }`}
+                  />
+                </div>
               </div>
             </div>
           )

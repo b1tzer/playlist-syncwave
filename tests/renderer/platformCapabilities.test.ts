@@ -5,7 +5,6 @@ import { operationAllowed, operationReason } from '../../src/renderer/src/utils/
 const meta = (capabilities: PlatformMeta['capabilities']): PlatformMeta => ({
   id: 'test',
   name: 'Test',
-  apiLabel: 'Test API',
   icon: 'music_note',
   capabilities,
 })

@@ -247,7 +247,6 @@ const neteaseModule: PlatformModule = {
   meta: {
     id: 'netease',
     name: '网易云音乐',
-    apiLabel: 'Netease API Gateway: v3.12 (Direct)',
     icon: 'graphic_eq',
     capabilities: { read: true, write: true },
   },

@@ -13,7 +13,7 @@ let timer: NodeJS.Timeout | null = null
 let running = false
 
 /** 广播账号状态变化：渲染层收到后重新查询该平台登录态 */
-function broadcastAccountsChanged(platform: string): void {
+export function broadcastAccountsChanged(platform: string): void {
   for (const win of BrowserWindow.getAllWindows()) {
     win.webContents.send('accounts:changed', platform)
   }

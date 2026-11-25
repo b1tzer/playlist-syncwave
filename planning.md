@@ -293,7 +293,7 @@ tests/             # Vitest 单元测试（core/main/platforms/renderer）
 
 ### 桌面布局重构（mac 应用标准）✅
 - **问题**：内容区 `mx-auto max-w-5xl` 居中限宽，窗口放大后内容聚在中间。
-- **改动**：移除 main 容器的 `max-w-5xl` 限制，内容铺满窗口（侧边栏 w-60 固定 + 内容区 flex-1 自适应）；LoginSection 去掉 `max-w-3xl` 并改宽屏双列网格（`xl:grid-cols-2`）；SettingsView 去掉 `max-w-2xl`；PlaylistSection（w-64 + flex-1）与 TextCreator（flex-1 + w-72 侧栏）本身自适应，随容器铺满。
+- **改动**：移除 main 容器的 `max-w-5xl` 限制，内容铺满窗口（侧边栏 w-60 固定 + 内容区 flex-1 自适应）；LoginSection 去掉 `max-w-3xl` 并改宽屏双列网格（`xl:grid-cols-2`）（⚠️ 已变更：2026-11 账号卡片改为等宽 grid、列宽实测以文字最长卡片为准，见「账号管理页 UI 优化」补记）；SettingsView 去掉 `max-w-2xl`；PlaylistSection（w-64 + flex-1）与 TextCreator（flex-1 + w-72 侧栏）本身自适应，随容器铺满。
 - **顺带清理**：删除上轮遗漏的同类装饰标签——SyncCenter「Hub Engine v2.4 / DAEMON ONLINE」、LoginSection「AUTHENTICATION VAULT / SQLite AES-256…」、SettingsView「PREFERENCES LOCAL ONLY」。
 - **待办**：手工验收窗口缩放各页面铺满效果。
 
@@ -484,6 +484,42 @@ tests/             # Vitest 单元测试（core/main/platforms/renderer）
 - **追加优化 — 异常提示统一右上角 toast（不给用户看代码）**：歌单详情区顶端错误条与搜索区内联错误条移除，所有异常统一走 `renderer/src/utils/notifyError.ts`——右上角 toast 展示，平台中文可读文案作为详情，技术性报错（状态码/网络错误/堆栈等）过滤为通用标题；覆盖歌单拉取/打开/重命名/删除/增删歌曲/搜索/同步确认/登录异常/导入导出等全部错误路径；同步失败内联错误（TextCreator）与确认对话框内联错误一并移除（toast 已提示）。主进程歌单拉取（列表/歌曲，含分页）补 30s 超时包装，平台接口永久挂起时转为「请求超时」错误走 toast，不再一直 loading。
 - **追加优化 — 慢加载网络延迟提示**：拉取（歌单列表/歌曲区）超过 3s 未完成，待显示区域文案从「加载中」切换为「网络较慢，正在获取中…」并保持转圈动效（`SLOW_FETCH_THRESHOLD_MS` 常量 + loading 监听 effect），加载结束自动复位；loading 改为对应区域垂直水平居中显示（原左上角一行文字）。
 - **追加修复 — 网易云显示收藏歌单**：`fetchPlaylists` 原仅过滤 `specialType=5`，收藏的他人歌单（`subscribed=true`）透出到列表。补过滤（`subscribed !== true`，缺失字段视为自有），与酷狗「仅显示自有歌单」规则一致；过滤规则变更 bump `PLAYLIST_CACHE_SCHEMA_VERSION` → 5 使旧缓存重新验证；新增过滤测试。
+
+### 补记 — 账号管理页 UI 优化与 apiLabel 元数据清理 ✅
+- **需求**：① 平台 icon 去掉底色容器直接显示原图；② 删除平台名下方的登录接口说明文案（`apiLabel`，如「Netease API Gateway: v3.12 (Direct)」，属开发者调试信息，用户无感知价值）；③ 不显示「已授权（活跃）」徽章，改红绿灯（绿 = 已授权在线、红 = 未连接）置于卡片最右侧；④ 账号卡片加最小显示宽度，容器过窄时文字不再堆叠；⑤ 平台名右侧同行显示用户名 + UID（UID 小字号）。
+- **改动**：
+  - `LoginSection.tsx`：卡片容器改为等宽 grid——`useLayoutEffect` 实测各卡片完整内容宽度（临时压列宽至 0 读 `scrollWidth`，字体加载后重测），取最大值作为 `grid-template-columns: repeat(auto-fit, minmax(最大值px, 1fr))`：所有卡片同宽、列宽以文字最长项为准、文字 `whitespace-nowrap` 完整显示不缩略（无 truncate），容器放不下自动折为单列；icon 直接渲染 `PlatformLogo`（无底色容器，h-8 w-8，组件新增 `className` 透传）；删除 apiLabel 行与「已授权/未连接」徽章；右侧为退出/登录按钮 + 红绿灯（`bg-primary` 绿 / `bg-error` 红带微光晕，`title`/`aria-label` 保留可访问性提示）。
+  - `core/models/platform.ts`：删除 `PlatformMeta.apiLabel` 字段；四平台模块（netease/qqmusic/kugou/applemusic）同步删除 meta 中的 apiLabel 值。
+  - i18n：`login.authorized` 文案「已授权（活跃）」→「已授权」（中英同改，仅作红绿灯悬停提示）。
+  - `tests/renderer/platformCapabilities.test.ts`：meta 构造同步删除 apiLabel。
+- **验证**：全量 376 项测试、typecheck、lint 通过。待手工验收：红绿灯状态、卡片等宽、窄窗口自动折单列、长用户名完整显示。
+
+### 补记 — Apple Music 网页登录顺带抓取账号昵称 ✅
+- **需求**：官方 API 无用户资料接口，登录态账号标识只能是 storefront 地区码；登录页面上账号菜单可见昵称，改为登录后从页面抓取作为展示用昵称，抓不到保持原回退文案。
+- **改动**：
+  - `core/models/platform.ts`：`WebLoginConfig` 新增可选 `profileSelector`，新增 `WebLoginProfile`；`PlatformAdapter.webLoginSetup` 增加可选 `profile` 参数。
+  - `main/webLoginService.ts`：cookie 到手后不立即关窗，按选择器轮询最多 15s 读页面昵称（250ms 间隔），读不到照常登录；关闭/超时兜底保留已拿到的 cookie，登录结果改为 `{ cookie, profile? }`。
+  - Apple 适配器把昵称写入凭证 JSON，`fetchLoginStatus` 优先展示它，老凭证仍回退「Apple Music 用户」；meta 配选择器 `[data-testid="account-menu-trigger"] .user__name`。
+- **验证**：✅ Playwright 真实登录态实测：登录后该节点渲染为 `<span class="user__name svelte-czde0s">账号名</span>`，位于 `[data-testid="account-menu-trigger"]` 内；刷新后约 4.2s 出现，故等待上限从 5s 放宽到 15s。新增 1 项适配器测试（昵称写入凭证并在登录态展示），全量 377 项测试、typecheck、lint 通过。待手工验收：Electron 登录窗口内同样能抓到昵称并展示。
+
+### 补记 — Apple Music 登录后抓取 Apple ID 邮箱作为账号 ✅
+- **需求**：用户希望在账号卡片看到登录账号而非只有地区码；✅ Playwright 登录态实测：顶部账号菜单只有昵称，邮箱位于 `设置 → 账户设置`（`/cn/account/settings`）中标题为「账户设置」的 iframe 内「Apple 账户」行。
+- **改动**：
+  - `core/models/platform.ts`：`PlatformAccount` 加可选 `account`，`WebLoginProfile` 加 `email`，新增 `WebLoginAccountProbe`（账户页 URL + iframe 选择器 + 邮箱元素选择器）并挂到 `WebLoginConfig`。
+  - `main/webLoginService.ts`：cookie 到手后依次抓昵称 → 跳账户设置页（上限 15s）从同源 iframe 文本中正则匹配邮箱；跳转/读取失败或用户关窗都保留已拿到的 cookie，不阻断登录；日志只记失败原因，不记邮箱。
+  - Apple 适配器：凭证 JSON 存 `email`，`fetchLoginStatus` 返回 `account`；`PlatformAdapter` 基类透传该字段。渲染层 `LoginSection` 有 `account` 时显示「账号: 邮箱」，否则沿用「UID: 地区码」；i18n 中英同补 `login.account`/`login.uid`。
+  - Apple meta 探针：`iframe[src*="includes/commerce/navigator"]` → `[data-test="settings-content-apple-id"]`。
+- **日志**：`webLoginService` 补 debug 日志——收集开始/结束（耗时、字段命中）、账户页跳转开始/完成/失败、昵称与邮箱 found/missed（耗时、轮询次数、首次错误；邮箱 miss 另记 iframe/字段选择器是否命中），250ms 轮询只记首次错误避免刷屏；Apple 适配器与 `platform:begin-web-login` 汇总记录字段齐备情况。所有日志只记命中与诊断信息，不记录昵称/邮箱/token 值。
+- **验证**：✅ Playwright 实测该选择器与邮箱正则命中（未输出邮箱值）；适配器测试扩展为昵称+邮箱写入凭证并在登录态展示，全量 377 项测试、typecheck、lint 通过。待手工验收：Electron 登录流程跳转账户页后账号卡片显示邮箱，且登录总耗时可接受。
+
+### 补记 — 网页登录改为先显示已登录、后台补全账号资料 ✅
+- **问题**：cookie 到手后旧流程在可见窗口里串行抓昵称/邮箱（约数秒），再 `webLoginSetup` + `getLoginStatus` 才返回 IPC，渲染层一直显示「等待登录…」，窗口关掉后仍有明显空档。
+- **改动**：
+  - `main/webLoginService.ts`：新增 `WebLoginCallbacks`（`onCookie`/`onProfile`）。cookie 到手立即调用 `onCookie`、`win.hide()` 并 resolve；昵称/邮箱改在隐藏窗口后台收集，`onProfile` 回调后销毁窗口。取消/超时仍返回 null。
+  - `main/index.ts`：cookie 到手即落最小凭证（仅 `mediaUserToken`，`developerToken` 为空、`devTokenAt=0`，首次请求自动补齐），写 `pending: true` 临时登录态并广播 `accounts:changed`，IPC 立即返回临时账号；后台任务串行执行「`keepAlive` 补齐 token → `getLoginStatus` 校验」与「`withWebLoginProfile` 补写昵称/邮箱 → 重新查询」，每步完成后覆盖缓存并广播刷新；校验失败清凭证与缓存。
+  - `core/models/platform.ts`：`PlatformAccount` 新增 `pending`；`PlatformAdapter` 新增可选 `withWebLoginProfile`（Apple 实现，不重复联网）。`keepAliveService.broadcastAccountsChanged` 导出复用。
+  - `LoginSection`：`pending` 时显示「正在完善账号资料…」（中英 i18n 同补），正式账号到达后替换。
+- **验证**：新增 2 项适配器测试（最小凭证经保活自动补 token、后台资料补写凭证不丢字段），全量 379 项测试、typecheck、lint 通过。待手工验收：Electron 登录后账号卡片应立即出现「正在完善账号资料…」，随后自动刷新为正式用户名与邮箱；若登录无效应自动退回未连接。
 
 ---
 

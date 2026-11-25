@@ -28,6 +28,10 @@ export interface PlatformAccount {
   platform: string
   userId: string
   nickname: string
+  /** 平台提供的登录账号标识（如 Apple Music 的 Apple ID 邮箱）；没有则展示 userId */
+  account?: string
+  /** 后台仍在补全账号资料（cookie 已到手，凭证校验/资料抓取未完成） */
+  pending?: boolean
 }
 
 export type QrLoginStatus = 'waiting' | 'scanned' | 'expired' | 'success'
@@ -74,6 +78,24 @@ export interface LoginChannel {
 /** 登录方式：扫码（默认）或网页授权（如 Apple Music 无扫码接口） */
 export type PlatformLoginType = 'qr' | 'web'
 
+/** 网页登录时从页面顺带抓取的账号资料（抓不到时字段缺省，不影响登录） */
+export interface WebLoginProfile {
+  /** 页面展示的用户名（如 Apple Music 账号菜单中的昵称） */
+  nickname?: string
+  /** 账户设置页里的登录账号（如 Apple ID 邮箱） */
+  email?: string
+}
+
+/** 登录后额外跳转账户设置页抓取登录账号的配置（可选，失败不阻断登录） */
+export interface WebLoginAccountProbe {
+  /** 账户设置页 URL */
+  url: string
+  /** 该页面中承载账户资料的 iframe 选择器 */
+  frameSelector: string
+  /** iframe 内含登录账号文本的元素选择器（从文本中匹配邮箱） */
+  emailSelector: string
+}
+
 /** 网页登录配置：主进程据此打开登录窗口并从 cookie 提取会话凭证 */
 export interface WebLoginConfig {
   /** 登录页 URL（应用内打开，用户在此完成登录） */
@@ -82,6 +104,10 @@ export interface WebLoginConfig {
   cookieName: string
   /** cookie 归属的根 URL（用于查询 cookie） */
   cookieUrl: string
+  /** 可选的页面昵称选择器：cookie 到手后等一小会儿读取，读不到照常登录 */
+  profileSelector?: string
+  /** 可选的账户页探针：再跳一次页面抓登录邮箱，抓不到照常登录 */
+  accountProbe?: WebLoginAccountProbe
 }
 
 /** 平台元数据：注册时随模块注册，渲染层据此动态渲染 */
@@ -90,8 +116,6 @@ export interface PlatformMeta {
   id: string
   /** 展示名称 */
   name: string
-  /** 登录接口说明文案 */
-  apiLabel: string
   /** material-symbols 图标名 */
   icon: string
   capabilities: PlatformCapabilities
