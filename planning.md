@@ -10,10 +10,10 @@
 |---|---|---|---|
 | 桌面框架 | **Electron** | ① 核心约束是 AI 能可靠生成与调试代码，TS 全栈最友好；② 国内平台非官方 API 参考实现多为 Node.js 生态，可复用；③ 签名与自动更新链路成熟 | Tauri v2：若 V1.0 对包体积/内存敏感再迁移；core 层平台无关设计降低迁移成本 |
 | 语言 | **TypeScript（strict）** | 类型即契约，AI 生成代码错误可在编译期暴露 | — |
-| UI | React 18 + Vite + Tailwind CSS | AI 最熟悉的组合，快速出可用界面 | — |
+| UI | React 19 + Vite + Tailwind CSS | AI 最熟悉的组合，快速出可用界面 | — |
 | 状态管理 | Zustand | 轻量、样板代码少 | — |
 | 本地存储 | better-sqlite3 | 同步 API、性能足够（万级歌曲）、类型友好 | V0.1 若 native rebuild 受阻，临时退化为 JSON 文件 + zod 校验 |
-| 凭证存储 | keytar（系统钥匙串） | 满足 PRD「不明文落盘」硬性要求 | Electron `safeStorage`（仅加密不入钥匙串，降级） |
+| 凭证存储 | Electron `safeStorage`（⚠️ 原计划 keytar，实施时改为 safeStorage，见「架构变更」补记） | 满足 PRD「不明文落盘」硬性要求；无需额外 native 依赖 | keytar（系统钥匙串） |
 | 单元测试 | Vitest | 与 Vite 同源、启动快、TS 原生支持 | — |
 | E2E 测试 | Playwright（V0.5 引入） | 跨平台桌面 E2E 成本高，MVP 先用单元 + 手工验收 | — |
 | 代码规范 | ESLint + Prettier | 让 agent 和人类遵守同一套约定 | — |
@@ -31,23 +31,29 @@ src/
 │   ├── models/    # 领域类型：Song / Playlist / ParseResult
 │   ├── parser/    # 文本快速创建：解析、去噪、字段归并
 │   ├── matcher/   # 歌曲匹配引擎：归一化、模糊匹配、置信度
-│   └── sync/      # 同步引擎：差异计算、增量、重试
-├── platforms/     # 平台适配器（实现统一接口 PlatformAdapter）
-│   ├── base.ts    # 接口定义与通用逻辑
-│   ├── netease.ts # 网易云音乐
-│   └── qqmusic.ts # QQ 音乐
-├── main/          # Electron 主进程：IPC、数据库、凭证、平台适配器宿主
-├── preload/       # 预加载脚本：安全的 contextBridge API
-└── renderer/      # React UI
-tests/
-└── core/          # core 层单元测试（验收用例）
+│   ├── sync/      # 同步引擎：差异计算、增量、重试
+│   ├── export/    # 歌单导出（m3u/csv）
+│   ├── logging/   # 日志（含递归脱敏）
+│   └── cachePolicy.ts
+├── platforms/     # 插件化平台适配器（import.meta.glob 自动收集，每个平台一个目录）
+│   ├── base.ts    # PlatformAdapter 接口与模板方法（BasePlatformAdapter）
+│   ├── meta.ts    # PlatformModule 元信息类型
+│   ├── index.ts   # glob 收集器
+│   ├── netease/   # 网易云音乐（NeteaseCloudMusicApi）
+│   ├── qqmusic/   # QQ 音乐（qq-music-api Node 模式）
+│   ├── kugou/     # 酷狗音乐（kugoumusicapi 库模式）
+│   └── applemusic/# Apple Music（社区路径 Web API）
+├── main/          # Electron 主进程：IPC、数据库、凭证、平台注册、日志
+├── preload/       # 预加载脚本：安全的 contextBridge API（CJS 输出）
+└── renderer/      # React UI（i18n 中英双语）
+tests/             # Vitest 单元测试（core/main/platforms/renderer）
 ```
 
 **设计约束**
 - `core/` 禁止 import Electron、Node 内置模块或任何平台 SDK —— 保证可独立测试与可迁移
 - 主进程与渲染进程通过 preload contextBridge 通信，`nodeIntegration: false`、`contextIsolation: true`
 - 平台差异全部收敛在 `platforms/` 适配器内，core 只依赖 `PlatformAdapter` 接口
-- 凭证只经主进程 keytar 读写，渲染进程永不接触原始凭证
+- 凭证只经主进程 safeStorage 加密读写，渲染进程永不接触原始凭证
 
 ---
 
@@ -428,6 +434,30 @@ tests/
 - **B15 浅色主题 ✅**：styles.css 改为双主题 CSS 变量（:root 浅色 Material 3 light / .dark 深色），@theme 颜色 token 引用运行时变量（含透明度修饰经 color-mix 生效）；`renderer/theme.ts`（applyTheme/restoreTheme）+ 入口恢复 + 设置页浅/深切换按钮组，持久化 settings.theme；index.html 移除 body 内联背景。构建产物含两套变量，typecheck、lint、278 项测试通过。
 - **B16 关于版本号 + 崩溃恢复 ✅**：渲染进程崩溃（render-process-gone，排除 clean-exit）弹出双语错误对话框，「重启应用」走 `app.relaunch()`（防重入标志）；设置页「关于」行显示实际版本号（SyncWave v{version}）。typecheck、lint、278 项测试、build 通过。
 
+### 补记 — 酷狗音乐平台接入 ✅
+> 本条目为文档同步补记（此前迭代未及时落文档，从代码与测试反推核实的事实，不含无法核实的细节）。
+
+- **接入方式**：`kugoumusicapi`（github 依赖 `MakcRe/KuGouMusicApi`）**库模式**——createRequire 直调扁平函数（`login_qr_key`/`login_qr_create`/`login_qr_check`/`user_info`/`login_token`/`user_playlist`/`playlist_track_all_new`/`playlist_track_all`/`search`/`playlist_tracks_add`/`playlist_tracks_del`/`playlist_update` 等），不启动 HTTP 服务。
+- **设备指纹**：token 与设备绑定（guid/mid/dev/dfid），持久化到 `userData/kugou-device.json`，跨重启保持；删除指纹文件会导致登录失效。
+- **歌单列表规则**：仅显示自建/系统歌单，收藏的他人歌单（`type=1`）不显示；`is_mine` 恒为 0 不可用；过滤只作用于显示列表，写操作索引保留完整。过滤规则变更已 bump `PLAYLIST_CACHE_SCHEMA_VERSION` → 4。
+- **歌曲拉取双路径**：自建歌单走云歌单接口（listid），收藏歌单走公开歌单接口（global_collection_id），任一路径返回空自动回退另一路径。
+- **写操作**：加歌按 `名称|hash|album_id|mixsongid` 格式（元数据在搜索/拉歌单时缓存）；删歌按云歌单条目 fileid 而非 hash。
+- **风控**：搜索错误 `error_code=1002` 判定为限流（rate-limited）。
+
+### 补记 — Apple Music 平台接入 ✅
+- **接入方式**：社区路径 Web API（适配器自实现）。登录：应用内网页登录窗口自动提取 `media-user-token` cookie；developer token 从 `music.apple.com` 网页前端 bundle 提取（JWT `payload.iss === 'AMPWebPlay'`），过期自动重抓。
+- **双主机**：读接口走官方主机 `api.music.apple.com`；写接口（创建/追加/改名/删除）必须走 `amp-api.music.apple.com`（删除在官方主机固定 401）。仅 `/v1/me/` 路径带 `music-user-token` 头。
+- **能力**：read + write，但**移除歌曲无官方端点**（`unsupportedOperations.removeSongs`，UI 层隐藏该操作）。建单/加曲单次上限 100 首，分批写入；新建歌单 iCloud 传播延迟，404 时 1.5s 重试一次。
+- **搜索**：catalog search limit 上限 25，超限返回 400；搜索词把 ` - ` 替换为空格（整串带连字符易命中 Live 版）。
+
+### 补记 — 后续演进（与历史条目相关的变更）✅
+- **凭证存储**：keytar 未引入，改为 Electron `safeStorage` 加密落盘（ADR-003 已变更）。
+- **缓存限流**：T12 的「手动强制刷新最小间隔 30s」已演进为令牌桶（容量 3、每 10s 补 1 令牌，`core/cachePolicy.ts` 的 `REFRESH_BUCKET_*`），令牌不足时静默降级返回缓存。
+- **QQ音乐 genre 简化**：不再调用 `/song/genre` 接口，搜索条目直接映射 `item.genre`（上游恒为 0，genre 实际为空）。
+- **schema 迁移压缩**：发布前将早期演进迁移 v1~v6 压缩为单一基线迁移（version=6，幂等），B14 的「迁移 v1 接管」描述对应压缩前历史；正式发布后 MIGRATIONS 只追加（version ≥ 7）。
+- **React 版本**：工程实际采用 React 19（package.json），技术选型表已同步。
+- 现状：typecheck、lint、全量 371 项测试、build 通过（四个平台：网易云/QQ音乐/酷狗/Apple Music）。
+
 ---
 
 | 风险 | 缓解 |
@@ -446,5 +476,5 @@ tests/
 |---|---|---|
 | ADR-001 | 桌面壳选 Electron 而非 Tauri v2 | 已定，V1.0 可重新评估 |
 | ADR-002 | core 层纯 TS、不依赖 Electron | 已定 |
-| ADR-003 | 凭证用 keytar 系统钥匙串 | 已定 |
+| ADR-003 | 凭证用 keytar 系统钥匙串 | ⚠️ 已变更：实施时改为 Electron `safeStorage` 加密落盘（见补记），keytar 未引入 |
 | ADR-004 | MVP 先做文本解析，平台同步后置 | 已定（遵循「最独立最易验证优先」） |

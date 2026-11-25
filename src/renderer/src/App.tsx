@@ -6,7 +6,7 @@ import TextCreator from './components/TextCreator'
 import PlaylistSection from './components/PlaylistSection'
 import LoginSection from './components/LoginSection'
 import SyncHistory from './components/SyncHistory'
-import type { PendingConfirmSession, SyncReport, SyncTaskRecord } from '@core/models/sync'
+import type { PendingConfirmSession, SyncTaskRecord } from '@core/models/sync'
 import SettingsView from './components/SettingsView'
 import ConfirmSyncDialog from './components/ConfirmSyncDialog'
 import { ToastHost, notify } from './components/toast'
@@ -36,7 +36,6 @@ export default function App() {
   const [confirmDismissed, setConfirmDismissed] = useState(false)
   const [confirming, setConfirming] = useState(false)
   const [confirmError, setConfirmError] = useState('')
-  const [confirmResult, setConfirmResult] = useState<SyncReport | null>(null)
 
   useEffect(() => {
     // StrictMode 下 effect 会先挂载再卸载重挂载：cancelled 防止已卸载轮次的异步回调继续更新状态
@@ -277,7 +276,6 @@ export default function App() {
     setPendingConfirm(session)
     setConfirmSelections({})
     setConfirmSkips({})
-    setConfirmResult(null)
     setConfirmError('')
     setConfirmDismissed(false)
   }
@@ -286,7 +284,6 @@ export default function App() {
     setPendingConfirm(null)
     setConfirmSelections({})
     setConfirmSkips({})
-    setConfirmResult(null)
     setConfirmError('')
     setConfirmDismissed(false)
   }
@@ -350,7 +347,6 @@ export default function App() {
         return
       }
 
-      setConfirmResult(rep)
       const ok = rep.playlistId !== ''
       if (ok) {
         // 右上角通知：给用户明确的执行结果
@@ -371,6 +367,13 @@ export default function App() {
             t('toast.confirmDoneDetail', { added: rep.added, name: rep.playlistName }),
           )
         }
+      } else {
+        // 全部未匹配/未选择：未创建歌单，同样以右上角通知呈现
+        notify(
+          'error',
+          t('toast.syncNoneTitle'),
+          t('toast.syncNoneDetail', { count: rep.failed.length || rep.total }),
+        )
       }
       const { task } = pendingConfirm
       handleTaskUpdate({
@@ -385,6 +388,8 @@ export default function App() {
         detail: rep.items,
         playlistId: rep.playlistId || undefined,
       })
+      // 写入完成后直接关闭确认弹窗，结果以上方通知呈现
+      resetConfirmSession()
     } catch (e) {
       const msg = e instanceof Error ? e.message : t('sync.failedGeneric')
       log.error('sync.confirm-failed', '确认同步失败', e, { targetPlatform: target })
@@ -564,10 +569,8 @@ export default function App() {
           onConfirm={() => void handleConfirmSync()}
           onCancel={() => void handleCancelPending()}
           onDismiss={handleDismissConfirm}
-          onDone={resetConfirmSession}
           confirming={confirming}
           confirmError={confirmError}
-          confirmResult={confirmResult}
         />
       )}
 

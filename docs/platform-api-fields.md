@@ -1,6 +1,6 @@
 # 上游平台接口出入参样例（实测）
 
-> 本文档记录 SyncWave 所接入的**上游平台接口**（QQ音乐本地服务、网易云 API 网关）的请求/响应样例，
+> 本文档记录 SyncWave 所接入的**上游平台接口**（QQ音乐本地服务、网易云 API 网关、酷狗库模式 API、Apple Music Web API）的请求/响应样例，
 > 供字段提取、模型映射与风格（genre）类需求参考。
 >
 > **样例真实性说明**（数据截至 2026-11-24）：
@@ -577,8 +577,9 @@
 | `genres[].id` | number | 流派 ID（正整数） |
 | `genres[].name` | string | 流派名称 |
 
-> QQ音乐风格结论：搜索条目 `genre` 数字实测恒为 `0`（晴天/青花瓷/双截棍均如此），不可用；
-> 当前可行路径为 `/song/genre` 按 songid 返回流派名称列表（需登录）。
+> QQ音乐风格结论：搜索条目 `genre` 数字实测恒为 `0`（晴天/青花瓷/双截棍均如此），不可用于风格判断。
+> 适配器当前直接映射 `item.genre`（结果恒为 undefined），**不再调用** `/song/genre` 接口——
+> 早期文档描述的「按 songid 查流派」路径已废弃（`/song/genre` 需登录且未接入，见第 6 节结论）。
 
 ---
 
@@ -1263,31 +1264,135 @@
 
 ---
 
-## 3. 项目字段映射（上游 → 领域模型）
+## 3. 酷狗音乐（📐 来源：kugoumusicapi 库模式，适配器实际调用与读取字段）
+
+> 接入方式：`kugoumusicapi`（github `MakcRe/KuGouMusicApi`）**库模式**——createRequire 直调扁平函数，
+> 不启动 HTTP 服务。统一返回结构 `{ status, body, cookie, headers }`，reject 时 `body` 携带 `error_code`/`error_msg`。
+> 凭证为 cookie 串（token 与设备指纹绑定），设备指纹（guid/mid/dev/dfid）持久化到 `userData/kugou-device.json`。
+
+### 3.1 登录（扫码）
+
+| 函数 | 上游接口 | 入参 | 出参（适配器读取） |
+|---|---|---|---|
+| `register_dev` | 设备注册 | `cookie`（空） | `data.dfid` —— 扫码前必须注册真实 dfid，未注册的 token 会被设备绑定风控拦截 |
+| `login_qr_key` | 二维码 key | `cookie`（空） | `data.qrcode` / `data.key` |
+| `login_qr_create` | 二维码图片 | `key`、`qrimg: true` | `data.base64` / `data.qrimg`（base64 dataURL，官方库本地生成） |
+| `login_qr_check` | 轮询 | `key`、`cookie`（空） | 状态码 **0=过期 / 1=等待 / 2=已扫待确认 / 4=成功**（适配器映射为基类统一状态机）；成功时 `data.token`/`data.userid` 组装 cookie 凭证 |
+
+### 3.2 登录态与保活
+
+| 函数 | 上游接口 | 说明 |
+|---|---|---|
+| `user_info` | get_my_userinfo（主路径，社区实测可用） | 明文平铺 `data.userid`/`nickname`（兼容 `data.info` 嵌套） |
+| `user_detail` | get_my_info（回退路径） | 部分协议版本为 `data.info` 嵌套，取 `info.userid` |
+| `login_token` | login_by_token（保活） | 返回 `data.token` 时续期成功；失败回退登录态校验 |
+
+会话失效错误码：`error_code` **20017/20018**（设备绑定问题）、**20028**（触发安全验证）。
+
+### 3.3 歌单（读）
+
+| 函数 | 上游接口 | 说明 |
+|---|---|---|
+| `user_playlist` | v7/get_all_list | 分页（page/pagesize=100，上限 50 页）。响应 `data.info`（自建）+ `data.other_special`（部分协议版本单独返回的收藏他人歌单）。条目字段：`listid`、`type`（**0=自建/系统收藏夹，1=收藏他人歌单**；`is_mine` 恒为 0 不可用）、`name`、`count`/`source_count`、`pic`/`imgurl`/`cover`（含 `{size}` 占位符需替换）、`encode_gcid`/`gcid`（分享页标识）、`list_create_gid`/`global_collection_id`（收藏歌单公开 id）、`list_create_userid`、`total_ver`（条目无该字段时写操作按官方实践传 0）、`from_listid`/`list_create_listid`（旧版分享 specialid）。**歌单列表仅显示 type≠1** |
+| `playlist_track_all_new` | 云歌单歌曲接口（App 现行端点，覆盖自建与收藏） | 入参 `listid`/`type`/分页（pagesize=300，上限 50 页），响应 `data.info`。条目字段：`hash`/`file_hash`/`song_hash`、`name`/`filename`（「歌手 - 标题.mp3」格式，无独立歌名/歌手）、`singerinfo`/`singer_info`（歌手数组）、`title`/`songname`、`album_id`、`mixsongid`、`fileid`/`file_id`（删歌用）、`timelen`（毫秒；个别为微秒脏值，>24h 需换算/置空）、`albuminfo.name`（实测唯一携带专辑名的位置）、`trans_param.union_cover`/`cover`/`img`/`pic`（封面，缺省按 hash 拼 `https://imge.kugou.com/stdmusic/240/{hash}.jpg`） |
+| `playlist_track_all` | 公开歌单歌曲接口 | 入参 `id`（= global_collection_id）、分页，响应 **`data.songs`**（无 info 字段）；`songs` 混有 `{fileid, shield}` 屏蔽位条目，按缺 `hash` 过滤；`data.count` 为总数 |
+
+歌曲拉取双路径：收藏歌单（type=1）先走公开接口（listid 拉不到），自建歌单先走云歌单接口；任一路径返回空自动回退另一路径。
+
+### 3.4 搜索
+
+| 函数 | 上游接口 | 说明 |
+|---|---|---|
+| `search` | 歌曲搜索 | 入参 `keyword`/`page`/`pagesize`；响应 `data.lists[0]` 为条目数组。条目字段：`FileHash`/`filehash`/`hash`（标题可能带 `<em>` 高亮标签需剥离）、`SongName`/`songname`/`name`、`SingerName`（歌手）、`AlbumID`、`MixSongID`。搜索错误分类：`error_code=1002` 为高频风控限流（rate-limited），HTTP 5xx/网络错误可重试 |
+
+### 3.5 歌单（写，均需登录）
+
+| 函数 | 上游接口 | 入参 | 说明 |
+|---|---|---|---|
+| `playlist_add` | 创建歌单 | `name`（trim 后）、`type: 0` | 返回新歌单 listid |
+| `playlist_tracks_add` | 添加歌曲 | `listid`、`data` | `data` 为 `名称\|hash\|album_id\|mixsongid` 格式，多条逗号拼接，每批 ≤100；名称中的 `\|`/`,` 替换为空格；元数据在搜索/拉歌单时已缓存 |
+| `playlist_tracks_del` | 移除歌曲 | `listid`、`fileids` | **按云歌单条目 fileid 而非 hash**，逗号拼接；缓存缺失时先拉歌单歌曲填充 |
+| `playlist_update` | 重命名 | `listid`、`name`、`type`、`total_ver` | 必须携带歌单 type 与版本号 total_ver |
+| `playlist_del` | 删除歌单 | `listid` | — |
+
+---
+
+## 4. Apple Music（📐 来源：社区路径 Web API，适配器实际调用与读取字段）
+
+> 接入方式：社区路径。developer token 从 `music.apple.com` 网页前端 bundle 提取（JWT `payload.iss === 'AMPWebPlay'`），
+> 用户凭证为登录窗口 cookie `media-user-token`。**读接口走官方主机 `api.music.apple.com`，
+> 写接口必须走 `amp-api.music.apple.com`**（删除在官方主机固定 401）。仅 `/v1/me/` 路径带 `music-user-token` 请求头。
+
+### 4.1 登录
+
+- **无扫码接口**：`createQrLogin`/`checkQrLogin` 直接抛错，UI 隐藏扫码渠道，走应用内网页登录窗口。
+- 凭证 = `{ mediaUserToken, developerToken, devTokenAt }` 序列化串；developer token 过期自动重抓（401 时强制重抓重试一次）。
+
+### 4.2 登录态与保活
+
+| 接口 | 说明 |
+|---|---|
+| `GET /v1/me/storefront` | 登录态校验；`data[0].id` 为 storefront（如 `cn`），缓存供搜索拼接目录路径。403 判定登录失效；429 抛 rate-limited |
+| 保活 | 校验 developer token 时效 → 必要时重抓 → 调 storefront 校验；token 更新时返回新凭证由主进程持久化 |
+
+### 4.3 歌单与歌曲（读，均 `/v1/me/` 需用户 token）
+
+| 接口 | 说明 |
+|---|---|
+| `GET /v1/me/library/playlists?limit=100&offset=0` | 分页经响应 `next` 游标（防御上限 50 页）。条目：`id`（`pl.u-` 前缀=自建，`pl.` 前缀=官方）、`attributes.name`、`attributes.artwork`（封面）、`attributes.trackCount`（**官方列表接口不提供资料库歌单歌曲数**，缺省让 UI 留空） |
+| `GET /v1/me/library/playlists/{id}/tracks?limit=100` | 分页经 `next`（防御上限 100 页）。歌曲条目：`attributes.playParams.catalogId`（优先作 id，可跨端写入，无则退条目 `id`）、`attributes.name`、`attributes.artistName`、`attributes.albumName`、`attributes.artwork`、`attributes.durationInMillis`、`attributes.genreNames[]`（取第一个） |
+
+### 4.4 搜索
+
+| 接口 | 说明 |
+|---|---|
+| `GET /v1/catalog/{storefront}/search?term=<kw>&types=songs&limit=<n>` | **limit 上限 25**（超限 400 Invalid Parameter Value，适配器自动封顶）；搜索词把 ` - ` 替换为空格（整串带连字符易命中 Live 版）。响应 `results.songs.data` 条目与 4.3 歌曲条目同构。错误分类：5xx/无状态码可重试，429 rate-limited，403 认证失效 |
+
+### 4.5 歌单（写，走 `amp-api.music.apple.com`）
+
+| 接口 | 请求体 | 说明 |
+|---|---|---|
+| `POST /v1/me/library/playlists` | `{ attributes: { name, isPublic: false } }` | 创建；响应 `data[0].id`（形如 `p.xxx`） |
+| `POST /v1/me/library/playlists/{id}/tracks` | `{ data: [{ id, type: 'songs' }] }` | 追加曲目，**每批 ≤100** 分批写入；新建歌单 iCloud 传播延迟，404 时等 1.5s 重试一次 |
+| `PATCH /v1/me/library/playlists/{id}` | `{ attributes: { name } }` | 重命名（社区实测返回 204） |
+| `DELETE /v1/me/library/playlists/{id}` | — | 删除（实测官方主机固定 401，必须走 amp-api） |
+| 移除歌曲 | — | **官方 API 无此端点**，`unsupportedOperations.removeSongs`，UI 隐藏该操作 |
+
+---
+
+## 5. 项目字段映射（上游 → 领域模型）
 
 | 上游平台 | 上游字段 | 领域模型字段 |
 |---|---|---|
-| QQ音乐 / 网易云 | `id` / `songid` / `mid` | `PlatformSong.id` |
-| QQ音乐 / 网易云 | `name` / `title` / `songname` | `PlatformSong.title` |
-| QQ音乐 / 网易云 | `singer[].name` / `ar[].name` | `PlatformSong.artist` |
-| QQ音乐 / 网易云 | `album.name` / `al.name` | `PlatformSong.album` |
+| QQ音乐 / 网易云 / 酷狗 / Apple Music | `id` / `songid` / `mid` / `FileHash`(hash) / `catalogId` | `PlatformSong.id` |
+| QQ音乐 / 网易云 / 酷狗 / Apple Music | `name` / `title` / `songname` / `SongName` / `attributes.name` | `PlatformSong.title` |
+| QQ音乐 / 网易云 / 酷狗 / Apple Music | `singer[].name` / `ar[].name` / `SingerName` / `attributes.artistName` | `PlatformSong.artist` |
+| QQ音乐 / 网易云 / 酷狗 / Apple Music | `album.name` / `al.name` / `albuminfo.name` / `attributes.albumName` | `PlatformSong.album` |
 | QQ音乐 | `album.picUrl`（搜索条目无此字段，用 `album.pmid` 拼图床 URL：`https://y.gtimg.cn/music/photo_new/T002R500x500M000{pmid}.jpg`） | `PlatformSong.coverUrl` |
 | 网易云 | `al.picUrl` | `PlatformSong.coverUrl` |
+| 酷狗 | `pic`/`cover`/`trans_param.union_cover`（`{size}` 占位符替换为具体尺寸；缺省按 hash 拼 imge.kugou.com 图床） | `PlatformSong.coverUrl` |
+| Apple Music | `attributes.artwork`（拼图 URL） | `PlatformSong.coverUrl` |
 | QQ音乐 / 网易云 | `interval`(秒) / `dt`(毫秒) | `PlatformSong.durationMs` |
-| QQ音乐 | `genre`（搜索条目恒为 0，实际走 `/song/genre` 接口） | `PlatformSong.genre`（网易云无此字段） |
+| 酷狗 | `timelen`（毫秒；微秒脏值需换算，>24h 置空） / `duration`(秒) | `PlatformSong.durationMs` |
+| Apple Music | `attributes.durationInMillis` | `PlatformSong.durationMs` |
+| QQ音乐 | `genre`（搜索条目恒为 0 → 实际恒 undefined；**不再调用** `/song/genre`） | `PlatformSong.genre` |
+| Apple Music | `attributes.genreNames[0]` | `PlatformSong.genre` |
+| （网易云 / 酷狗） | （上游不提供 genre 字段） | `PlatformSong.genre`（恒 undefined） |
 
-## 4. 实测结论与待确认
+## 6. 实测结论与待确认
 
-实测结论（2026-11-24）：
+实测结论：
 
-1. QQ音乐 `/search` 的 `item_song` 条目**携带 `genre` 字段但恒为 `0`**（晴天/青花瓷/双截棍均实测为 0），不可用于风格判断。
+1. QQ音乐 `/search` 的 `item_song` 条目**携带 `genre` 字段但恒为 `0`**（晴天/青花瓷/双截棍均实测为 0），不可用于风格判断；适配器直接映射 `item.genre`（结果恒 undefined），`/song/genre` 接口未接入。
 2. QQ音乐搜索条目 `album` 对象**无 `picUrl`**，仅有 `pmid`，封面必须拼图床 URL。
-3. 网易云搜索与歌单详情条目均**无 `genre` 字段**，`PlatformSong.genre` 恒为 undefined。
+3. 网易云搜索与歌单详情条目均**无 `genre` 字段**（适配器虽解析 `item.genre`，上游不返回故恒为 undefined）；酷狗同样无 genre 字段；四平台中仅 Apple Music 提供 `genreNames`。
 4. 需登录接口未登录时，QQ音乐 SDK 返回 `{ code: 401, kind, errorKey, message, retryable }` 格式（`/user/*` 部分路由只返回 `{ code: 401, message }`）。
+5. 酷狗（库模式）：歌单条目 `type` 实测 0=自建/系统收藏夹、1=收藏他人歌单，`is_mine` 恒为 0；搜索条目标题带 `<em>` 高亮标签需剥离；云歌单条目 `timelen` 存在微秒级脏值；写接口字段要求（fileid 删歌、`名称|hash|album_id|mixsongid` 加歌、rename 带 total_ver）均来自官方库实践。
+6. Apple Music：读接口官方主机可用；写接口（含删除）必须走 `amp-api.music.apple.com`（删除在官方主机固定 401）；官方 API 无「移除歌曲」端点；资料库歌单列表无歌曲数；catalog search limit 上限 25。
 
 待确认（需登录态抓包）：
 
-1. QQ音乐 `/song/genre?id=` 登录后的成功响应（流派名称列表的真实值）。
-2. QQ音乐 `/user/playlist`、`/user/playlist-detail` 登录后的完整条目字段（上游原样透传，本文档仅列 SDK 读取的字段）。
-3. 各写入接口（QQ音乐 create/rename/delete/tracks、网易云 create/tracks/update/remove）的真实响应值。
+1. QQ音乐 `/user/playlist`、`/user/playlist-detail` 登录后的完整条目字段（上游原样透传，本文档仅列 SDK 读取的字段）。
+2. 各写入接口（QQ音乐 create/rename/delete/tracks、网易云 create/tracks/update/remove、酷狗 add/del/update/create、Apple Music create/tracks/patch/delete）的真实响应值。
+3. 酷狗库模式各接口的完整响应体（本文档仅列适配器实际读取的字段，上游可能携带更多字段）。
 4. 网易云 `trackIds[]` 元素中 `sc`/`f`/`sr`/`dpr`/`tr`/`lr` 字段的含义（未公开文档）。

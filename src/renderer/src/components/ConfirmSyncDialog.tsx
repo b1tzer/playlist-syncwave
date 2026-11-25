@@ -1,10 +1,10 @@
-import { useState, type ReactNode } from 'react'
-import type { PendingConfirmSession, SyncReport } from '@core/models/sync'
-import { createRendererLogger } from '../logging/rendererLogger'
-import { useI18n } from '../i18n'
-import { failedDetailLines, formatDuration } from '../sync/helpers'
+import { useState, type ReactNode } from "react";
+import type { PendingConfirmSession } from "@core/models/sync";
+import { createRendererLogger } from "../logging/rendererLogger";
+import { useI18n } from "../i18n";
+import { formatDuration } from "../sync/helpers";
 
-const log = createRendererLogger('renderer.confirm-dialog')
+const log = createRendererLogger("renderer.confirm-dialog");
 
 /**
  * 候选版本展示模板：弹窗渲染所需的固定参数（字段缺省为空，模板不变）。
@@ -12,44 +12,41 @@ const log = createRendererLogger('renderer.confirm-dialog')
  */
 export interface CandidateDisplayTemplate {
   /** 候选歌曲 ID */
-  id: string
+  id: string;
   /** 候选歌名 */
-  title: string
+  title: string;
   /** 候选歌手 */
-  artist: string
+  artist: string;
   /** 所属专辑（可为空） */
-  album?: string
+  album?: string;
   /** 封面图 URL（可为空，空则显示占位图标） */
-  coverUrl?: string
+  coverUrl?: string;
   /** 时长毫秒（可为空） */
-  durationMs?: number
+  durationMs?: number;
 }
 
 /** 目标歌曲模板：用户歌单中的原始条目，用于与候选比对高亮 */
 export interface TargetTrackTemplate {
-  title: string
-  artist?: string
+  title: string;
+  artist?: string;
 }
 
 interface ConfirmSyncDialogProps {
-  session: PendingConfirmSession
+  session: PendingConfirmSession;
   /** 每首的选择结果：choiceIndex -> 候选歌曲 id */
-  selections: Record<number, string>
+  selections: Record<number, string>;
   /** 用户显式跳过的 choice：choiceIndex -> true */
-  skips: Record<number, true>
-  onSelect: (index: number, songId: string) => void
+  skips: Record<number, true>;
+  onSelect: (index: number, songId: string) => void;
   /** 跳过当前这首（不写入任何版本） */
-  onSkip: (index: number) => void
-  onConfirm: () => void
+  onSkip: (index: number) => void;
+  onConfirm: () => void;
   /** 放弃整个会话（任务归为中断） */
-  onCancel: () => void
+  onCancel: () => void;
   /** 稍后处理：仅收起弹窗，会话保留 */
-  onDismiss: () => void
-  /** 确认写入完成后关闭弹窗 */
-  onDone: () => void
-  confirming: boolean
-  confirmError: string
-  confirmResult: SyncReport | null
+  onDismiss: () => void;
+  confirming: boolean;
+  confirmError: string;
 }
 
 /** 文本与目标一致处（忽略大小写的子串）高亮 */
@@ -58,24 +55,24 @@ function HighlightText({
   target,
   className,
 }: {
-  text: string
-  target?: string
-  className: string
+  text: string;
+  target?: string;
+  className: string;
 }): ReactNode {
-  if (!target) return <>{text}</>
-  const idx = text.toLocaleLowerCase().indexOf(target.toLocaleLowerCase())
-  if (idx === -1) return <>{text}</>
+  if (!target) return <>{text}</>;
+  const idx = text.toLocaleLowerCase().indexOf(target.toLocaleLowerCase());
+  if (idx === -1) return <>{text}</>;
   return (
     <>
       {text.slice(0, idx)}
       <span className={className}>{text.slice(idx, idx + target.length)}</span>
       {text.slice(idx + target.length)}
     </>
-  )
+  );
 }
 
 /** 歌手串切分符：与 core 匹配逻辑（artistParts）保持一致，不切斜杠（乐队名常见斜杠） */
-const ARTIST_SPLIT = /feat\.?|ft\.?|featuring|&|,|;|、/i
+const ARTIST_SPLIT = /feat\.?|ft\.?|featuring|&|,|;|、/i;
 
 /**
  * 歌手串高亮：候选歌手与目标可能使用不同分隔符（& / , / feat 等），
@@ -86,14 +83,14 @@ function HighlightArtist({
   target,
   className,
 }: {
-  text: string
-  target?: string
-  className: string
+  text: string;
+  target?: string;
+  className: string;
 }): ReactNode {
-  if (!target) return <>{text}</>
-  const lower = text.toLocaleLowerCase()
+  if (!target) return <>{text}</>;
+  const lower = text.toLocaleLowerCase();
   // 整体一致时优先高亮连续子串
-  const whole = lower.indexOf(target.toLocaleLowerCase())
+  const whole = lower.indexOf(target.toLocaleLowerCase());
   const ranges: Array<[number, number]> =
     whole !== -1
       ? [[whole, whole + target.length]]
@@ -102,42 +99,46 @@ function HighlightArtist({
           .map((p) => p.trim())
           .filter(Boolean)
           .map((part) => {
-            const idx = lower.indexOf(part.toLocaleLowerCase())
-            return idx === -1 ? null : ([idx, idx + part.length] as [number, number])
+            const idx = lower.indexOf(part.toLocaleLowerCase());
+            return idx === -1
+              ? null
+              : ([idx, idx + part.length] as [number, number]);
           })
-          .filter((r): r is [number, number] => r !== null)
-  if (ranges.length === 0) return <>{text}</>
-  ranges.sort((a, b) => a[0] - b[0])
-  const merged: Array<[number, number]> = []
+          .filter((r): r is [number, number] => r !== null);
+  if (ranges.length === 0) return <>{text}</>;
+  ranges.sort((a, b) => a[0] - b[0]);
+  const merged: Array<[number, number]> = [];
   for (const r of ranges) {
-    const last = merged[merged.length - 1]
-    if (last && r[0] <= last[1]) last[1] = Math.max(last[1], r[1])
-    else merged.push([r[0], r[1]])
+    const last = merged[merged.length - 1];
+    if (last && r[0] <= last[1]) last[1] = Math.max(last[1], r[1]);
+    else merged.push([r[0], r[1]]);
   }
-  const nodes: ReactNode[] = []
-  let cursor = 0
+  const nodes: ReactNode[] = [];
+  let cursor = 0;
   for (const [start, end] of merged) {
-    if (start > cursor) nodes.push(text.slice(cursor, start))
+    if (start > cursor) nodes.push(text.slice(cursor, start));
     nodes.push(
       <span key={start} className={className}>
         {text.slice(start, end)}
       </span>,
-    )
-    cursor = end
+    );
+    cursor = end;
   }
-  if (cursor < text.length) nodes.push(text.slice(cursor))
-  return <>{nodes}</>
+  if (cursor < text.length) nodes.push(text.slice(cursor));
+  return <>{nodes}</>;
 }
 
 /** 封面图组件：防盗链 referer 置空，加载失败回退占位图标 */
 function Cover({ template }: { template: CandidateDisplayTemplate }) {
-  const [failed, setFailed] = useState(false)
+  const [failed, setFailed] = useState(false);
   if (!template.coverUrl || failed) {
     return (
       <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-md bg-surface-container-highest">
-        <span className="material-symbols-outlined text-2xl text-outline">music_note</span>
+        <span className="material-symbols-outlined text-2xl text-outline">
+          music_note
+        </span>
       </span>
-    )
+    );
   }
   return (
     <img
@@ -148,7 +149,7 @@ function Cover({ template }: { template: CandidateDisplayTemplate }) {
       onError={() => setFailed(true)}
       className="h-14 w-14 shrink-0 rounded-md object-cover"
     />
-  )
+  );
 }
 
 /** 候选卡片：按固定模板参数渲染，歌名/歌手与目标一致处高亮 */
@@ -158,18 +159,18 @@ function CandidateCard({
   selected,
   onPick,
 }: {
-  candidate: CandidateDisplayTemplate
-  target: TargetTrackTemplate
-  selected: boolean
-  onPick: (songId: string) => void
+  candidate: CandidateDisplayTemplate;
+  target: TargetTrackTemplate;
+  selected: boolean;
+  onPick: (songId: string) => void;
 }) {
   return (
     <button
       onClick={() => onPick(candidate.id)}
       className={`flex w-full items-center gap-3 rounded-lg border p-2.5 text-left transition-colors ${
         selected
-          ? 'border-primary bg-primary/10'
-          : 'border-outline-variant bg-surface-container-lowest hover:border-primary'
+          ? "border-primary bg-primary/10"
+          : "border-outline-variant bg-surface-container-lowest hover:border-primary"
       }`}
     >
       <Cover template={candidate} />
@@ -182,7 +183,11 @@ function CandidateCard({
           />
         </span>
         <span className="block truncate font-label-sm text-label-sm text-on-surface-variant">
-          <HighlightArtist text={candidate.artist} target={target.artist} className="text-primary" />
+          <HighlightArtist
+            text={candidate.artist}
+            target={target.artist}
+            className="text-primary"
+          />
         </span>
         {candidate.album && (
           <span className="block truncate font-label-sm text-label-sm text-outline">
@@ -196,10 +201,12 @@ function CandidateCard({
         </span>
       )}
       {selected && (
-        <span className="material-symbols-outlined shrink-0 text-primary">check_circle</span>
+        <span className="material-symbols-outlined shrink-0 text-primary">
+          check_circle
+        </span>
       )}
     </button>
-  )
+  );
 }
 
 /**
@@ -217,213 +224,212 @@ export default function ConfirmSyncDialog({
   onConfirm,
   onCancel,
   onDismiss,
-  onDone,
   confirming,
   confirmError,
-  confirmResult,
 }: ConfirmSyncDialogProps) {
-  const { t } = useI18n()
-  const [current, setCurrent] = useState(0)
+  const { t } = useI18n();
+  const [current, setCurrent] = useState(0);
   /** 「放弃选择」二次确认：首次点击进入待确认态 */
-  const [abandonConfirm, setAbandonConfirm] = useState(false)
+  const [abandonConfirm, setAbandonConfirm] = useState(false);
 
-  const { choices } = session
-  const total = choices.length
-  const choice = choices[Math.min(current, total - 1)]
-  const skippedThis = skips[current] === true
+  const { choices } = session;
+  const total = choices.length;
+  const choice = choices[Math.min(current, total - 1)];
+  const skippedThis = skips[current] === true;
   // 每首歌都已选定或已跳过时，才允许确认创建歌单
   const allDecided = choices.every(
     (_, i) => selections[i] !== undefined || skips[i] === true,
-  )
+  );
 
   // 目标歌曲模板（固定参数，供高亮比对与展示）
-  const target: TargetTrackTemplate = { title: choice.query.title, artist: choice.query.artist }
+  const target: TargetTrackTemplate = {
+    title: choice.query.title,
+    artist: choice.query.artist,
+  };
 
   const handlePick = (songId: string) => {
-    log.info('confirm.pick', '选择候选版本', {
+    log.info("confirm.pick", "选择候选版本", {
       title: choice.query.title,
       songId,
-    })
-    onSelect(current, songId)
+    });
+    onSelect(current, songId);
     // 选完自动进入下一首（最后一首停留等待确认）
-    if (current < total - 1) setCurrent((c) => Math.min(c + 1, total - 1))
-  }
+    if (current < total - 1) setCurrent((c) => Math.min(c + 1, total - 1));
+  };
 
   /** 跳过当前这首：明确放弃该歌，不写入任何版本 */
   const handleSkip = () => {
-    log.info('confirm.skip', '跳过当前歌曲', { title: choice.query.title, index: current })
-    onSkip(current)
-    if (current < total - 1) setCurrent((c) => Math.min(c + 1, total - 1))
-  }
+    log.info("confirm.skip", "跳过当前歌曲", {
+      title: choice.query.title,
+      index: current,
+    });
+    onSkip(current);
+    if (current < total - 1) setCurrent((c) => Math.min(c + 1, total - 1));
+  };
 
   const handlePrevious = () => {
-    log.debug('confirm.previous', '回看上一首', { index: current })
-    setCurrent((c) => Math.max(0, c - 1))
-  }
+    log.debug("confirm.previous", "回看上一首", { index: current });
+    setCurrent((c) => Math.max(0, c - 1));
+  };
 
   const handleAbandon = () => {
     if (abandonConfirm) {
-      setAbandonConfirm(false)
-      onCancel()
+      setAbandonConfirm(false);
+      onCancel();
     } else {
-      setAbandonConfirm(true)
+      setAbandonConfirm(true);
     }
-  }
+  };
 
   return (
     <div className="dialog-backdrop-enter fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
       <div className="dialog-panel-enter flex h-[32rem] max-h-[85vh] w-[36rem] flex-col overflow-hidden rounded-lg border border-outline-variant bg-surface-container">
-        {confirmResult ? (
-          // --- 完成态：同步结果摘要 ---
-          <div className="p-5">
+        {/* 选择态：头部与底部固定，仅候选区域滚动 */}
+        <>
+          <div className="flex items-center justify-between border-b border-outline-variant px-5 py-3">
             <div className="flex items-center gap-2">
-              <span className="material-symbols-outlined text-primary">task_alt</span>
-              <p className="font-body-md text-body-md font-medium">{t('textCreator.syncDone')}</p>
+              <span className="material-symbols-outlined text-tertiary">
+                playlist_add_check
+              </span>
+              <p className="font-body-md text-body-md font-medium">
+                {t("confirmDialog.title")}
+              </p>
             </div>
-            <p className="mt-2 font-label-md text-label-md text-on-surface">
-              {t('textCreator.syncDoneDetail', {
-                added: confirmResult.added,
-                total: confirmResult.total,
-                name: confirmResult.playlistName,
-              })}
-            </p>
-            {confirmResult.failed.length > 0 && (
-              <ul className="mt-2 max-h-40 space-y-1 overflow-y-auto font-label-sm text-label-sm text-error">
-                {failedDetailLines(confirmResult.failed).map((line, i) => (
-                  <li key={i}>· {line}</li>
-                ))}
-              </ul>
-            )}
-            <button
-              onClick={onDone}
-              className="mt-4 flex w-full items-center justify-center gap-1.5 rounded-lg bg-primary px-4 py-2 font-label-md text-label-md font-medium text-on-primary transition-colors hover:bg-primary/85"
-            >
-              <span className="material-symbols-outlined text-sm">check</span>
-              {t('confirmDialog.done')}
-            </button>
-          </div>
-        ) : (
-          // --- 选择态：头部与底部固定，仅候选区域滚动 ---
-          <>
-            <div className="flex items-center justify-between border-b border-outline-variant px-5 py-3">
-              <div className="flex items-center gap-2">
-                <span className="material-symbols-outlined text-tertiary">playlist_add_check</span>
-                <p className="font-body-md text-body-md font-medium">{t('confirmDialog.title')}</p>
-              </div>
-              <div className="flex items-center gap-3">
-                <span className="font-label-sm text-label-sm text-on-surface-variant">
-                  {t('confirmDialog.step', { current: current + 1, total })}
+            <div className="flex items-center gap-3">
+              <span className="font-label-sm text-label-sm text-on-surface-variant">
+                {t("confirmDialog.step", { current: current + 1, total })}
+              </span>
+              {/* 稍后处理：仅收起弹窗，会话保留，可随时从同步历史重新打开 */}
+              <button
+                onClick={onDismiss}
+                disabled={confirming}
+                title={t("confirmDialog.dismiss")}
+                className="flex items-center gap-1 rounded-md border border-outline-variant px-2 py-1 font-label-sm text-label-sm text-on-surface-variant transition-colors hover:bg-surface-container-highest hover:text-on-surface disabled:opacity-40"
+              >
+                <span className="material-symbols-outlined text-sm">
+                  schedule
                 </span>
-                {/* 稍后处理：仅收起弹窗，会话保留，可随时从同步历史重新打开 */}
-                <button
-                  onClick={onDismiss}
-                  disabled={confirming}
-                  title={t('confirmDialog.dismiss')}
-                  className="flex items-center gap-1 rounded-md border border-outline-variant px-2 py-1 font-label-sm text-label-sm text-on-surface-variant transition-colors hover:bg-surface-container-highest hover:text-on-surface disabled:opacity-40"
-                >
-                  <span className="material-symbols-outlined text-sm">schedule</span>
-                  {t('confirmDialog.dismiss')}
-                </button>
-              </div>
+                {t("confirmDialog.dismiss")}
+              </button>
             </div>
+          </div>
 
-            <div className="min-h-0 flex-1 overflow-y-auto p-5">
-              {/* 目标歌曲（用户歌单里的歌名与歌手） */}
-              <div className="rounded-lg border border-outline-variant bg-surface-container-low p-3">
-                <p className="font-label-mono text-label-mono text-outline">TARGET TRACK</p>
-                <p className="mt-1 font-body-md text-body-md font-medium">{target.title}</p>
-                {target.artist && (
-                  <p className="font-label-md text-label-md text-on-surface-variant">
-                    {target.artist}
-                  </p>
-                )}
-              </div>
-
-              {skippedThis && (
-                <p className="mt-3 flex items-center gap-1.5 rounded-lg border border-secondary/40 bg-secondary/10 px-3 py-2 font-label-sm text-label-sm text-secondary">
-                  <span className="material-symbols-outlined text-sm">skip_next</span>
-                  {t('confirmDialog.skippedNote')}
+          <div className="min-h-0 flex-1 overflow-y-auto p-5">
+            {/* 目标歌曲（用户歌单里的歌名与歌手） */}
+            <div className="rounded-lg border border-outline-variant bg-surface-container-low p-3">
+              <p className="font-label-mono text-label-mono text-outline">
+                TARGET TRACK
+              </p>
+              <p className="mt-1 font-body-md text-body-md font-medium">
+                {target.title}
+              </p>
+              {target.artist && (
+                <p className="font-label-md text-label-md text-on-surface-variant">
+                  {target.artist}
                 </p>
               )}
-
-              <p className="mt-4 font-label-sm text-label-sm text-on-surface-variant">
-                {t('confirmDialog.pickHint')}
-              </p>
-
-              {/* 候选版本列表：按固定模板渲染（封面 + 歌名 + 歌手 + 专辑 + 时长） */}
-              <ul className="mt-2 space-y-2">
-                {choice.candidates.map((c) => (
-                  <li key={c.id}>
-                    <CandidateCard
-                      candidate={c}
-                      target={target}
-                      selected={selections[current] === c.id}
-                      onPick={handlePick}
-                    />
-                  </li>
-                ))}
-              </ul>
-
-              {/* 跳过选项：让用户明确知道跳过的是哪一首；已跳过时可点击候选重新选择 */}
-              <button
-                onClick={handleSkip}
-                disabled={confirming || skippedThis}
-                title={skippedThis ? t('confirmDialog.skippedNote') : t('confirmDialog.skipHint')}
-                className={`mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed px-3 py-2 font-label-md text-label-md transition-colors ${
-                  skippedThis
-                    ? 'border-secondary/50 bg-secondary/10 text-secondary'
-                    : 'border-outline-variant text-on-surface-variant hover:border-secondary hover:text-secondary'
-                } disabled:opacity-60`}
-              >
-                <span className="material-symbols-outlined text-sm">skip_next</span>
-                {skippedThis ? t('confirmDialog.skippedNote') : t('confirmDialog.skipThis')}
-              </button>
             </div>
 
-            {/* 底部操作：上一首 / 取消 / 确认 */}
-            <div className="flex items-center gap-2 border-t border-outline-variant px-5 py-3">
-              <button
-                onClick={handlePrevious}
-                disabled={current === 0 || confirming}
-                className="flex items-center gap-1 rounded-lg border border-outline-variant px-3 py-2 font-label-md text-label-md text-on-surface-variant transition-colors hover:bg-surface-container-highest hover:text-on-surface disabled:opacity-40"
-              >
-                <span className="material-symbols-outlined text-sm">arrow_back</span>
-                {t('confirmDialog.previous')}
-              </button>
-              <button
-                onClick={handleAbandon}
-                disabled={confirming}
-                className={`flex items-center gap-1 rounded-lg border px-3 py-2 font-label-md text-label-md transition-colors disabled:opacity-40 ${
-                  abandonConfirm
-                    ? 'border-error bg-error/10 text-error hover:bg-error/15'
-                    : 'border-outline-variant text-on-surface-variant hover:bg-surface-container-highest hover:text-on-surface'
-                }`}
-              >
+            {skippedThis && (
+              <p className="mt-3 flex items-center gap-1.5 rounded-lg border border-secondary/40 bg-secondary/10 px-3 py-2 font-label-sm text-label-sm text-secondary">
                 <span className="material-symbols-outlined text-sm">
-                  {abandonConfirm ? 'warning' : 'close'}
+                  skip_next
                 </span>
-                {abandonConfirm ? t('confirmDialog.abandonConfirm') : t('confirmDialog.abandon')}
-              </button>
-              <button
-                onClick={onConfirm}
-                disabled={confirming || !allDecided}
-                className="ml-auto flex items-center gap-1.5 rounded-lg bg-primary px-4 py-2 font-label-md text-label-md font-medium text-on-primary transition-colors hover:bg-primary/85 disabled:opacity-40"
-              >
-                <span className="material-symbols-outlined text-sm">
-                  {confirming ? 'progress_activity' : 'task_alt'}
-                </span>
-                {confirming ? t('confirmDialog.confirming') : t('textCreator.confirmAndCreate')}
-              </button>
-            </div>
-
-            {confirmError && (
-              <p className="border-t border-outline-variant px-5 py-2 font-label-sm text-label-sm text-error">
-                {confirmError}
+                {t("confirmDialog.skippedNote")}
               </p>
             )}
-          </>
-        )}
+
+            <p className="mt-4 font-label-sm text-label-sm text-on-surface-variant">
+              {t("confirmDialog.pickHint")}
+            </p>
+
+            {/* 候选版本列表：按固定模板渲染（封面 + 歌名 + 歌手 + 专辑 + 时长） */}
+            <ul className="mt-2 space-y-2">
+              {choice.candidates.map((c) => (
+                <li key={c.id}>
+                  <CandidateCard
+                    candidate={c}
+                    target={target}
+                    selected={selections[current] === c.id}
+                    onPick={handlePick}
+                  />
+                </li>
+              ))}
+            </ul>
+
+            {/* 跳过选项：让用户明确知道跳过的是哪一首；已跳过时可点击候选重新选择 */}
+            <button
+              onClick={handleSkip}
+              disabled={confirming || skippedThis}
+              title={
+                skippedThis
+                  ? t("confirmDialog.skippedNote")
+                  : t("confirmDialog.skipHint")
+              }
+              className={`mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed px-3 py-2 font-label-md text-label-md transition-colors ${
+                skippedThis
+                  ? "border-secondary/50 bg-secondary/10 text-secondary"
+                  : "border-outline-variant text-on-surface-variant hover:border-secondary hover:text-secondary"
+              } disabled:opacity-60`}
+            >
+              <span className="material-symbols-outlined text-sm">
+                skip_next
+              </span>
+              {skippedThis
+                ? t("confirmDialog.skippedNote")
+                : t("confirmDialog.skipThis")}
+            </button>
+          </div>
+
+          {/* 底部操作：上一首 / 取消 / 确认 */}
+          <div className="flex items-center gap-2 border-t border-outline-variant px-5 py-3">
+            <button
+              onClick={handlePrevious}
+              disabled={current === 0 || confirming}
+              className="flex items-center gap-1 rounded-lg border border-outline-variant px-3 py-2 font-label-md text-label-md text-on-surface-variant transition-colors hover:bg-surface-container-highest hover:text-on-surface disabled:opacity-40"
+            >
+              <span className="material-symbols-outlined text-sm">
+                arrow_back
+              </span>
+              {t("confirmDialog.previous")}
+            </button>
+            <button
+              onClick={handleAbandon}
+              disabled={confirming}
+              className={`flex items-center gap-1 rounded-lg border px-3 py-2 font-label-md text-label-md transition-colors disabled:opacity-40 ${
+                abandonConfirm
+                  ? "border-error bg-error/10 text-error hover:bg-error/15"
+                  : "border-outline-variant text-on-surface-variant hover:bg-surface-container-highest hover:text-on-surface"
+              }`}
+            >
+              <span className="material-symbols-outlined text-sm">
+                {abandonConfirm ? "warning" : "close"}
+              </span>
+              {abandonConfirm
+                ? t("confirmDialog.abandonConfirm")
+                : t("confirmDialog.abandon")}
+            </button>
+            <button
+              onClick={onConfirm}
+              disabled={confirming || !allDecided}
+              className="ml-auto flex items-center gap-1.5 rounded-lg bg-primary px-4 py-2 font-label-md text-label-md font-medium text-on-primary transition-colors hover:bg-primary/85 disabled:opacity-40"
+            >
+              <span className="material-symbols-outlined text-sm">
+                {confirming ? "progress_activity" : "task_alt"}
+              </span>
+              {confirming
+                ? t("confirmDialog.confirming")
+                : t("textCreator.confirmAndCreate")}
+            </button>
+          </div>
+
+          {confirmError && (
+            <p className="border-t border-outline-variant px-5 py-2 font-label-sm text-label-sm text-error">
+              {confirmError}
+            </p>
+          )}
+        </>
       </div>
     </div>
-  )
+  );
 }
