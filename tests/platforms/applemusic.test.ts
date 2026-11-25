@@ -61,7 +61,7 @@ function webFrontResponder(url: URL): Response | null {
 const STOREFRONT = { data: [{ id: 'cn', type: 'storefronts' }] }
 
 const PLAYLIST = {
-  id: 'p.ABC123',
+  id: 'pl.u-ABC123',
   type: 'library-playlists',
   attributes: { name: '我的歌单', artwork: { url: 'https://x/{w}x{h}bb.jpg' } },
 }
@@ -128,16 +128,31 @@ describe('AppleMusicAdapter — 社区路径 HTTP 映射', () => {
     const playlists = await adapter.getUserPlaylists(cred(), 'cn')
     expect(playlists).toHaveLength(1)
     expect(playlists[0]).toMatchObject({
-      id: 'p.ABC123',
+      id: 'pl.u-ABC123',
       name: '我的歌单',
       coverUrl: 'https://x/300x300bb.jpg',
-      webUrl: 'https://music.apple.com/library/playlist/p.ABC123',
+      webUrl: 'https://music.apple.com/library/playlist/pl.u-ABC123',
     })
     // 官方列表接口 attributes 无 trackCount 字段：不虚构 0，缺省为 undefined
     expect(playlists[0].songCount).toBeUndefined()
     expect(calls).toHaveLength(2)
     // 第二次请求直接使用响应 next（/v1 前缀已带）
     expect(calls[1].url.pathname).toBe('/v1/me/library/playlists')
+  })
+
+  it('歌单列表：官方歌单（pl. 前缀）给公开目录链接，用户歌单（pl.u- 前缀）给资料库链接', async () => {
+    const { handler } = makeHandler(() =>
+      json({
+        data: [
+          { id: 'pl.official1', type: 'library-playlists', attributes: { name: '官方歌单' } },
+          { id: 'pl.u-mine1', type: 'library-playlists', attributes: { name: '用户歌单' } },
+        ],
+      }),
+    )
+    const adapter = new AppleMusicAdapter(handler, {})
+    const playlists = await adapter.getUserPlaylists(cred(), 'cn')
+    expect(playlists[0].webUrl).toBe('https://music.apple.com/playlist/pl.official1')
+    expect(playlists[1].webUrl).toBe('https://music.apple.com/library/playlist/pl.u-mine1')
   })
 
   it('歌单列表：attributes 提供 trackCount 时透出（防御未来字段补充）', async () => {

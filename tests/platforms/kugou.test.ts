@@ -174,6 +174,35 @@ describe('KugouAdapter — 映射契约', () => {
     ])
   })
 
+  it('歌单列表映射：自建歌单无 specialid，用官方分享页链接补 webUrl', async () => {
+    const api = makeApi({
+      user_playlist: async () => ({
+        status: 200,
+        body: {
+          data: { info: [{ listid: 5, name: '自建歌单', count: 3, type: 0 }] },
+        },
+        cookie: [],
+      }),
+    })
+    const list = await new KugouAdapter(api, DEVICE).getUserPlaylists('c', '1')
+    expect(list).toEqual([
+      {
+        id: '5',
+        name: '自建歌单',
+        songCount: 3,
+        coverUrl: undefined,
+        webUrl:
+          'https://activity.kugou.com/share/v-a00a45b0/index.html' +
+          '?u=1' +
+          '&h1=143298444507010930495471534764048014549' +
+          '&h2=406dd14b2efd5e51affd6da64c84d0f6' +
+          '&specialid=-2147483648' +
+          '&global_specialid=5' +
+          '&cType=0',
+      },
+    ])
+  })
+
   it('歌单歌曲映射：文件名解析、timelen 毫秒、封面占位、fileid 缓存', async () => {
     const del = vi.fn(async () => ({ status: 200, body: {}, cookie: [] }))
     const api = makeApi({
@@ -192,7 +221,8 @@ describe('KugouAdapter — 映射契约', () => {
               {
                 hash: 'ABC123',
                 name: '周杰伦 - 晴天.mp3',
-                album_id: 77,
+                albuminfo: { name: '叶惠美', id: 77 },
+                album_id: '77',
                 mixsongid: 88,
                 fileid: 1001,
                 timelen: 269000,
@@ -212,7 +242,7 @@ describe('KugouAdapter — 映射契约', () => {
         id: 'abc123',
         title: '晴天',
         artist: '周杰伦',
-        album: undefined,
+        album: '叶惠美',
         coverUrl: 'https://img.example/240/a.jpg',
         durationMs: 269000,
       },
@@ -257,6 +287,34 @@ describe('KugouAdapter — 映射契约', () => {
       coverUrl: 'https://imge.kugou.com/stdmusic/240/abc123.jpg',
       durationMs: 269000,
     })
+  })
+
+  it('歌单歌曲：微秒脏时长归一化（162000000 → 2:42），离谱值置空', async () => {
+    const api = makeApi({
+      user_playlist: async () => ({
+        status: 200,
+        body: { data: { info: [{ listid: 5, name: 'x', count: 1, type: 0 }] } },
+        cookie: [],
+      }),
+      playlist_track_all_new: async () => ({
+        status: 200,
+        body: {
+          data: {
+            info: [
+              { hash: 'ABC123', name: 'Hoaprox - Ngẫu Hứng.mp3', timelen: 162000000 },
+              { hash: 'DEF456', name: '某人 - 超长录音.mp3', timelen: 90000000000 },
+            ],
+          },
+        },
+        cookie: [],
+      }),
+    })
+    const songs = await new KugouAdapter(api, DEVICE).getPlaylistSongs('c', '5')
+    expect(songs[0].durationMs).toBe(162000)
+    expect(songs[0].title).toBe('Ngẫu Hứng')
+    expect(songs[0].artist).toBe('Hoaprox')
+    // 换算后仍超 2 小时（90000s）的离谱值置空
+    expect(songs[1].durationMs).toBeUndefined()
   })
 
   it('歌单歌曲：收藏歌单直接走公开歌单接口，不调云歌单接口', async () => {

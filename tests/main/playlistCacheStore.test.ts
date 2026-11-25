@@ -96,4 +96,49 @@ describe('playlistCacheStore — 歌单缓存存储', () => {
     store.invalidatePlaylists('netease')
     expect(store.listPlaylists('netease')).toBeNull()
   })
+
+  it('schema 版本：未写入版本时旧缓存失效并清空；写入后按版本读回', () => {
+    store.savePlaylists('kugou', [playlist('1', 'A')], 1000)
+    store.saveSongs('kugou', '1', [song('a', 'A', 'X')], 1000)
+    // 旧数据无版本记录：带版本读取视为无缓存，且旧数据被清空
+    expect(store.listPlaylists('kugou', 2)).toBeNull()
+    expect(store.listSongs('kugou', '1', 2)).toBeNull()
+    expect(store.listPlaylists('kugou')).toBeNull()
+    expect(store.listSongs('kugou', '1')).toBeNull()
+
+    store.savePlaylists('kugou', [playlist('1', 'A')], 2000, 2)
+    store.saveSongs('kugou', '1', [song('a', 'A', 'X')], 3000, 2)
+    expect(store.listPlaylists('kugou', 2)?.list).toHaveLength(1)
+    expect(store.listSongs('kugou', '1', 2)?.songs).toHaveLength(1)
+    // 版本不一致同样失效并清空
+    expect(store.listPlaylists('kugou', 3)).toBeNull()
+    expect(store.listSongs('kugou', '1', 3)).toBeNull()
+    expect(store.listPlaylists('kugou')).toBeNull()
+    expect(store.listSongs('kugou', '1')).toBeNull()
+  })
+
+  it('schema 版本按平台隔离：其他平台写入版本不误认证本平台旧缓存', () => {
+    // kugou 旧数据(无版本)
+    store.savePlaylists('kugou', [playlist('1', 'A')], 1000)
+    store.saveSongs('kugou', '1', [song('a', 'A', 'X')], 1000)
+    // 其他平台以版本 2 写入
+    store.savePlaylists('netease', [playlist('2', 'B')], 2000, 2)
+    store.saveSongs('netease', '2', [song('b', 'B', 'X')], 2000, 2)
+    // kugou 旧缓存必须失效,不能被 netease 的版本认证
+    expect(store.listPlaylists('kugou', 2)).toBeNull()
+    expect(store.listSongs('kugou', '1', 2)).toBeNull()
+    expect(store.listPlaylists('netease', 2)).not.toBeNull()
+  })
+
+  it('schema 版本不匹配清空时不影响其他平台缓存', () => {
+    store.savePlaylists('kugou', [playlist('1', 'A')], 1000)
+    store.savePlaylists('netease', [playlist('2', 'B')], 2000, 2)
+    store.saveSongs('netease', '2', [song('b', 'B', 'X')], 2000, 2)
+    // 清空 kugou（版本不匹配）
+    expect(store.listPlaylists('kugou', 3)).toBeNull()
+    expect(store.listSongs('kugou', '1', 3)).toBeNull()
+    // netease 不受影响
+    expect(store.listPlaylists('netease', 2)).not.toBeNull()
+    expect(store.listSongs('netease', '2', 2)).not.toBeNull()
+  })
 })

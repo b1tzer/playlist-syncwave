@@ -2,9 +2,10 @@
 
 /**
  * 歌单缓存数据 schema 版本：平台字段映射调整后 +1。
- * 读取缓存时版本不匹配即视为无缓存，旧数据自动失效重新拉取。
+ * 读取缓存时版本不匹配即清空该平台全部缓存并重新拉取。
+ * v2→v3：酷狗映射修正后，早期版本按平台记录版本导致同平台旧歌单缓存残留。
  */
-export const PLAYLIST_CACHE_SCHEMA_VERSION = 2
+export const PLAYLIST_CACHE_SCHEMA_VERSION = 3
 
 /** 歌单列表缓存有效期：过期后首次访问自动重新拉取 */
 export const PLAYLIST_LIST_TTL_MS = 10 * 60_000

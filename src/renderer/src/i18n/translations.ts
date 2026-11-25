@@ -155,6 +155,7 @@ const zhCN = {
   'login.webLogin': '网页登录',
   'login.webWaiting': '等待登录…',
   'login.webSuccessDetail': '已登录 {platform}',
+  'login.statusQueryFailedDetail': '登录凭证已保存，但 {platform} 账号信息查询失败，重启应用后自动恢复',
   'syncCenter.title': '歌单同步中心',
   'syncCenter.subtitle': '管理跨平台歌单同步任务，实时查看匹配进度与结果报告',
   'syncCenter.newTask': '新建同步任务',
@@ -405,6 +406,8 @@ const enUS: Record<TranslationKey, string> = {
   'login.webLogin': 'Web login',
   'login.webWaiting': 'Waiting for login…',
   'login.webSuccessDetail': 'Signed in to {platform}',
+  'login.statusQueryFailedDetail':
+    'Credentials saved, but {platform} account info query failed. Restart the app to restore.',
   'syncCenter.title': 'Playlist Sync Center',
   'syncCenter.subtitle':
     'Manage cross-platform sync tasks and track match progress and result reports in real time',

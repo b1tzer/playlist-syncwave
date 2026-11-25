@@ -29,6 +29,8 @@ CREATE TABLE IF NOT EXISTS playlist_cache_schema (
   scope TEXT NOT NULL PRIMARY KEY,
   version INTEGER NOT NULL
 );
+-- 清理早期版本残留的全局作用域行（现按 platform 隔离）
+DELETE FROM playlist_cache_schema WHERE scope NOT LIKE '%:%';
 CREATE TABLE IF NOT EXISTS playlist_cache (
   platform TEXT NOT NULL,
   id TEXT NOT NULL,
@@ -81,7 +83,11 @@ CREATE TABLE IF NOT EXISTS playlist_song_meta (
       platform: string,
       schemaVersion?: number,
     ): { list: PlatformPlaylist[]; updatedAt: number } | null {
-      if (schemaVersion !== undefined && !schemaMatches('playlists', schemaVersion)) return null
+      if (schemaVersion !== undefined && !schemaMatches(`playlists:${platform}`, schemaVersion)) {
+        // 版本不匹配：清空该平台全部旧缓存，避免部分歌单残留旧格式数据
+        db.prepare('DELETE FROM playlist_cache WHERE platform = ?').run(platform)
+        return null
+      }
       const rows = db
         .prepare('SELECT * FROM playlist_cache WHERE platform = ? ORDER BY rowid')
         .all(platform) as unknown as PlaylistRow[]
@@ -102,7 +108,7 @@ CREATE TABLE IF NOT EXISTS playlist_song_meta (
 
     /** 整份替换某平台的歌单列表缓存 */
     savePlaylists(platform: string, list: PlatformPlaylist[], now: number, schemaVersion?: number): void {
-      if (schemaVersion !== undefined) setSchemaVersion('playlists', schemaVersion)
+      if (schemaVersion !== undefined) setSchemaVersion(`playlists:${platform}`, schemaVersion)
       db.prepare('DELETE FROM playlist_cache WHERE platform = ?').run(platform)
       const insert = db.prepare(
         `INSERT INTO playlist_cache
@@ -143,7 +149,12 @@ CREATE TABLE IF NOT EXISTS playlist_song_meta (
       playlistId: string,
       schemaVersion?: number,
     ): { songs: PlatformSong[]; updatedAt: number } | null {
-      if (schemaVersion !== undefined && !schemaMatches('songs', schemaVersion)) return null
+      if (schemaVersion !== undefined && !schemaMatches(`songs:${platform}`, schemaVersion)) {
+        // 版本不匹配：清空该平台全部歌曲旧缓存，避免残留旧格式数据
+        db.prepare('DELETE FROM playlist_song_cache WHERE platform = ?').run(platform)
+        db.prepare('DELETE FROM playlist_song_meta WHERE platform = ?').run(platform)
+        return null
+      }
       const rows = db
         .prepare(
           'SELECT * FROM playlist_song_cache WHERE platform = ? AND playlist_id = ? ORDER BY rowid',
@@ -175,7 +186,7 @@ CREATE TABLE IF NOT EXISTS playlist_song_meta (
       now: number,
       schemaVersion?: number,
     ): void {
-      if (schemaVersion !== undefined) setSchemaVersion('songs', schemaVersion)
+      if (schemaVersion !== undefined) setSchemaVersion(`songs:${platform}`, schemaVersion)
       db.prepare('DELETE FROM playlist_song_cache WHERE platform = ? AND playlist_id = ?').run(
         platform,
         playlistId,

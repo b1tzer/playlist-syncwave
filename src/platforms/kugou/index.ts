@@ -169,6 +169,47 @@ function hashCover(hash: string): string | undefined {
   return `https://imge.kugou.com/stdmusic/240/${hash}.jpg`
 }
 
+/**
+ * 构造自建歌单的官方分享页链接（浏览器可打开）。
+ * 参数取自 kugoumusicapi 的 playlist_share_official 客户端分享构造逻辑：
+ * 自建歌单 specialid 用哨兵值 -2147483648、cType=0，真实标识为 global_specialid=歌单 listid；
+ * h1/h2 为客户端硬编码常量，若官方客户端升级更换导致分享页失效，
+ * 可改为调用 playlist_share_official 接口换取官方短链。
+ */
+function buildOwnPlaylistShareUrl(userId: string, listId: string): string {
+  const params = new URLSearchParams({
+    u: userId,
+    h1: '143298444507010930495471534764048014549',
+    h2: '406dd14b2efd5e51affd6da64c84d0f6',
+    specialid: '-2147483648',
+    global_specialid: listId,
+    cType: '0',
+  })
+  return `https://activity.kugou.com/share/v-a00a45b0/index.html?${params.toString()}`
+}
+
+/**
+ * 时长合理性防御：酷狗部分条目 timelen 为脏数据（如 45 小时），
+ * 超过 24 小时视为无效置空，避免 UI 显示异常时长。
+ */
+function saneDuration(ms: number): number | undefined {
+  if (!Number.isFinite(ms) || ms <= 0 || ms > 24 * 3600_000) return undefined
+  return ms
+}
+
+/**
+ * 云歌单 timelen 归一化：正常为毫秒；个别条目（如 162000000）实为
+ * 微秒脏值，换算后落在 10 秒 ~ 2 小时区间视为有效（162000000µs = 2:42）。
+ */
+function normalizeKgTimelen(timelen: number): number | undefined {
+  if (timelen > 0 && timelen <= 24 * 3600_000) return timelen
+  const asSeconds = timelen / 1_000_000
+  if (Number.isFinite(asSeconds) && asSeconds >= 10 && asSeconds <= 2 * 3600) {
+    return Math.round(asSeconds * 1000)
+  }
+  return undefined
+}
+
 /** 「歌手 - 标题.mp3」→ { artist, title }：剥扩展名，按第一个 ' - ' 分割 */
 function splitKgFilename(filename: string): { artist: string; title: string } {
   const bare = filename.replace(/\.(mp3|flac|m4a|ogg|ape|wav)$/i, '')
@@ -370,9 +411,9 @@ export class KugouAdapter extends BasePlatformAdapter {
     }
   }
 
-  protected async fetchPlaylists(credential: string, _userId: string): Promise<PlatformPlaylist[]> {
+  protected async fetchPlaylists(credential: string, userId: string): Promise<PlatformPlaylist[]> {
     const items = await this.fetchPlaylistItems(credential)
-    return items.map((item) => this.mapPlaylist(item))
+    return items.map((item) => this.mapPlaylist(item, userId))
   }
 
   /** 分页拉取用户歌单原始条目并重建 listid 索引缓存 */
@@ -394,7 +435,7 @@ export class KugouAdapter extends BasePlatformAdapter {
       if (info.length < pageSize || (total !== undefined && raw.length >= total)) break
     }
     if (raw.length > 0) {
-      this.log.debug('playlist.list', '歌单条目原始字段采样', { sample: raw[0] })
+      this.log.info('playlist.list', '歌单条目原始字段采样', { sample: raw[0] })
     }
     for (const item of raw) {
       const listId = pickString(item.listid, item.id)
@@ -412,9 +453,10 @@ export class KugouAdapter extends BasePlatformAdapter {
     return raw
   }
 
-  private mapPlaylist(item: JsonObject): PlatformPlaylist {
+  private mapPlaylist(item: JsonObject, userId: string): PlatformPlaylist {
     const id = pickString(item.listid, item.id) ?? ''
-    // 收藏歌单的原 specialid 可用于拼接网页链接；自建歌单没有对应网页
+    // 收藏歌单的原 specialid 可用于拼接网页链接；自建歌单没有对应网页，
+    // 用官方客户端分享落地页补链（activity 分享页，浏览器可打开）。
     const specialId = pickString(item.from_listid, item.list_create_listid)
     return {
       id,
@@ -422,7 +464,10 @@ export class KugouAdapter extends BasePlatformAdapter {
       songCount: Number(item.count ?? item.source_count ?? 0),
       // 封面 URL 带 {size} 占位符（如 c1.kgimg.com/stdmusic/{size}/...），必须替换才能直接加载
       coverUrl: normalizeCover(pickString(item.pic, item.imgurl, item.cover), '300'),
-      webUrl: specialId ? `https://www.kugou.com/yy/special/single/${specialId}.html` : undefined,
+      // appUrl 不填：酷狗 PC 客户端无公开 URL scheme 文档，无法可靠唤起客户端，webUrl 已覆盖浏览器打开
+      webUrl: specialId
+        ? `https://www.kugou.com/yy/special/single/${specialId}.html`
+        : buildOwnPlaylistShareUrl(userId, id),
     }
   }
 
@@ -482,7 +527,7 @@ export class KugouAdapter extends BasePlatformAdapter {
       if (info.length < pageSize || (total !== undefined && raw.length >= total)) break
     }
     if (raw.length > 0) {
-      this.log.debug('playlist.songs', '歌曲条目原始字段采样', { sample: raw[0] })
+      this.log.info('playlist.songs', '歌曲条目原始字段采样', { sample: raw[0] })
     }
     return raw
   }
@@ -522,6 +567,7 @@ export class KugouAdapter extends BasePlatformAdapter {
       pickString(item.singer, item.singername, item.author) ||
       ''
     const trans = asObject(item.trans_param)
+    const albuminfo = asObject(item.albuminfo)
     if (hash) {
       this.songMeta.set(hash, {
         name: title || '未知歌曲',
@@ -534,16 +580,15 @@ export class KugouAdapter extends BasePlatformAdapter {
       id: hash,
       title: title || '未知歌曲',
       artist,
-      album: pickString(item.album_name, item.albumname),
+      // 专辑名在 albuminfo.name（实测云歌单条目唯一携带专辑名的位置）
+      album: pickString(albuminfo.name, item.album_name, item.albumname),
       coverUrl:
         normalizeCover(pickString(item.cover, trans.union_cover, item.img, item.pic)) ??
         hashCover(hash),
       durationMs:
         typeof item.timelen === 'number'
-          ? item.timelen
-          : typeof item.duration === 'number'
-            ? item.duration * 1000
-            : undefined,
+          ? normalizeKgTimelen(item.timelen)
+          : saneDuration(typeof item.duration === 'number' ? item.duration * 1000 : Number.NaN),
     }
   }
 
@@ -595,7 +640,9 @@ export class KugouAdapter extends BasePlatformAdapter {
       album: pickString(item.AlbumName, item.albumname),
       coverUrl:
         normalizeCover(pickString(item.Image, item.img, item.pic)) ?? hashCover(hash),
-      durationMs: typeof item.Duration === 'number' ? item.Duration * 1000 : undefined,
+      durationMs: saneDuration(
+        typeof item.Duration === 'number' ? item.Duration * 1000 : Number.NaN,
+      ),
     }
   }
 

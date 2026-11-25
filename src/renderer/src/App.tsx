@@ -31,19 +31,57 @@ export default function App() {
   const [confirmResult, setConfirmResult] = useState<SyncReport | null>(null)
 
   useEffect(() => {
+    // StrictMode 下 effect 会先挂载再卸载重挂载：cancelled 防止已卸载轮次的异步回调继续更新状态
+    let cancelled = false
+    let retryTimer: ReturnType<typeof setTimeout> | null = null
+
     window.electronAPI.platforms
       .list()
       .then(async (list) => {
+        if (cancelled) return
         log.debug('app.init', '初始化平台账号状态', { platforms: list.map((p) => p.id) })
         setPlatforms(list)
-        const entries = await Promise.all(
+        // 逐平台独立容错：任一平台登录态查询失败（网络超时、平台 500 等）只影响自身，
+        // 不得拖垮其他平台（Promise.all 会因单个失败整体 reject，导致界面全部显示未登录）。
+        const settled = await Promise.allSettled(
           list.map(async (p) => [p.id, await window.electronAPI.platforms.loginStatus(p.id)] as const),
         )
+        if (cancelled) return
+        const entries = settled.map((r, i) => {
+          const platformId = list[i].id
+          if (r.status === 'fulfilled') return [platformId, r.value[1]] as const
+          log.warn('app.init-platform-failed', '平台登录态查询失败，暂显示未连接', {
+            platform: platformId,
+            message: r.reason instanceof Error ? r.reason.message : String(r.reason),
+          })
+          return [platformId, null] as const
+        })
         setAccounts(Object.fromEntries(entries))
+
+        // 查询失败多为网络抖动：3 秒后对失败平台重试一次，网络恢复后自动纠正显示
+        const retryIds = list
+          .map((p, i) => (settled[i].status === 'rejected' ? p.id : null))
+          .filter((id): id is string => id !== null)
+        if (retryIds.length > 0) {
+          retryTimer = setTimeout(() => {
+            for (const platformId of retryIds) {
+              window.electronAPI.platforms
+                .loginStatus(platformId)
+                .then((account) => {
+                  if (!cancelled) setAccounts((prev) => ({ ...prev, [platformId]: account }))
+                })
+                .catch(() => {
+                  log.debug('app.init-platform-retry-failed', '重试仍失败，保持未连接显示', {
+                    platform: platformId,
+                  })
+                })
+            }
+          }, 3000)
+        }
       })
       .catch((e) => {
         log.error('app.init-failed', '初始化平台账号状态失败', e)
-        setAccounts({})
+        if (!cancelled) setAccounts({})
       })
 
     // 恢复同步历史
@@ -56,6 +94,11 @@ export default function App() {
       .catch((e) => {
         log.error('app.sync-history-restore-failed', '恢复同步历史失败', e)
       })
+
+    return () => {
+      cancelled = true
+      if (retryTimer) clearTimeout(retryTimer)
+    }
   }, [])
 
   // 应用菜单导航快捷键：主进程广播视图切换
@@ -83,7 +126,11 @@ export default function App() {
         .loginStatus(platform)
         .then((account) => setAccounts((prev) => ({ ...prev, [platform]: account })))
         .catch((e) => {
-          log.error('app.account-refresh-failed', '刷新账号状态失败', e, { platform })
+          // 查询失败 ≠ 登出：保留上一次状态，避免网络抖动误清登录态
+          log.warn('app.account-refresh-failed', '刷新账号状态失败，保留上次状态', {
+            platform,
+            message: e instanceof Error ? e.message : String(e),
+          })
         })
     })
     return off

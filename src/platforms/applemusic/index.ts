@@ -360,7 +360,13 @@ export class AppleMusicAdapter extends BasePlatformAdapter {
         // 不虚构 0：缺省让 UI 留空（若 Apple 未来补充字段则自动透出）
         songCount: typeof attrs.trackCount === 'number' ? attrs.trackCount : undefined,
         coverUrl: artworkUrl(attrs.artwork),
-        webUrl: `https://music.apple.com/library/playlist/${id}`,
+        // 用户自建歌单（pl.u- 前缀）没有公开页面，只能指向本人资料库链接；
+        // Apple 官方歌单（pl. 前缀）有公开目录页，给可分享的链接。
+        // appUrl 不填：Apple Music 无独立深链 scheme，music.apple.com 是 universal link，
+        // macOS 打开即自动唤起 Music app，Windows 打开官方网页版，webUrl 已覆盖两端。
+        webUrl: id.startsWith('pl.u-')
+          ? `https://music.apple.com/library/playlist/${id}`
+          : `https://music.apple.com/playlist/${id}`,
       }
     })
   }

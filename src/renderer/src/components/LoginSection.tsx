@@ -87,11 +87,17 @@ export default function LoginSection({ platforms, accounts, onAccountChange }: L
               const status = await window.electronAPI.platforms.loginStatus(platform)
               onAccountChange(platform, status)
             } catch (e) {
-              // 凭证已保存，账号查询失败不应阻塞流程；重启后会自动恢复登录态
+              // 凭证已保存，账号查询失败不应阻塞流程；提示用户重启后会自动恢复登录态
+              const name = platforms.find((p) => p.id === platform)?.name ?? platform
               log.warn('login.qr.status-failed', '登录成功但查询账号信息失败', {
                 platform,
                 message: e instanceof Error ? e.message : String(e),
               })
+              notify(
+                'warning',
+                t('login.success'),
+                t('login.statusQueryFailedDetail', { platform: name }),
+              )
             }
             setTimeout(closeQr, 800)
           } else if (result.status === 'expired') {
