@@ -46,6 +46,7 @@
 - 凭证与 QQ 会话文件（credentials.json / qq-session*.json / qq-device.json）保持文件存储，不进 SQLite（凭证安全隔离）。
 - 数据层模式：`createXxxStore(db)` 依赖注入 + `appDatabase.getDatabase()` 统一入口 + `xxxService.ts` 供 IPC 调用。
 - npm 11 默认拦截安装脚本（如 electron 二进制），需 `npm install-scripts approve <pkg>` 后再 rebuild。
+- 酷狗平台规则：歌单列表仅显示自建/系统歌单，收藏的他人歌单不显示。判定用 v7/get_all_list 条目的 `type` 字段（实测 0=自建/系统收藏夹——默认收藏 `is_def=1`、我喜欢 `is_def=2`，1=收藏他人歌单；`is_mine` 恒为 0 不可用）。过滤只作用于显示列表（`fetchPlaylists`），写操作索引 `playlistIndex` 保留完整；过滤规则变更需 bump `PLAYLIST_CACHE_SCHEMA_VERSION` 使旧缓存重新验证。
 - 网易云 API 风控敏感：搜索请求需限速（>=500ms）并支持重试；连续快速请求会触发 405 风控。
 - QQ音乐 sealed token 依赖 `QQ_SESSION_SECRET`，该密钥已持久化到 userData，删除会导致全部登录失效。
 - 文本快速创建全自动解析（T6）：格式自动探测（json/m3u/lrc/csv/share/lines）→ 行分类去噪 → 字段顺序仅用强结构信号判定（书名号/版本词/多人名/feat/长度，**无本地词典**）+ 整段投票（`core/parser/orderInfer.ts`）→ 无信号行保留双候选，**顺序最终由平台搜索验证裁决**（`exactMatch.classifyCandidates` 反向精确匹配 + `planSync` alternatives 备选搜索）；`ParseOptions.order` 仅高级覆盖，UI 无手动格式选择。

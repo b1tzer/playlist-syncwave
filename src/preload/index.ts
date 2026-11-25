@@ -8,7 +8,14 @@ import type {
   QrLoginTicket,
 } from '@core/models/platform'
 import type { MatchQuery } from '@core/models/match'
-import type { SyncChoice, SyncItemResult, SyncReport, SyncSelection, SyncTaskRecord } from '@core/models/sync'
+import type {
+  SyncChoice,
+  SyncItemResult,
+  SyncMatchedResource,
+  SyncReport,
+  SyncSelection,
+  SyncTaskRecord,
+} from '@core/models/sync'
 import type { LocalPlaylist, LocalPlaylistSong } from '@core/models/localPlaylist'
 import type { LogEntry } from '@core/logging'
 
@@ -41,10 +48,11 @@ export interface PendingConfirmInfo {
   choices: SyncChoice[]
 }
 
-/** 歌单数据拉取结果：缓存优先 + 刷新策略（throttled 表示手动刷新被限流拦截） */
+/** 歌单数据拉取结果：缓存兜底优先（throttled 表示手动刷新被限流拦截；stale 表示已返回缓存、后台正在重新验证） */
 export interface PlaylistFetchResult<T> {
   data: T
   fromCache: boolean
+  stale?: boolean
   throttled?: boolean
 }
 
@@ -53,7 +61,21 @@ export interface PagedFetchResult<T> {
   items: T[]
   total: number
   fromCache: boolean
+  stale?: boolean
   throttled?: boolean
+}
+
+/** 后台重新验证结果：渲染层据 changedIds/addedIds/removedIds 做行级更新动画 */
+export interface PlaylistRefreshEvent<T> {
+  platform: string
+  /** 歌曲刷新时标识所属歌单 */
+  playlistId?: string
+  status: 'updated' | 'unchanged' | 'failed'
+  /** status=updated 时携带最新全量数据 */
+  data?: T
+  changedIds?: string[]
+  addedIds?: string[]
+  removedIds?: string[]
 }
 
 const api = {
@@ -122,14 +144,22 @@ const api = {
     /** 歌单列表（force=true 手动强制刷新，受限流阈值约束） */
     userPlaylists: (platform: string, force?: boolean): Promise<PlaylistFetchResult<PlatformPlaylist[]>> =>
       ipcRenderer.invoke('platform:user-playlists', platform, force === true),
-    /** 歌单列表分页（滚动加载：offset 从 0 起，limit ≤200） */
+    /** 歌单列表分页（滚动加载：offset 从 0 起，limit ≤200；force 强制重新验证，silent 限流时静默） */
     userPlaylistsPage: (
       platform: string,
       offset: number,
       limit: number,
       force?: boolean,
+      silent?: boolean,
     ): Promise<PagedFetchResult<PlatformPlaylist>> =>
-      ipcRenderer.invoke('platform:user-playlists-page', platform, offset, limit, force === true),
+      ipcRenderer.invoke(
+        'platform:user-playlists-page',
+        platform,
+        offset,
+        limit,
+        force === true,
+        silent === true,
+      ),
     /** 歌单歌曲（force=true 手动强制刷新） */
     playlistSongs: (
       platform: string,
@@ -137,15 +167,42 @@ const api = {
       force?: boolean,
     ): Promise<PlaylistFetchResult<PlatformSong[]>> =>
       ipcRenderer.invoke('platform:playlist-songs', platform, playlistId, force === true),
-    /** 歌单歌曲分页（滚动加载：offset 从 0 起，limit ≤200） */
+    /** 歌单歌曲分页（滚动加载：offset 从 0 起，limit ≤200；force 强制重新验证，silent 限流时静默） */
     playlistSongsPage: (
       platform: string,
       playlistId: string,
       offset: number,
       limit: number,
       force?: boolean,
+      silent?: boolean,
     ): Promise<PagedFetchResult<PlatformSong>> =>
-      ipcRenderer.invoke('platform:playlist-songs-page', platform, playlistId, offset, limit, force === true),
+      ipcRenderer.invoke(
+        'platform:playlist-songs-page',
+        platform,
+        playlistId,
+        offset,
+        limit,
+        force === true,
+        silent === true,
+      ),
+    /** 歌单列表后台重新验证完成（缓存兜底后逐行 diff 更新，按 platform 过滤） */
+    onPlaylistsRefreshed: (
+      callback: (event: PlaylistRefreshEvent<PlatformPlaylist[]>) => void,
+    ): (() => void) => {
+      const listener = (_event: unknown, event: PlaylistRefreshEvent<PlatformPlaylist[]>) =>
+        callback(event)
+      ipcRenderer.on('playlist:list-refreshed', listener)
+      return () => ipcRenderer.removeListener('playlist:list-refreshed', listener)
+    },
+    /** 歌单歌曲后台重新验证完成（按 platform + playlistId 过滤） */
+    onSongsRefreshed: (
+      callback: (event: PlaylistRefreshEvent<PlatformSong[]>) => void,
+    ): (() => void) => {
+      const listener = (_event: unknown, event: PlaylistRefreshEvent<PlatformSong[]>) =>
+        callback(event)
+      ipcRenderer.on('playlist:songs-refreshed', listener)
+      return () => ipcRenderer.removeListener('playlist:songs-refreshed', listener)
+    },
     searchSongs: (platform: string, keyword: string, limit?: number): Promise<PlatformSong[]> =>
       ipcRenderer.invoke('platform:search-songs', platform, keyword, limit),
     renamePlaylist: (platform: string, playlistId: string, name: string): Promise<void> =>
@@ -166,6 +223,8 @@ const api = {
       playlistName: string,
       autoNameDate?: string,
       batchSize?: number,
+      /** 重新执行时复用上次已匹配结果（dupKey -> songId），命中后跳过搜索 */
+      reuseMatches?: Array<{ key: string; songId: string; matchedSong?: SyncMatchedResource }>,
     ): Promise<{ taskId: string; report: SyncReport }> =>
       ipcRenderer.invoke('platform:sync-playlist', platform, {
         taskId,
@@ -173,6 +232,7 @@ const api = {
         playlistName,
         autoNameDate,
         batchSize,
+        reuseMatches,
       }),
     confirmSync: (
       platform: string,

@@ -9,14 +9,17 @@ import SongList from './SongList'
 import ProgressBar from './ProgressBar'
 import LoadMoreSentinel from './LoadMoreSentinel'
 
-const log = createRendererLogger('renderer.sync-center')
+const log = createRendererLogger('renderer.sync-history')
 
 /** 任务列表滚动分页：首屏渲染条数 */
 const TASK_PAGE_SIZE = 200
 
 type Translate = (key: TranslationKey, params?: TranslateParams) => string
 
-interface SyncCenterProps {
+/** 除成功外的结束态：允许重新执行（复用上次已匹配数据） */
+const RETRYABLE_STATUSES: SyncTaskStatus[] = ['failed', 'interrupted', 'stopped']
+
+interface SyncHistoryProps {
   platforms: PlatformMeta[]
   tasks: SyncTaskRecord[]
   onNewTask: () => void
@@ -28,15 +31,27 @@ interface SyncCenterProps {
   /** 可手动介入（停止）的任务 id：执行中且不在等待确认阶段 */
   intervenableIds: string[]
   onStopTask: (id: string) => void
+  /** 重新执行未成功的任务：复用原始输入与已匹配结果 */
+  onRetryTask: (task: SyncTaskRecord) => void
+}
+
+/**
+ * 任务时间显示：优先按精确时间戳（绝对时间）实时格式化——
+ * OS 修改时区后所有任务自动按新时区换算展示，不会留下旧时区的时间快照；
+ * 历史任务缺失时间戳时回退展示存储的可读时间字符串。
+ */
+function taskTimeText(task: SyncTaskRecord, formatDateTime: (date: Date) => string): string {
+  if (task.createdAtMs && task.createdAtMs > 0) return formatDateTime(new Date(task.createdAtMs))
+  return task.createdAt
 }
 
 /** 任务状态元数据：图标 / 颜色 / 文案键 一处定义 */
 const STATUS_META: Record<SyncTaskStatus, { icon: string; color: string; labelKey: TranslationKey }> = {
-  running: { icon: 'progress_activity', color: 'text-tertiary', labelKey: 'syncCenter.statusRunning' },
-  done: { icon: 'check_circle', color: 'text-primary', labelKey: 'syncCenter.statusDone' },
-  interrupted: { icon: 'pause_circle', color: 'text-secondary', labelKey: 'syncCenter.statusInterrupted' },
-  stopped: { icon: 'stop_circle', color: 'text-secondary', labelKey: 'syncCenter.statusStopped' },
-  failed: { icon: 'error_outline', color: 'text-error', labelKey: 'syncCenter.statusFailed' },
+  running: { icon: 'progress_activity', color: 'text-tertiary', labelKey: 'syncHistory.statusRunning' },
+  done: { icon: 'check_circle', color: 'text-primary', labelKey: 'syncHistory.statusDone' },
+  interrupted: { icon: 'pause_circle', color: 'text-secondary', labelKey: 'syncHistory.statusInterrupted' },
+  stopped: { icon: 'stop_circle', color: 'text-secondary', labelKey: 'syncHistory.statusStopped' },
+  failed: { icon: 'error_outline', color: 'text-error', labelKey: 'syncHistory.statusFailed' },
 }
 
 /** 失败/跳过项的原因文案（稳定 reason 码翻译，平台原始错误透传） */
@@ -50,7 +65,7 @@ function failedReasonText(t: Translate, item: SyncItemResult): string {
     case 'rate-limited':
       return t('sync.failedRateLimited')
     case 'skipped':
-      return t('syncCenter.itemSkipped')
+      return t('syncHistory.itemSkipped')
     default:
       return item.message ?? t('sync.failedGeneric')
   }
@@ -61,13 +76,17 @@ function itemId(item: SyncItemResult): string {
   return `${item.status}-${item.index}-${item.songId ?? ''}`
 }
 
-/** 同步明细 → 模板所需的 PlatformSong 视图（明细无封面，其余字段按 query 透传） */
+/**
+ * 同步明细 → 模板所需的 PlatformSong 视图（明细无封面）。
+ * 已匹配项优先展示目标平台资源的真实关键信息（供后续直接使用），缺失时按 query 透传。
+ */
 function toSong(item: SyncItemResult): PlatformSong {
+  const target = item.matchedSong
   return {
     id: itemId(item),
-    title: item.query.title,
-    artist: item.query.artist ?? '',
-    album: item.query.album,
+    title: target?.title ?? item.query.title,
+    artist: target?.artist ?? item.query.artist ?? '',
+    album: target?.album ?? item.query.album,
     durationMs: item.query.durationMs,
   }
 }
@@ -88,7 +107,7 @@ function StopTaskButton({ onStop, size = 'sm' }: { onStop: () => void; size?: 's
       className={`${buttonCls} border-error text-error hover:bg-error/10`}
     >
       <span className="material-symbols-outlined text-sm">stop</span>
-      {t('syncCenter.stopTask')}
+      {t('syncHistory.stopTask')}
     </button>
   )
 }
@@ -125,7 +144,7 @@ function TaskDetailSection({
           </ul>
         ) : (
           <p className="font-label-sm text-label-sm text-outline">
-            {t('syncCenter.detailEmpty')}
+            {t('syncHistory.detailEmpty')}
           </p>
         )
       ) : (
@@ -134,7 +153,7 @@ function TaskDetailSection({
             <section>
               <p className="flex items-center gap-1.5 font-label-sm text-label-sm font-medium text-primary">
                 <span className="material-symbols-outlined text-sm">check_circle</span>
-                {t('syncCenter.matchedSection', { count: matched.length })}
+                {t('syncHistory.matchedSection', { count: matched.length })}
               </p>
               <SongList
                 songs={matched.map(toSong)}
@@ -149,7 +168,7 @@ function TaskDetailSection({
             <section>
               <p className="flex items-center gap-1.5 font-label-sm text-label-sm font-medium text-tertiary">
                 <span className="material-symbols-outlined text-sm">help</span>
-                {t('syncCenter.choiceSection', { count: choices.length })}
+                {t('syncHistory.choiceSection', { count: choices.length })}
               </p>
               <SongList
                 songs={choices.map(toSong)}
@@ -164,7 +183,7 @@ function TaskDetailSection({
             <section>
               <p className="flex items-center gap-1.5 font-label-sm text-label-sm font-medium text-error">
                 <span className="material-symbols-outlined text-sm">error_outline</span>
-                {t('syncCenter.failedSection', { count: failedItems.length })}
+                {t('syncHistory.failedSection', { count: failedItems.length })}
               </p>
               <SongList
                 songs={failedItems.map(toSong)}
@@ -200,7 +219,7 @@ function TaskDetailSection({
           {intervenable && (
             <div className="pt-1">
               <p className="font-label-sm text-label-sm text-on-surface-variant">
-                {t('syncCenter.stuckHint')}
+                {t('syncHistory.stuckHint')}
               </p>
               <div className="mt-2 flex items-center gap-2">
                 <StopTaskButton size="md" onStop={onStop} />
@@ -213,7 +232,7 @@ function TaskDetailSection({
   )
 }
 
-export default function SyncCenter({
+export default function SyncHistory({
   platforms,
   tasks,
   onNewTask,
@@ -223,8 +242,9 @@ export default function SyncCenter({
   onGoConfirm,
   intervenableIds,
   onStopTask,
-}: SyncCenterProps) {
-  const { t } = useI18n()
+  onRetryTask,
+}: SyncHistoryProps) {
+  const { t, formatDateTime } = useI18n()
   const [expandedId, setExpandedId] = useState<string | null>(null)
   // 滚动分页：只渲染已加载部分，哨兵触发时追加下一页
   const [visibleCount, setVisibleCount] = useState(TASK_PAGE_SIZE)
@@ -262,10 +282,10 @@ export default function SyncCenter({
       <div className="flex items-start justify-between">
         <div>
           <h1 className="mt-1 font-headline-lg text-headline-lg font-semibold">
-            {t('syncCenter.title')}
+            {t('syncHistory.title')}
           </h1>
           <p className="mt-1 font-body-md text-body-md text-on-surface-variant">
-            {t('syncCenter.subtitle')}
+            {t('syncHistory.subtitle')}
           </p>
         </div>
         <button
@@ -273,36 +293,36 @@ export default function SyncCenter({
           className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 font-label-md text-label-md font-medium text-on-primary transition-colors hover:bg-primary/85"
         >
           <span className="material-symbols-outlined text-sm">add</span>
-          {t('syncCenter.newTask')}
+          {t('syncHistory.newTask')}
         </button>
       </div>
 
       <div className="mt-6 flex items-center gap-2 font-label-sm text-label-sm text-on-surface-variant">
         <span className="material-symbols-outlined text-sm">terminal</span>
-        <span>{t('syncCenter.logTitle')}</span>
+        <span>{t('syncHistory.logTitle')}</span>
         <span className="mx-2 h-3 w-px bg-outline-variant" />
         <span>
-          {t('syncCenter.allTasks')}{' '}
+          {t('syncHistory.allTasks')}{' '}
           <span className="font-medium text-on-surface">{tasks.length}</span>
         </span>
         <span>
-          {t('syncCenter.running')} <span className="font-medium text-tertiary">{running}</span>
+          {t('syncHistory.running')} <span className="font-medium text-tertiary">{running}</span>
         </span>
         <span>
-          {t('syncCenter.done')} <span className="font-medium text-primary">{done}</span>
+          {t('syncHistory.done')} <span className="font-medium text-primary">{done}</span>
         </span>
         <span>
-          {t('syncCenter.interrupted')}{' '}
+          {t('syncHistory.interrupted')}{' '}
           <span className="font-medium text-secondary">{interrupted}</span>
         </span>
         {stopped > 0 && (
           <span>
-            {t('syncCenter.statusStopped')}{' '}
+            {t('syncHistory.statusStopped')}{' '}
             <span className="font-medium text-secondary">{stopped}</span>
           </span>
         )}
         <span>
-          {t('syncCenter.failed')} <span className="font-medium text-error">{failed}</span>
+          {t('syncHistory.failed')} <span className="font-medium text-error">{failed}</span>
         </span>
         {pendingChoicesCount > 0 && (
           <button
@@ -313,8 +333,8 @@ export default function SyncCenter({
             className="flex items-center gap-1 rounded-full border border-tertiary px-2.5 py-0.5 font-label-sm text-label-sm text-tertiary transition-colors hover:bg-tertiary/10"
           >
             <span className="material-symbols-outlined text-sm">fact_check</span>
-            {t('syncCenter.awaitingConfirm', { count: pendingChoicesCount })} ·{' '}
-            {t('syncCenter.goConfirm')}
+            {t('syncHistory.awaitingConfirm', { count: pendingChoicesCount })} ·{' '}
+            {t('syncHistory.goConfirm')}
           </button>
         )}
         <span className="ml-auto flex items-center gap-2 font-label-mono text-label-mono text-outline">
@@ -325,13 +345,13 @@ export default function SyncCenter({
                 log.info('sync.sort-toggle', '切换任务排序', { order: next })
                 setSortOrder(next)
               }}
-              title={t('syncCenter.sortHint')}
+              title={t('syncHistory.sortHint')}
               className="flex items-center gap-1 rounded-md px-2 py-0.5 transition-colors hover:bg-surface-container-high hover:text-on-surface"
             >
               <span className="material-symbols-outlined text-sm">
                 {sortOrder === 'newest' ? 'south' : 'north'}
               </span>
-              {sortOrder === 'newest' ? t('syncCenter.sortNewest') : t('syncCenter.sortOldest')}
+              {sortOrder === 'newest' ? t('syncHistory.sortNewest') : t('syncHistory.sortOldest')}
             </button>
           )}
           <span className="material-symbols-outlined text-sm">database</span>
@@ -352,7 +372,7 @@ export default function SyncCenter({
                   : 'hover:bg-surface-container-high hover:text-on-surface'
               }`}
             >
-              {clearConfirm ? t('syncCenter.clearAllConfirm') : t('syncCenter.clearAll')}
+              {clearConfirm ? t('syncHistory.clearAllConfirm') : t('syncHistory.clearAll')}
             </button>
           )}
         </span>
@@ -363,17 +383,17 @@ export default function SyncCenter({
           <div className="flex flex-col items-center rounded-lg border border-dashed border-outline-variant bg-surface-container-low px-6 py-14 text-center">
             <span className="material-symbols-outlined text-5xl text-outline">sync_alt</span>
             <p className="mt-3 font-body-md text-body-md text-on-surface-variant">
-              {t('syncCenter.empty')}
+              {t('syncHistory.empty')}
             </p>
             <p className="mt-1 font-label-sm text-label-sm text-outline">
-              {t('syncCenter.emptyHint')}
+              {t('syncHistory.emptyHint')}
             </p>
             <button
               onClick={handleNewTask}
               className="mt-4 flex items-center gap-2 rounded-lg border border-outline-variant px-4 py-2 font-label-md text-label-md text-primary transition-colors hover:bg-surface-container-high"
             >
               <span className="material-symbols-outlined text-sm">add</span>
-              {t('syncCenter.firstTask')}
+              {t('syncHistory.firstTask')}
             </button>
           </div>
         )}
@@ -411,8 +431,23 @@ export default function SyncCenter({
                 </div>
                 <div className="flex items-center gap-2">
                   {intervenable && <StopTaskButton onStop={() => onStopTask(task.id)} />}
+                  {RETRYABLE_STATUSES.includes(task.status) && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        log.info('sync.retry-task', '重新执行同步任务', { taskId: task.id })
+                        onRetryTask(task)
+                      }}
+                      disabled={task.detail.length === 0 && task.rawInput.length === 0}
+                      title={t('syncHistory.retryTaskHint')}
+                      className="flex items-center gap-1 rounded-md border border-outline-variant px-2 py-1 font-label-sm text-label-sm text-primary transition-colors hover:bg-primary/10 disabled:opacity-40"
+                    >
+                      <span className="material-symbols-outlined text-sm">replay</span>
+                      {t('syncHistory.retryTask')}
+                    </button>
+                  )}
                   <span className="font-label-mono text-label-mono text-outline">
-                    {task.createdAt}
+                    {taskTimeText(task, formatDateTime)}
                   </span>
                   <button
                     onClick={(e) => {
@@ -421,7 +456,7 @@ export default function SyncCenter({
                       onTaskRemove(task.id)
                     }}
                     disabled={task.status === 'running'}
-                    title={t('syncCenter.removeTask')}
+                    title={t('syncHistory.removeTask')}
                     className="flex items-center rounded-md p-1 text-on-surface-variant transition-colors hover:bg-surface-container-highest hover:text-error disabled:opacity-40"
                   >
                     <span className="material-symbols-outlined text-base">delete</span>
@@ -433,9 +468,9 @@ export default function SyncCenter({
                 <span className="flex items-center gap-1">
                   <span className="material-symbols-outlined text-sm">description</span>
                   {task.source === 'text-import'
-                    ? t('syncCenter.sourceTextImport')
+                    ? t('syncHistory.sourceTextImport')
                     : task.source === 'playlist-import'
-                      ? t('syncCenter.sourcePlaylistImport')
+                      ? t('syncHistory.sourcePlaylistImport')
                       : task.source}
                 </span>
                 <span className="material-symbols-outlined text-sm text-outline">arrow_forward</span>
@@ -446,7 +481,7 @@ export default function SyncCenter({
                 {task.status === 'running' && (
                   <span className="ml-auto flex items-center gap-1 text-tertiary">
                     <span className="material-symbols-outlined text-sm">refresh</span>
-                    {t('syncCenter.matchingProgress', {
+                    {t('syncHistory.matchingProgress', {
                       current: Math.round(task.progress * task.total),
                       total: task.total,
                     })}
@@ -454,11 +489,11 @@ export default function SyncCenter({
                 )}
                 {(task.status === 'done' || task.status === 'failed' || task.status === 'stopped') && (
                   <span className="ml-auto">
-                    {t('syncCenter.success')} <span className="text-primary">{task.added}</span>
+                    {t('syncHistory.success')} <span className="text-primary">{task.added}</span>
                     {task.failed > 0 && (
                       <>
                         {' '}
-                        {t('syncCenter.failedCount')}{' '}
+                        {t('syncHistory.failedCount')}{' '}
                         <span className="text-error">{task.failed}</span>
                       </>
                     )}

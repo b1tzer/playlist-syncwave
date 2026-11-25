@@ -5,7 +5,7 @@ interface ProgressBarProps {
   label?: React.ReactNode
 }
 
-/** 通用进度条（同步中心 / 快速创建 / 歌单同步共用） */
+/** 通用进度条（同步历史 / 快速创建 / 歌单同步共用） */
 export default function ProgressBar({ ratio, label }: ProgressBarProps) {
   return (
     <div>

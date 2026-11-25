@@ -28,6 +28,7 @@ function makeTask(overrides: Partial<SyncTaskRecord> = {}): SyncTaskRecord {
     progress: 1,
     failedDetail: ['未找到匹配歌曲：A', '未找到匹配歌曲：B'],
     detail: [makeItem({ index: 0 }), makeItem({ index: 1, query: { title: 'A' }, status: 'failed', reason: 'no-match', message: '未找到' })],
+    rawInput: [{ title: '晴天', artist: '周杰伦' }, { title: 'A' }],
     ...overrides,
   }
 }
@@ -144,6 +145,15 @@ describe('syncHistoryStore — SQLite 持久化', () => {
     ]
     store.upsertTask(makeTask({ id: 'z', detail }))
     expect(store.listTasks()[0].detail).toEqual(detail)
+  })
+
+  it('rawInput 原始输入 JSON 往返无损（重新执行复用）', () => {
+    const rawInput = [
+      { title: '晴天', artist: '周杰伦', alternatives: [{ title: '晴天', artist: '刘瑞琦' }] },
+      { title: '光年之外' },
+    ]
+    store.upsertTask(makeTask({ id: 'r', rawInput }))
+    expect(store.listTasks()[0].rawInput).toEqual(rawInput)
   })
 
   it('旧库（无 detail 列）升级：迁移框架补齐后可正常读写（T9）', () => {

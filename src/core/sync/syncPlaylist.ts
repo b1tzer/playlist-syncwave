@@ -8,6 +8,7 @@ import {
   SyncAbortedError,
   type SyncFailedItem,
   type SyncItemResult,
+  type SyncMatchedResource,
   type SyncOptions,
   type SyncPlan,
   type SyncReport,
@@ -76,6 +77,7 @@ export async function planSync(
           query,
           status: 'matched',
           songId: hit.songId,
+          matchedSong: hit.resource,
         }
         items.push(item)
         options.onStep?.(item)
@@ -96,7 +98,7 @@ export async function planSync(
     ]
 
     let settled:
-      | { type: 'matched'; songId: string }
+      | { type: 'matched'; songId: string; matchedSong?: SyncMatchedResource }
       | { type: 'choice'; attempt: MatchQuery; candidates: PlatformSong[] }
       | null = null
     let lastError: unknown = null
@@ -153,9 +155,14 @@ export async function planSync(
 
         const disposition = classifyCandidates(attempt, candidates)
         if (disposition.kind === 'exact') {
-          settled = { type: 'matched', songId: disposition.songId }
+          const song = candidates.find((c) => c.id === disposition.songId)
+          settled = {
+            type: 'matched',
+            songId: disposition.songId,
+            matchedSong: song ? { title: song.title, artist: song.artist, album: song.album } : undefined,
+          }
           if (i === 0 && firstGenre === undefined) {
-            firstGenre = candidates.find((c) => c.id === disposition.songId)?.genre
+            firstGenre = song?.genre
           }
         } else if (disposition.kind === 'title-only') {
           settled = { type: 'choice', attempt, candidates: disposition.candidates }
@@ -165,7 +172,15 @@ export async function planSync(
         } else {
           const best = findBestMatch(attempt, candidates, { threshold })
           if (best && best.matched) {
-            settled = { type: 'matched', songId: best.candidate.id }
+            settled = {
+              type: 'matched',
+              songId: best.candidate.id,
+              matchedSong: {
+                title: best.candidate.title,
+                artist: best.candidate.artist,
+                album: best.candidate.album,
+              },
+            }
             if (i === 0 && firstGenre === undefined) {
               firstGenre = best.candidate.genre
             }
@@ -220,7 +235,13 @@ export async function planSync(
       matched.push({ query, songId: settled.songId })
       // 自动匹配结果写入缓存（下次可命中）
       target.saveMapping?.(query, settled.songId)
-      step = { index: i, query, status: 'matched', songId: settled.songId }
+      step = {
+        index: i,
+        query,
+        status: 'matched',
+        songId: settled.songId,
+        matchedSong: settled.matchedSong,
+      }
       log.debug('plan.item-matched', '歌曲匹配成功', {
         title: query.title,
         artist: query.artist,
@@ -316,6 +337,12 @@ export async function executeSync(
     if (item) {
       item.status = 'matched'
       item.songId = candidate.id
+      // 手动确认的候选同样记录目标资源关键信息，供重新执行复用
+      item.matchedSong = {
+        title: candidate.title,
+        artist: candidate.artist,
+        album: candidate.album,
+      }
     }
   }
 

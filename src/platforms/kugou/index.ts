@@ -438,7 +438,13 @@ export class KugouAdapter extends BasePlatformAdapter {
 
   protected async fetchPlaylists(credential: string, userId: string): Promise<PlatformPlaylist[]> {
     const items = await this.fetchPlaylistItems(credential)
-    return items.map((item) => this.mapPlaylist(item, userId))
+    // 平台规则：收藏的他人歌单（type=1）不在歌单列表显示。
+    // 实测 v7/get_all_list 条目：type 0=自建/系统收藏夹（默认收藏 is_def=1、我喜欢 is_def=2），
+    // 1=收藏他人歌单（list_create_userid 为他人）；is_mine 恒为 0，不可用于判定。
+    // 过滤只作用于显示列表；fetchPlaylistItems 建立的写操作索引（playlistIndex）保持完整。
+    return items
+      .filter((item) => Number(item.type ?? 0) !== 1)
+      .map((item) => this.mapPlaylist(item, userId))
   }
 
   /** 分页拉取用户歌单原始条目并重建 listid 索引缓存 */
@@ -522,17 +528,38 @@ export class KugouAdapter extends BasePlatformAdapter {
     playlistId: string,
   ): Promise<PlatformSong[]> {
     const meta = await this.resolvePlaylistMeta(credential, playlistId)
+    this.log.debug('playlist.songs', '歌曲拉取路径决策', {
+      playlistId,
+      type: meta.type,
+      globalCollectionId: meta.globalCollectionId,
+    })
     let items: JsonObject[]
     if (meta.type === 1 && meta.globalCollectionId) {
       // 收藏歌单：按 list_create_gid/global_collection_id 走公开歌单接口（listid 拉不到）
       items = await this.fetchTrackAll(credential, meta.globalCollectionId)
+      if (items.length === 0) {
+        // 公开接口对部分歌单返回空（如新版 gcid 体系歌单），回退云歌单接口按 listid 再试
+        this.log.warn('playlist.songs', '公开歌单接口返回空，回退云歌单接口', {
+          playlistId,
+          globalCollectionId: meta.globalCollectionId,
+        })
+        items = await this.fetchTrackAllNew(credential, playlistId, meta.type)
+      }
     } else {
       // 自建歌单：云歌单接口按 listid
       items = await this.fetchTrackAllNew(credential, playlistId, meta.type)
       if (items.length === 0 && meta.globalCollectionId) {
         // 云歌单接口覆盖不到时回退公开歌单接口
+        this.log.warn('playlist.songs', '云歌单接口返回空，回退公开歌单接口', { playlistId })
         items = await this.fetchTrackAll(credential, meta.globalCollectionId)
       }
+    }
+    if (items.length === 0) {
+      this.log.warn('playlist.songs', '两个接口均未返回歌曲，请检查歌单条目字段', {
+        playlistId,
+        type: meta.type,
+        globalCollectionId: meta.globalCollectionId,
+      })
     }
     return items.map((item) => this.mapPlaylistSong(item))
   }
@@ -580,9 +607,14 @@ export class KugouAdapter extends BasePlatformAdapter {
         cookie: this.buildCookie(credential),
       })
       const data = asObject(res.data ?? res)
-      const info = asArray(data.info).map((s) => asObject(s))
-      raw.push(...info)
-      if (info.length < pageSize) break
+      // 公开接口的歌曲在 songs 字段（实测 get_other_list_file_nofilt 返回 data.songs，
+      // 无 info 字段）；songs 混有 {fileid, shield} 屏蔽位条目，按缺 hash 过滤
+      const songs = asArray(data.songs)
+        .map((s) => asObject(s))
+        .filter((s) => Boolean(pickString(s.hash)))
+      raw.push(...songs)
+      const total = typeof data.count === 'number' ? data.count : undefined
+      if (songs.length < pageSize || (total !== undefined && raw.length >= total)) break
     }
     return raw
   }

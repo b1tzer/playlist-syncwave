@@ -6,6 +6,8 @@ export interface MappingHit {
   songId: string
   /** 人工确认的映射（优先采用，无需再搜索验证） */
   confirmed: boolean
+  /** 命中映射对应的目标资源关键信息（重新执行复用时透传，供明细展示与再次复用） */
+  resource?: SyncMatchedResource
 }
 
 /** 同步引擎依赖的目标平台能力（core 内定义，主进程用 adapter 包装注入） */
@@ -37,7 +39,17 @@ export interface SyncFailedItem {
   message: string
 }
 
-/** 每首歌的处理明细：同步中心任务详情清单的最小单元 */
+/** 匹配到的目标平台资源关键信息：重新执行时可直接复用，无需重新搜索 */
+export interface SyncMatchedResource {
+  /** 目标平台上的歌曲标题 */
+  title?: string
+  /** 目标平台上的歌手 */
+  artist?: string
+  /** 目标平台上的专辑 */
+  album?: string
+}
+
+/** 每首歌的处理明细：同步历史任务详情清单的最小单元 */
 export interface SyncItemResult {
   /** 输入列表下标（0-based） */
   index: number
@@ -48,6 +60,8 @@ export interface SyncItemResult {
   message?: string
   /** 匹配到的平台歌曲 ID（matched 时存在） */
   songId?: string
+  /** 匹配到的目标资源关键信息（matched 时存在；映射缓存命中时可能缺失） */
+  matchedSong?: SyncMatchedResource
 }
 
 /** 同歌不同作者：需要用户手动选择的目标候选 */
@@ -151,7 +165,7 @@ export class SearchError extends Error {
 export type SyncInput = MatchQuery[]
 
 /**
- * 同步任务状态（同步中心展示 + SQLite 持久化共用）
+ * 同步任务状态（同步历史展示 + SQLite 持久化共用）
  * - running：执行中（含等待用户确认选择）
  * - done：已完成
  * - failed：执行异常（匹配/写入失败等）
@@ -171,14 +185,20 @@ export interface SyncTaskRecord {
   total: number
   added: number
   failed: number
+  /** 创建时间可读字符串（带年月日）：仅在 createdAtMs 缺失的历史任务中作为展示兜底 */
   createdAt: string
-  /** 精确创建时间戳（毫秒）：同步中心排序依据；历史任务可能缺失（0） */
+  /**
+   * 创建时间的绝对时间戳（Unix 毫秒）：排序与展示的权威依据。
+   * 展示层实时按当前系统时区格式化，OS 修改时区后自动按新时区换算；历史任务可能缺失（0）。
+   */
   createdAtMs?: number
   /** 0-1，运行中更新 */
   progress: number
   failedDetail: string[]
   /** 逐首处理明细（任务详情清单，旧任务可能为空） */
   detail: SyncItemResult[]
+  /** 原始输入清单（同步发起时的 queries）：重新执行时直接复用，旧任务可能为空数组 */
+  rawInput: MatchQuery[]
 }
 
 /**

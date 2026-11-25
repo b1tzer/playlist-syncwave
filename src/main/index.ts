@@ -18,12 +18,14 @@ import {
   SearchError,
   SyncAbortedError,
   type SyncItemResult,
+  type SyncMatchedResource,
   type SyncPlan,
   type SyncReport,
   type SyncSelection,
   type SyncTarget,
 } from '@core/models/sync'
 import type { MatchQuery } from '@core/models/match'
+import { normalize } from '@core/matcher/matchSong'
 import { logCenter } from './logging/logCenter'
 import { upsertSyncTask, listSyncTasks, removeSyncTask, clearSyncTasks } from './syncHistoryService'
 import { getSetting, setSetting, getAllSettings, syncTuning } from './settingsService'
@@ -90,9 +92,18 @@ if (!gotSingleInstanceLock) {
   })
 }
 
-// 歌单缓存服务：TTL 自动刷新 + 单飞去重 + 手动刷新限流（内存态，随进程生命周期）
+// 歌单缓存服务：缓存兜底 + 后台重新验证（逐行 diff 更新）+ 单飞 + 手动刷新限流（内存态，随进程生命周期）
 const playlistCache = createPlaylistCacheService(getDatabase().playlistCache)
 const playlistCacheStore = getDatabase().playlistCache
+
+/** 广播歌单缓存后台刷新结果到所有窗口（渲染层按 platform/playlistId 过滤） */
+function broadcastPlaylistRefresh(channel: string, payload: unknown): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) {
+      win.webContents.send(channel, payload)
+    }
+  }
+}
 
 // --- 日志中心：初始化文件输出并注册为全局默认传输 ---
 logCenter.init()
@@ -481,12 +492,17 @@ ipcMain.handle('platform:user-playlists', (_event, platform: string, force?: boo
           if (!account) throw new Error('登录已过期，请重新扫码')
           return adapter.getUserPlaylists(credential, account.userId)
         },
-        { force: force === true },
+        {
+          force: force === true,
+          onRefreshed: (event) =>
+            broadcastPlaylistRefresh('playlist:list-refreshed', { platform, ...event }),
+        },
       )
       ipcLog.info('platform.user-playlists', '歌单列表返回', {
         platform,
         count: result.data.length,
         fromCache: result.fromCache,
+        stale: result.stale === true,
         throttled: result.throttled === true,
         force: force === true,
       })
@@ -507,13 +523,18 @@ ipcMain.handle(
           platform,
           playlistId,
           () => adapter.getPlaylistSongs(credential, playlistId),
-          { force: force === true },
+          {
+            force: force === true,
+            onRefreshed: (event) =>
+              broadcastPlaylistRefresh('playlist:songs-refreshed', { platform, playlistId, ...event }),
+          },
         )
         ipcLog.info('platform.playlist-songs', '歌单歌曲返回', {
           platform,
           playlistId,
           count: result.data.length,
           fromCache: result.fromCache,
+          stale: result.stale === true,
           force: force === true,
         })
         return result
@@ -531,7 +552,15 @@ function slicePage<T>(data: T[], offset: number, limit: number) {
 
 ipcMain.handle(
   'platform:playlist-songs-page',
-  (_event, platform: string, playlistId: string, offset: number, limit: number, force?: boolean) =>
+  (
+    _event,
+    platform: string,
+    playlistId: string,
+    offset: number,
+    limit: number,
+    force?: boolean,
+    silent?: boolean,
+  ) =>
     ipcLog.time(
       'platform.playlist-songs-page',
       async () => {
@@ -540,7 +569,12 @@ ipcMain.handle(
           platform,
           playlistId,
           () => adapter.getPlaylistSongs(credential, playlistId),
-          { force: force === true },
+          {
+            force: force === true,
+            silent: silent === true,
+            onRefreshed: (event) =>
+              broadcastPlaylistRefresh('playlist:songs-refreshed', { platform, playlistId, ...event }),
+          },
         )
         const page = slicePage(result.data, offset, limit)
         ipcLog.info('platform.playlist-songs-page', '歌单歌曲分页返回', {
@@ -550,8 +584,14 @@ ipcMain.handle(
           limit,
           total: page.total,
           fromCache: result.fromCache,
+          stale: result.stale === true,
         })
-        return { ...page, fromCache: result.fromCache, throttled: result.throttled === true }
+        return {
+          ...page,
+          fromCache: result.fromCache,
+          stale: result.stale === true,
+          throttled: result.throttled === true,
+        }
       },
       { platform, playlistId, offset, limit },
     ),
@@ -559,7 +599,14 @@ ipcMain.handle(
 
 ipcMain.handle(
   'platform:user-playlists-page',
-  (_event, platform: string, offset: number, limit: number, force?: boolean) =>
+  (
+    _event,
+    platform: string,
+    offset: number,
+    limit: number,
+    force?: boolean,
+    silent?: boolean,
+  ) =>
     ipcLog.time(
       'platform.user-playlists-page',
       async () => {
@@ -571,7 +618,12 @@ ipcMain.handle(
             if (!account) throw new Error('登录已过期，请重新扫码')
             return adapter.getUserPlaylists(credential, account.userId)
           },
-          { force: force === true },
+          {
+            force: force === true,
+            silent: silent === true,
+            onRefreshed: (event) =>
+              broadcastPlaylistRefresh('playlist:list-refreshed', { platform, ...event }),
+          },
         )
         const page = slicePage(result.data, offset, limit)
         ipcLog.info('platform.user-playlists-page', '歌单列表分页返回', {
@@ -580,8 +632,14 @@ ipcMain.handle(
           limit,
           total: page.total,
           fromCache: result.fromCache,
+          stale: result.stale === true,
         })
-        return { ...page, fromCache: result.fromCache, throttled: result.throttled === true }
+        return {
+          ...page,
+          fromCache: result.fromCache,
+          stale: result.stale === true,
+          throttled: result.throttled === true,
+        }
       },
       { platform, offset, limit },
     ),
@@ -609,7 +667,8 @@ ipcMain.handle(
         if (typeof name !== 'string' || !name.trim()) throw new Error('歌单名不能为空')
         const { credential, adapter } = await withPlaylistCredential(platform)
         await adapter.renamePlaylist(credential, playlistId, name.trim())
-        playlistCacheStore.invalidatePlaylist(platform, playlistId)
+        // 就地同步缓存中的歌单名：不清缓存，避免旧名兜底闪回
+        playlistCacheStore.updatePlaylistName(platform, playlistId, name.trim())
         ipcLog.info('platform.playlist-rename', '歌单重命名完成', { platform, playlistId })
       },
       { platform, playlistId },
@@ -622,8 +681,8 @@ ipcMain.handle('platform:playlist-delete', (_event, platform: string, playlistId
     async () => {
       const { credential, adapter } = await withPlaylistCredential(platform)
       await adapter.deletePlaylist(credential, playlistId)
-      playlistCacheStore.invalidatePlaylist(platform, playlistId)
-      playlistCacheStore.invalidateSongs(platform, playlistId)
+      playlistCacheStore.removePlaylist(platform, playlistId)
+      playlistCacheStore.markStaleSongs(platform, playlistId)
       ipcLog.info('platform.playlist-delete', '歌单删除完成', { platform, playlistId })
     },
     { platform, playlistId },
@@ -639,8 +698,8 @@ ipcMain.handle(
         if (!Array.isArray(songIds)) throw new Error('无效的歌曲列表')
         const { credential, adapter } = await withPlaylistCredential(platform)
         await adapter.removeSongsFromPlaylist(credential, playlistId, songIds)
-        playlistCacheStore.invalidateSongs(platform, playlistId)
-        playlistCacheStore.invalidatePlaylist(platform, playlistId)
+        playlistCacheStore.markStaleSongs(platform, playlistId)
+        playlistCacheStore.markStalePlaylists(platform)
         ipcLog.info('platform.playlist-remove-songs', '移除歌曲完成', {
           platform,
           playlistId,
@@ -660,8 +719,8 @@ ipcMain.handle(
         if (!Array.isArray(songIds)) throw new Error('无效的歌曲列表')
         const { credential, adapter } = await withPlaylistCredential(platform)
         await adapter.addSongsToPlaylist(credential, playlistId, songIds)
-        playlistCacheStore.invalidateSongs(platform, playlistId)
-        playlistCacheStore.invalidatePlaylist(platform, playlistId)
+        playlistCacheStore.markStaleSongs(platform, playlistId)
+        playlistCacheStore.markStalePlaylists(platform)
         ipcLog.info('platform.playlist-add-songs', '添加歌曲完成', {
           platform,
           playlistId,
@@ -754,6 +813,8 @@ ipcMain.handle(
       /** 渲染层按当前语言格式化的今日日期：歌单名留空时与第一首歌风格拼成默认名 */
       autoNameDate?: string
       batchSize?: number
+      /** 重新执行时复用上次已匹配结果：dupKey -> songId，命中后跳过搜索 */
+      reuseMatches?: Array<{ key: string; songId: string; matchedSong?: SyncMatchedResource }>
     },
   ) =>
     ipcLog.time(
@@ -772,6 +833,12 @@ ipcMain.handle(
           addSongs: (playlistId, songIds) =>
             withTimeout(adapter.addSongsToPlaylist(credential, playlistId, songIds), REQUEST_TIMEOUT_MS),
           lookupMapping: (query) => {
+            // 重新执行：上次任务已匹配到的目标资源直接命中复用，无需重新搜索
+            if (payload.reuseMatches && payload.reuseMatches.length > 0) {
+              const key = `${normalize(query.title)}|${normalize(query.artist ?? '')}`
+              const reused = payload.reuseMatches.find((m) => m.key === key)
+              if (reused) return { songId: reused.songId, confirmed: true, resource: reused.matchedSong }
+            }
             const rows = findMappings(platform, query)
             const confirmed = rows.find((r) => r.confirmed === 1)
             if (confirmed) return { songId: confirmed.songId, confirmed: true }
@@ -828,9 +895,9 @@ ipcMain.handle(
             ...syncTuning(),
             ...controlOptions,
           })
-          // 目标平台新建了歌单：失效其列表缓存，下次访问拉取最新
+          // 目标平台新建了歌单：标记列表缓存过期，下次访问先兜底再重新验证
           if (report.playlistId !== '') {
-            playlistCacheStore.invalidatePlaylists(platform)
+            playlistCacheStore.markStalePlaylists(platform)
           }
           ipcLog.info('platform.sync-playlist', '同步完成', {
             platform,
@@ -1133,7 +1200,7 @@ ipcMain.handle(
             ...controlOptions,
           })
           if (report.playlistId !== '') {
-            playlistCacheStore.invalidatePlaylists(platform)
+            playlistCacheStore.markStalePlaylists(platform)
           }
           notifySyncResult(report.playlistName, report.added, report.failed.length)
           return report

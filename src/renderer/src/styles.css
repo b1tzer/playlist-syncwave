@@ -231,6 +231,16 @@
   }
 }
 
+/* 后台重新验证后的行级更新：仅变化行背景高亮渐隐（不动整表/整组件） */
+@keyframes row-updated {
+  0% {
+    background-color: color-mix(in srgb, var(--sw-primary-container) 45%, transparent);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
 /* 折叠详情展开：内容自上方淡入（to 帧不残留 transform） */
 @keyframes detail-enter {
   from {
@@ -298,6 +308,10 @@
   /* 列表项错峰进入（延迟由内联 animation-delay 控制） */
   .list-item-enter {
     animation: list-item-enter 0.3s cubic-bezier(0.25, 0.1, 0.25, 1) both;
+  }
+  /* 后台重新验证后的行级更新高亮（仅变化行） */
+  .row-updated {
+    animation: row-updated 1.2s cubic-bezier(0.25, 0.1, 0.25, 1) both;
   }
   /* 折叠详情展开 */
   .detail-enter {

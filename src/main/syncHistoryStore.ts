@@ -1,3 +1,4 @@
+import type { MatchQuery } from '@core/models/match'
 import type { SyncItemResult, SyncTaskRecord, SyncTaskStatus } from '@core/models/sync'
 import type { SqliteDb } from './sqlite'
 
@@ -15,15 +16,16 @@ interface TaskRow {
   progress: number
   failed_detail: string
   detail: string
+  raw_input: string
 }
 
 const INTERRUPTED_DETAIL = ['任务中断：应用在同步完成前退出']
 
 const UPSERT_SQL = `
 INSERT INTO sync_tasks
-  (id, name, target_platform, source, status, total, added, failed, created_at, created_at_ms, progress, failed_detail, detail)
+  (id, name, target_platform, source, status, total, added, failed, created_at, created_at_ms, progress, failed_detail, detail, raw_input)
 VALUES
-  (@id, @name, @targetPlatform, @source, @status, @total, @added, @failed, @createdAt, @createdAtMs, @progress, @failedDetail, @detail)
+  (@id, @name, @targetPlatform, @source, @status, @total, @added, @failed, @createdAt, @createdAtMs, @progress, @failedDetail, @detail, @rawInput)
 ON CONFLICT(id) DO UPDATE SET
   name = excluded.name,
   target_platform = excluded.target_platform,
@@ -36,7 +38,8 @@ ON CONFLICT(id) DO UPDATE SET
   created_at_ms = excluded.created_at_ms,
   progress = excluded.progress,
   failed_detail = excluded.failed_detail,
-  detail = excluded.detail
+  detail = excluded.detail,
+  raw_input = excluded.raw_input
 `
 
 function parseStringArray(raw: string): string[] {
@@ -60,6 +63,17 @@ function parseDetail(raw: string | undefined): SyncItemResult[] {
   return []
 }
 
+function parseRawInput(raw: string | undefined): MatchQuery[] {
+  if (!raw) return []
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    if (Array.isArray(parsed)) return parsed as MatchQuery[]
+  } catch {
+    // 历史脏数据按空处理
+  }
+  return []
+}
+
 function rowToTask(row: TaskRow): SyncTaskRecord {
   return {
     id: row.id,
@@ -75,6 +89,7 @@ function rowToTask(row: TaskRow): SyncTaskRecord {
     progress: row.progress,
     failedDetail: parseStringArray(row.failed_detail),
     detail: parseDetail(row.detail),
+    rawInput: parseRawInput(row.raw_input),
   }
 }
 
@@ -93,7 +108,8 @@ CREATE TABLE IF NOT EXISTS sync_tasks (
   created_at_ms INTEGER NOT NULL DEFAULT 0,
   progress REAL NOT NULL,
   failed_detail TEXT NOT NULL,
-  detail TEXT NOT NULL DEFAULT '[]'
+  detail TEXT NOT NULL DEFAULT '[]',
+  raw_input TEXT NOT NULL DEFAULT '[]'
 )
 `)
 
@@ -114,6 +130,7 @@ CREATE TABLE IF NOT EXISTS sync_tasks (
         progress: task.progress,
         failedDetail: JSON.stringify(task.failedDetail),
         detail: JSON.stringify(task.detail),
+        rawInput: JSON.stringify(task.rawInput ?? []),
       })
     },
 

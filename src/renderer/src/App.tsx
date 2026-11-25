@@ -1,22 +1,26 @@
 import { useEffect, useState } from 'react'
 import type { PlatformAccount, PlatformMeta } from '@core/models/platform'
+import type { MatchQuery } from '@core/models/match'
 import Sidebar, { type View } from './components/Sidebar'
 import TextCreator from './components/TextCreator'
 import PlaylistSection from './components/PlaylistSection'
 import LoginSection from './components/LoginSection'
-import SyncCenter from './components/SyncCenter'
+import SyncHistory from './components/SyncHistory'
 import type { PendingConfirmSession, SyncReport, SyncTaskRecord } from '@core/models/sync'
 import SettingsView from './components/SettingsView'
 import ConfirmSyncDialog from './components/ConfirmSyncDialog'
 import { ToastHost, notify } from './components/toast'
 import { createRendererLogger } from './logging/rendererLogger'
 import { useI18n } from './i18n'
-import { failedDetailLines } from './sync/helpers'
+import { failedDetailLines, songDupKey } from './sync/helpers'
+import { useSyncRunner } from './sync/useSyncRunner'
 
 const log = createRendererLogger('renderer.app')
 
 export default function App() {
   const { t } = useI18n()
+  // 同步历史重新执行：App 层持有独立 runner 实例（与各入口组件互不干扰，进度按 taskId 过滤）
+  const { run: runRetry } = useSyncRunner()
   const [view, setView] = useState<View>('create')
   const [platforms, setPlatforms] = useState<PlatformMeta[]>([])
   const [accounts, setAccounts] = useState<Record<string, PlatformAccount | null>>({})
@@ -115,6 +119,7 @@ export default function App() {
               progress: 1,
               failedDetail: [],
               detail: [],
+              rawInput: [],
             }
           log.info('app.pending-confirm-restored', '恢复待确认同步会话', {
             taskId: info.taskId,
@@ -217,6 +222,40 @@ export default function App() {
       .catch((e) => log.error('sync.clear-all-failed', '清空同步历史失败', e))
   }
 
+  /**
+   * 同步历史重新执行：复用原始输入清单，已匹配项直接复用上次查询到的目标资源（跳过搜索），
+   * 其余项重新搜索判定；产生新的任务记录，原历史记录保留。
+   */
+  const handleRetryTask = async (task: SyncTaskRecord) => {
+    // 原始输入优先；旧任务缺失时按明细 index 重建（choice 项 query 为当时判定用的候选）
+    const queries: MatchQuery[] =
+      task.rawInput.length > 0
+        ? task.rawInput
+        : [...task.detail].sort((a, b) => a.index - b.index).map((d) => d.query)
+    if (queries.length === 0) {
+      notify('error', t('toast.syncFailedTitle'), t('syncHistory.retryNoInput'))
+      return
+    }
+    // 已匹配项：dupKey -> songId（连同目标资源关键信息），主进程 lookupMapping 命中后直接复用
+    const reuseMatches = task.detail
+      .filter((d) => d.status === 'matched' && typeof d.songId === 'string' && d.songId !== '')
+      .map((d) => ({ key: songDupKey(d.query), songId: d.songId as string, matchedSong: d.matchedSong }))
+    log.info('sync.retry', '重新执行同步任务', {
+      taskId: task.id,
+      queries: queries.length,
+      reuse: reuseMatches.length,
+    })
+    await runRetry({
+      targetPlatform: task.targetPlatform,
+      queries,
+      name: task.name,
+      source: task.source,
+      reuseMatches,
+      onTaskUpdate: handleTaskUpdate,
+      onPendingConfirmChange: handlePendingConfirmChange,
+    })
+  }
+
   // --- 待确认会话：新会话建立时重置选择与结果状态 ---
 
   const handlePendingConfirmChange = (session: PendingConfirmSession | null) => {
@@ -237,7 +276,7 @@ export default function App() {
     setConfirmDismissed(false)
   }
 
-  /** 弹窗「稍后处理」：仅收起确认窗口，会话保留，可从同步中心重新打开 */
+  /** 弹窗「稍后处理」：仅收起确认窗口，会话保留，可从同步历史重新打开 */
   const handleDismissConfirm = () => {
     log.info('sync.dismiss-pending', '稍后处理待确认同步', {
       taskId: pendingConfirm?.syncTaskId,
@@ -359,7 +398,7 @@ export default function App() {
     resetConfirmSession()
   }
 
-  /** 同步中心：停止运行中的任务（引擎在下一个检查点中止，任务状态由执行方收敛） */
+  /** 同步历史：停止运行中的任务（引擎在下一个检查点中止，任务状态由执行方收敛） */
   const handleStopTask = async (id: string) => {
     log.info('sync.stop-task', '停止同步任务', { taskId: id })
     try {
@@ -450,7 +489,7 @@ export default function App() {
               />
             )}
             {view === 'sync' && (
-              <SyncCenter
+              <SyncHistory
                 platforms={platforms}
                 tasks={tasks}
                 onNewTask={() => setView('create')}
@@ -464,6 +503,7 @@ export default function App() {
                 }}
                 intervenableIds={intervenableIds}
                 onStopTask={(id) => void handleStopTask(id)}
+                onRetryTask={(task) => void handleRetryTask(task)}
               />
             )}
             {view === 'accounts' && (
@@ -478,7 +518,7 @@ export default function App() {
         </main>
       </div>
 
-      {/* 分步确认弹窗：App 层挂载，切换视图不丢失；「稍后处理」收起后仍可从同步中心重新打开 */}
+      {/* 分步确认弹窗：App 层挂载，切换视图不丢失；「稍后处理」收起后仍可从同步历史重新打开 */}
       {pendingConfirm && !confirmDismissed && (
         <ConfirmSyncDialog
           session={pendingConfirm}

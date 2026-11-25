@@ -22,7 +22,11 @@ interface SongRow {
   genre: string | null
 }
 
-/** 歌单列表与歌单歌曲的本地缓存存储（SQLite，整单替换写入） */
+/**
+ * 歌单列表与歌单歌曲的本地缓存存储（SQLite，整单替换写入）。
+ * 缓存永不清空：失效操作只标记过期（updated_at 置 0），数据保留供兜底展示，
+ * 下次读取先返回缓存、后台重新验证后覆盖更新。
+ */
 export function createPlaylistCacheStore(db: SqliteDb) {
   db.exec(`
 CREATE TABLE IF NOT EXISTS playlist_cache_schema (
@@ -62,7 +66,7 @@ CREATE TABLE IF NOT EXISTS playlist_song_meta (
 );
 `)
 
-  /** 缓存 schema 版本是否匹配；不匹配视为无缓存（旧数据失效重新拉取） */
+  /** 缓存 schema 版本是否匹配；不匹配视为过期（数据仍兜底返回，立即重新验证覆盖） */
   function schemaMatches(scope: string, version: number): boolean {
     const row = db
       .prepare('SELECT version FROM playlist_cache_schema WHERE scope = ?')
@@ -78,21 +82,20 @@ CREATE TABLE IF NOT EXISTS playlist_song_meta (
   }
 
   return {
-    /** 平台歌单列表缓存；无缓存或 schema 版本不匹配返回 null（updatedAt 取该平台最新写入时间） */
+    /** 平台歌单列表缓存；无缓存返回 null。schema 版本不匹配时数据仍兜底返回（updatedAt 置 0 视为过期） */
     listPlaylists(
       platform: string,
       schemaVersion?: number,
     ): { list: PlatformPlaylist[]; updatedAt: number } | null {
-      if (schemaVersion !== undefined && !schemaMatches(`playlists:${platform}`, schemaVersion)) {
-        // 版本不匹配：清空该平台全部旧缓存，避免部分歌单残留旧格式数据
-        db.prepare('DELETE FROM playlist_cache WHERE platform = ?').run(platform)
-        return null
-      }
+      const versionMismatch =
+        schemaVersion !== undefined && !schemaMatches(`playlists:${platform}`, schemaVersion)
       const rows = db
         .prepare('SELECT * FROM playlist_cache WHERE platform = ? ORDER BY rowid')
         .all(platform) as unknown as PlaylistRow[]
       if (rows.length === 0) return null
-      const updatedAt = rows.reduce((max, r) => Math.max(max, r.updated_at), 0)
+      const updatedAt = versionMismatch
+        ? 0
+        : rows.reduce((max, r) => Math.max(max, r.updated_at), 0)
       return {
         list: rows.map((r) => ({
           id: r.id,
@@ -106,7 +109,7 @@ CREATE TABLE IF NOT EXISTS playlist_song_meta (
       }
     },
 
-    /** 整份替换某平台的歌单列表缓存 */
+    /** 整份替换某平台的歌单列表缓存（有更新才调用；服务层判断无变化时只 touch） */
     savePlaylists(platform: string, list: PlatformPlaylist[], now: number, schemaVersion?: number): void {
       if (schemaVersion !== undefined) setSchemaVersion(`playlists:${platform}`, schemaVersion)
       db.prepare('DELETE FROM playlist_cache WHERE platform = ?').run(platform)
@@ -130,31 +133,36 @@ CREATE TABLE IF NOT EXISTS playlist_song_meta (
       }
     },
 
-    /** 失效某平台全部歌单列表缓存（如同步建单后） */
-    invalidatePlaylists(platform: string): void {
-      db.prepare('DELETE FROM playlist_cache WHERE platform = ?').run(platform)
+    /** 重命名后就地同步缓存中的歌单名（数据更新而非清空，避免旧名兜底闪回） */
+    updatePlaylistName(platform: string, playlistId: string, name: string): void {
+      db.prepare('UPDATE playlist_cache SET name = ? WHERE platform = ? AND id = ?').run(
+        name,
+        platform,
+        playlistId,
+      )
     },
 
-    /** 失效单个歌单的列表缓存（重命名/删除/歌曲增删后） */
-    invalidatePlaylist(platform: string, playlistId: string): void {
+    /** 删除歌单后同步移除缓存行（业务数据变更，非缓存清空） */
+    removePlaylist(platform: string, playlistId: string): void {
       db.prepare('DELETE FROM playlist_cache WHERE platform = ? AND id = ?').run(
         platform,
         playlistId,
       )
     },
 
-    /** 歌单歌曲缓存；无缓存或 schema 版本不匹配返回 null */
+    /** 标记平台全部歌单列表缓存过期（数据保留，下次读取先兜底再后台重新验证） */
+    markStalePlaylists(platform: string): void {
+      db.prepare('UPDATE playlist_cache SET updated_at = 0 WHERE platform = ?').run(platform)
+    },
+
+    /** 歌单歌曲缓存；无缓存返回 null。schema 版本不匹配时数据仍兜底返回（updatedAt 置 0 视为过期） */
     listSongs(
       platform: string,
       playlistId: string,
       schemaVersion?: number,
     ): { songs: PlatformSong[]; updatedAt: number } | null {
-      if (schemaVersion !== undefined && !schemaMatches(`songs:${platform}`, schemaVersion)) {
-        // 版本不匹配：清空该平台全部歌曲旧缓存，避免残留旧格式数据
-        db.prepare('DELETE FROM playlist_song_cache WHERE platform = ?').run(platform)
-        db.prepare('DELETE FROM playlist_song_meta WHERE platform = ?').run(platform)
-        return null
-      }
+      const versionMismatch =
+        schemaVersion !== undefined && !schemaMatches(`songs:${platform}`, schemaVersion)
       const rows = db
         .prepare(
           'SELECT * FROM playlist_song_cache WHERE platform = ? AND playlist_id = ? ORDER BY rowid',
@@ -164,6 +172,7 @@ CREATE TABLE IF NOT EXISTS playlist_song_meta (
       const meta = db
         .prepare('SELECT updated_at FROM playlist_song_meta WHERE platform = ? AND playlist_id = ?')
         .get(platform, playlistId) as { updated_at: number } | undefined
+      const updatedAt = versionMismatch ? 0 : (meta?.updated_at ?? 0)
       return {
         songs: rows.map((r) => ({
           id: r.song_id,
@@ -174,11 +183,11 @@ CREATE TABLE IF NOT EXISTS playlist_song_meta (
           durationMs: r.duration_ms ?? undefined,
           genre: r.genre ?? undefined,
         })),
-        updatedAt: meta?.updated_at ?? 0,
+        updatedAt,
       }
     },
 
-    /** 整单替换歌单歌曲缓存（先删后插，保持平台顺序） */
+    /** 整单替换歌单歌曲缓存（先删后插，保持平台顺序；有更新才调用） */
     saveSongs(
       platform: string,
       playlistId: string,
@@ -216,16 +225,23 @@ CREATE TABLE IF NOT EXISTS playlist_song_meta (
       ).run(platform, playlistId, now)
     },
 
-    /** 失效歌单歌曲缓存（歌曲增删后） */
-    invalidateSongs(platform: string, playlistId: string): void {
-      db.prepare('DELETE FROM playlist_song_cache WHERE platform = ? AND playlist_id = ?').run(
-        platform,
-        playlistId,
-      )
-      db.prepare('DELETE FROM playlist_song_meta WHERE platform = ? AND playlist_id = ?').run(
-        platform,
-        playlistId,
-      )
+    /** 标记歌单歌曲缓存过期（数据保留，下次读取先兜底再后台重新验证） */
+    markStaleSongs(platform: string, playlistId: string): void {
+      db.prepare(
+        'UPDATE playlist_song_meta SET updated_at = 0 WHERE platform = ? AND playlist_id = ?',
+      ).run(platform, playlistId)
+    },
+
+    /** 接口返回无变化：仅刷新歌单列表时间参数（updated_at），不动数据 */
+    touchPlaylists(platform: string, now: number): void {
+      db.prepare('UPDATE playlist_cache SET updated_at = ? WHERE platform = ?').run(now, platform)
+    },
+
+    /** 接口返回无变化：仅刷新歌单歌曲时间参数（updated_at），不动数据 */
+    touchSongs(platform: string, playlistId: string, now: number): void {
+      db.prepare(
+        'UPDATE playlist_song_meta SET updated_at = ? WHERE platform = ? AND playlist_id = ?',
+      ).run(now, platform, playlistId)
     },
   }
 }

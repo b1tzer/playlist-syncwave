@@ -74,6 +74,61 @@ function HighlightText({
   )
 }
 
+/** 歌手串切分符：与 core 匹配逻辑（artistParts）保持一致，不切斜杠（乐队名常见斜杠） */
+const ARTIST_SPLIT = /feat\.?|ft\.?|featuring|&|,|;|、/i
+
+/**
+ * 歌手串高亮：候选歌手与目标可能使用不同分隔符（& / , / feat 等），
+ * 整体子串匹配不到时按人名单词逐段高亮（忽略大小写，重叠区间合并）。
+ */
+function HighlightArtist({
+  text,
+  target,
+  className,
+}: {
+  text: string
+  target?: string
+  className: string
+}): ReactNode {
+  if (!target) return <>{text}</>
+  const lower = text.toLocaleLowerCase()
+  // 整体一致时优先高亮连续子串
+  const whole = lower.indexOf(target.toLocaleLowerCase())
+  const ranges: Array<[number, number]> =
+    whole !== -1
+      ? [[whole, whole + target.length]]
+      : target
+          .split(ARTIST_SPLIT)
+          .map((p) => p.trim())
+          .filter(Boolean)
+          .map((part) => {
+            const idx = lower.indexOf(part.toLocaleLowerCase())
+            return idx === -1 ? null : ([idx, idx + part.length] as [number, number])
+          })
+          .filter((r): r is [number, number] => r !== null)
+  if (ranges.length === 0) return <>{text}</>
+  ranges.sort((a, b) => a[0] - b[0])
+  const merged: Array<[number, number]> = []
+  for (const r of ranges) {
+    const last = merged[merged.length - 1]
+    if (last && r[0] <= last[1]) last[1] = Math.max(last[1], r[1])
+    else merged.push([r[0], r[1]])
+  }
+  const nodes: ReactNode[] = []
+  let cursor = 0
+  for (const [start, end] of merged) {
+    if (start > cursor) nodes.push(text.slice(cursor, start))
+    nodes.push(
+      <span key={start} className={className}>
+        {text.slice(start, end)}
+      </span>,
+    )
+    cursor = end
+  }
+  if (cursor < text.length) nodes.push(text.slice(cursor))
+  return <>{nodes}</>
+}
+
 /** 封面图组件：防盗链 referer 置空，加载失败回退占位图标 */
 function Cover({ template }: { template: CandidateDisplayTemplate }) {
   const [failed, setFailed] = useState(false)
@@ -127,7 +182,7 @@ function CandidateCard({
           />
         </span>
         <span className="block truncate font-label-sm text-label-sm text-on-surface-variant">
-          <HighlightText text={candidate.artist} target={target.artist} className="text-primary" />
+          <HighlightArtist text={candidate.artist} target={target.artist} className="text-primary" />
         </span>
         {candidate.album && (
           <span className="block truncate font-label-sm text-label-sm text-outline">
@@ -259,7 +314,7 @@ export default function ConfirmSyncDialog({
                 <span className="font-label-sm text-label-sm text-on-surface-variant">
                   {t('confirmDialog.step', { current: current + 1, total })}
                 </span>
-                {/* 稍后处理：仅收起弹窗，会话保留，可随时从同步中心重新打开 */}
+                {/* 稍后处理：仅收起弹窗，会话保留，可随时从同步历史重新打开 */}
                 <button
                   onClick={onDismiss}
                   disabled={confirming}

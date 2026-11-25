@@ -6,7 +6,7 @@ import type { PlatformPlaylist } from '@core/models/platform'
 const playlist = (id: string, name: string): PlatformPlaylist => ({ id, name, songCount: 1 })
 const song = (id: string, title: string, artist: string) => ({ id, title, artist })
 
-describe('playlistCacheStore — 歌单缓存存储', () => {
+describe('playlistCacheStore — 歌单缓存存储（缓存永不清空，失效仅标记过期）', () => {
   let store: ReturnType<typeof createPlaylistCacheStore>
 
   beforeEach(() => {
@@ -82,63 +82,79 @@ describe('playlistCacheStore — 歌单缓存存储', () => {
     expect(store.listSongs('netease', '2')?.songs.map((s) => s.id)).toEqual(['b'])
   })
 
-  it('失效操作：单歌单 / 单歌单歌曲 / 全平台', () => {
+  it('标记过期：数据保留兜底，updatedAt 归 0（列表/歌曲）', () => {
     store.savePlaylists('netease', [playlist('1', 'A'), playlist('2', 'B')], 1000)
     store.saveSongs('netease', '1', [song('a', 'A', 'X')], 3000)
 
-    store.invalidatePlaylist('netease', '1')
-    expect(store.listPlaylists('netease')?.list.map((p) => p.id)).toEqual(['2'])
-    expect(store.listSongs('netease', '1')).not.toBeNull()
+    store.markStalePlaylists('netease')
+    const staleList = store.listPlaylists('netease')
+    expect(staleList?.list.map((p) => p.id)).toEqual(['1', '2'])
+    expect(staleList?.updatedAt).toBe(0)
 
-    store.invalidateSongs('netease', '1')
-    expect(store.listSongs('netease', '1')).toBeNull()
-
-    store.invalidatePlaylists('netease')
-    expect(store.listPlaylists('netease')).toBeNull()
+    store.markStaleSongs('netease', '1')
+    const staleSongs = store.listSongs('netease', '1')
+    expect(staleSongs?.songs.map((s) => s.id)).toEqual(['a'])
+    expect(staleSongs?.updatedAt).toBe(0)
   })
 
-  it('schema 版本：未写入版本时旧缓存失效并清空；写入后按版本读回', () => {
+  it('touch：接口无变化时仅刷新时间参数，数据不变', () => {
+    store.savePlaylists('netease', [playlist('1', 'A')], 1000)
+    store.saveSongs('netease', '1', [song('a', 'A', 'X')], 3000)
+
+    store.touchPlaylists('netease', 5000)
+    store.touchSongs('netease', '1', 6000)
+
+    const list = store.listPlaylists('netease')
+    expect(list?.list.map((p) => p.id)).toEqual(['1'])
+    expect(list?.updatedAt).toBe(5000)
+    const songs = store.listSongs('netease', '1')
+    expect(songs?.songs.map((s) => s.id)).toEqual(['a'])
+    expect(songs?.updatedAt).toBe(6000)
+  })
+
+  it('重命名后就地更新缓存行名称，其他行不受影响', () => {
+    store.savePlaylists('netease', [playlist('1', 'A'), playlist('2', 'B')], 1000)
+    store.updatePlaylistName('netease', '1', 'A2')
+    const cached = store.listPlaylists('netease')
+    expect(cached?.list).toEqual([playlist('1', 'A2'), playlist('2', 'B')])
+  })
+
+  it('删除歌单后同步移除缓存行（业务数据变更）', () => {
+    store.savePlaylists('netease', [playlist('1', 'A'), playlist('2', 'B')], 1000)
+    store.removePlaylist('netease', '1')
+    const cached = store.listPlaylists('netease')
+    expect(cached?.list.map((p) => p.id)).toEqual(['2'])
+  })
+
+  it('schema 版本不匹配：旧数据不清空仍兜底返回，updatedAt 归 0 视为过期', () => {
     store.savePlaylists('kugou', [playlist('1', 'A')], 1000)
     store.saveSongs('kugou', '1', [song('a', 'A', 'X')], 1000)
-    // 旧数据无版本记录：带版本读取视为无缓存，且旧数据被清空
-    expect(store.listPlaylists('kugou', 2)).toBeNull()
-    expect(store.listSongs('kugou', '1', 2)).toBeNull()
-    expect(store.listPlaylists('kugou')).toBeNull()
-    expect(store.listSongs('kugou', '1')).toBeNull()
+    // 旧数据无版本记录：带版本读取仍返回数据（兜底），但 updatedAt=0（过期，立即后台重新验证）
+    const list = store.listPlaylists('kugou', 2)
+    expect(list?.list.map((p) => p.id)).toEqual(['1'])
+    expect(list?.updatedAt).toBe(0)
+    const songs = store.listSongs('kugou', '1', 2)
+    expect(songs?.songs.map((s) => s.id)).toEqual(['a'])
+    expect(songs?.updatedAt).toBe(0)
+    // 数据未被清空：无版本参数读取仍有数据
+    expect(store.listPlaylists('kugou')?.list).toHaveLength(1)
+    expect(store.listSongs('kugou', '1')?.songs).toHaveLength(1)
 
+    // 写入版本后按版本读回正常
     store.savePlaylists('kugou', [playlist('1', 'A')], 2000, 2)
     store.saveSongs('kugou', '1', [song('a', 'A', 'X')], 3000, 2)
-    expect(store.listPlaylists('kugou', 2)?.list).toHaveLength(1)
-    expect(store.listSongs('kugou', '1', 2)?.songs).toHaveLength(1)
-    // 版本不一致同样失效并清空
-    expect(store.listPlaylists('kugou', 3)).toBeNull()
-    expect(store.listSongs('kugou', '1', 3)).toBeNull()
-    expect(store.listPlaylists('kugou')).toBeNull()
-    expect(store.listSongs('kugou', '1')).toBeNull()
+    expect(store.listPlaylists('kugou', 2)?.updatedAt).toBe(2000)
+    expect(store.listSongs('kugou', '1', 2)?.updatedAt).toBe(3000)
   })
 
-  it('schema 版本按平台隔离：其他平台写入版本不误认证本平台旧缓存', () => {
+  it('schema 版本按平台隔离：其他平台写入版本不误认本平台旧缓存', () => {
     // kugou 旧数据(无版本)
     store.savePlaylists('kugou', [playlist('1', 'A')], 1000)
-    store.saveSongs('kugou', '1', [song('a', 'A', 'X')], 1000)
     // 其他平台以版本 2 写入
     store.savePlaylists('netease', [playlist('2', 'B')], 2000, 2)
-    store.saveSongs('netease', '2', [song('b', 'B', 'X')], 2000, 2)
-    // kugou 旧缓存必须失效,不能被 netease 的版本认证
-    expect(store.listPlaylists('kugou', 2)).toBeNull()
-    expect(store.listSongs('kugou', '1', 2)).toBeNull()
-    expect(store.listPlaylists('netease', 2)).not.toBeNull()
-  })
-
-  it('schema 版本不匹配清空时不影响其他平台缓存', () => {
-    store.savePlaylists('kugou', [playlist('1', 'A')], 1000)
-    store.savePlaylists('netease', [playlist('2', 'B')], 2000, 2)
-    store.saveSongs('netease', '2', [song('b', 'B', 'X')], 2000, 2)
-    // 清空 kugou（版本不匹配）
-    expect(store.listPlaylists('kugou', 3)).toBeNull()
-    expect(store.listSongs('kugou', '1', 3)).toBeNull()
-    // netease 不受影响
-    expect(store.listPlaylists('netease', 2)).not.toBeNull()
-    expect(store.listSongs('netease', '2', 2)).not.toBeNull()
+    // kugou 旧缓存兜底返回但视为过期（updatedAt=0）
+    expect(store.listPlaylists('kugou', 2)?.updatedAt).toBe(0)
+    // netease 版本匹配正常
+    expect(store.listPlaylists('netease', 2)?.updatedAt).toBe(2000)
   })
 })

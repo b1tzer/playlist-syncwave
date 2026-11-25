@@ -3,6 +3,7 @@ import type { MatchQuery } from '@core/models/match'
 import type {
   PendingConfirmSession,
   SyncItemResult,
+  SyncMatchedResource,
   SyncReport,
   SyncTaskRecord,
 } from '@core/models/sync'
@@ -24,6 +25,8 @@ interface RunSyncArgs {
   /** 歌单名（空串由主进程自动命名） */
   name: string
   source: string
+  /** 重新执行时复用上次已匹配结果（dupKey -> songId），命中后跳过搜索 */
+  reuseMatches?: Array<{ key: string; songId: string; matchedSong?: SyncMatchedResource }>
   onTaskUpdate: (task: SyncTaskRecord) => void
   onPendingConfirmChange: (session: PendingConfirmSession | null) => void
 }
@@ -33,7 +36,7 @@ interface RunSyncArgs {
  * 文本导入与歌单导入共用：调用方只负责准备 queries。
  */
 export function useSyncRunner() {
-  const { t, formatTime, formatDate } = useI18n()
+  const { t, formatDateTime, formatDate } = useI18n()
   const [running, setRunning] = useState(false)
   const [progress, setProgress] = useState<SyncRunnerProgress | null>(null)
   const [report, setReport] = useState<SyncReport | null>(null)
@@ -45,15 +48,24 @@ export function useSyncRunner() {
   }, [])
 
   const run = useCallback(
-    async ({ targetPlatform, queries, name, source, onTaskUpdate, onPendingConfirmChange }: RunSyncArgs) => {
+    async ({
+      targetPlatform,
+      queries,
+      name,
+      source,
+      reuseMatches,
+      onTaskUpdate,
+      onPendingConfirmChange,
+    }: RunSyncArgs) => {
       setRunning(true)
       setError('')
       setReport(null)
       setProgress({ ratio: 0, stage: 'matching' })
 
       const taskId = `task-${Date.now()}`
-      const createdAt = formatTime(new Date())
-      const autoNameDate = formatDate(new Date())
+      const now = new Date()
+      const createdAt = formatDateTime(now)
+      const autoNameDate = formatDate(now)
       const baseTask: SyncTaskRecord = {
         id: taskId,
         name: name || autoNameDate,
@@ -64,15 +76,17 @@ export function useSyncRunner() {
         added: 0,
         failed: 0,
         createdAt,
-        // 精确时间戳：同步中心按时间排序的依据（createdAt 仅含时刻，跨天无法比较）
-        createdAtMs: Date.now(),
+        // 绝对时间戳：排序与展示的权威依据（展示层按当前时区实时格式化，改时区自动换算）
+        createdAtMs: now.getTime(),
         progress: 0,
         failedDetail: [],
         detail: [],
+        // 原始输入随任务持久化：重新执行时直接复用
+        rawInput: queries,
       }
       onTaskUpdate(baseTask)
 
-      // 逐首明细实时累积（主进程 sync:step 广播），供同步中心详情清单展示
+      // 逐首明细实时累积（主进程 sync:step 广播），供同步历史详情清单展示
       const detailRef: SyncItemResult[] = []
       const offProgress = window.electronAPI.platforms.onSyncProgress((p) => {
         if (p.taskId !== taskId) return
@@ -95,6 +109,8 @@ export function useSyncRunner() {
           queries,
           name,
           autoNameDate,
+          undefined,
+          reuseMatches,
         )
         const finalDetail = rep.items ?? [...detailRef]
 
@@ -214,7 +230,7 @@ export function useSyncRunner() {
         setProgress(null)
       }
     },
-    [t, formatTime, formatDate],
+    [t, formatDateTime, formatDate],
   )
 
   return { run, running, progress, report, error, reset }

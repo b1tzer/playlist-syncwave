@@ -13,7 +13,7 @@ import type {
 } from '@core/models/platform'
 import type { MatchQuery } from '@core/models/match'
 import type { PendingConfirmSession, SyncTaskRecord } from '@core/models/sync'
-import { MANUAL_REFRESH_MIN_INTERVAL_MS } from '@core/cachePolicy'
+import { MANUAL_REFRESH_COOLDOWN_MS, VISIBLE_REFRESH_CHECK_MS } from '@core/cachePolicy'
 import { toM3u } from '@core/export/toM3u'
 import { toCsv } from '@core/export/toCsv'
 import { createRendererLogger } from '../logging/rendererLogger'
@@ -42,7 +42,7 @@ interface PlaylistSectionProps {
   platforms: PlatformMeta[]
   accounts: Record<string, PlatformAccount | null>
   searchQuery: string
-  /** 同步任务记录上报（同步中心展示与持久化） */
+  /** 同步任务记录上报（同步历史展示与持久化） */
   onTaskUpdate: (task: SyncTaskRecord) => void
   /** 待确认会话（App 层持有，选择流程由 ConfirmSyncDialog 完成） */
   pendingConfirm: PendingConfirmSession | null
@@ -152,6 +152,52 @@ export default function PlaylistSection({
   const [refreshCooldown, setRefreshCooldown] = useState(0)
   const [error, setError] = useState<string>('')
 
+  // --- 缓存兜底 + 后台重新验证的行级更新 ---
+  /** 后台重新验证后有变化的歌单行 id（行级高亮动画，结束后移除） */
+  const [listFlashIds, setListFlashIds] = useState<Set<string>>(new Set())
+  /** 后台重新验证后有变化的歌曲行 id（行级高亮动画，结束后移除） */
+  const [songFlashIds, setSongFlashIds] = useState<Set<string>>(new Set())
+  /** 已完成入场动画的歌单行 id：高亮动画结束后恢复为无动画态，避免重播入场动画 */
+  const [listEnteredIds, setListEnteredIds] = useState<Set<string>>(new Set())
+  /** 当前歌单列表是否有数据：有缓存兜底时静默刷新，仅首次无数据时显示整区 loading */
+  const playlistsRef = useRef<PlatformPlaylist[]>([])
+  useEffect(() => {
+    playlistsRef.current = playlists
+  }, [playlists])
+  /** 当前歌曲数据所属歌单：同歌单重开有缓存兜底，跨歌单切换才显示整区 loading */
+  const songsPlaylistIdRef = useRef<string | null>(null)
+  /** activeId 镜像：可见性刷新回调里读取当前歌单，避免闭包 stale */
+  const activeIdRef = useRef<string | null>(null)
+  useEffect(() => {
+    activeIdRef.current = activeId
+  }, [activeId])
+
+  const markListEntered = (id: string) => {
+    setListEnteredIds((prev) => {
+      if (prev.has(id)) return prev
+      const next = new Set(prev)
+      next.add(id)
+      return next
+    })
+  }
+  const clearListFlash = (id: string) => {
+    setListFlashIds((prev) => {
+      if (!prev.has(id)) return prev
+      const next = new Set(prev)
+      next.delete(id)
+      return next
+    })
+    markListEntered(id)
+  }
+  const clearSongFlash = (id: string) => {
+    setSongFlashIds((prev) => {
+      if (!prev.has(id)) return prev
+      const next = new Set(prev)
+      next.delete(id)
+      return next
+    })
+  }
+
   // --- 歌单选择与右键菜单 ---
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [menu, setMenu] = useState<{
@@ -249,9 +295,10 @@ export default function PlaylistSection({
   )
 
   const fetchPlaylists = useCallback(
-    async (force = false) => {
+    async (force = false, silent = false) => {
       if (!loggedIn) return
-      setLoading(true)
+      // 有缓存兜底时静默返回（不显示整区 loading），后台重新验证经事件推送行级更新
+      if (playlistsRef.current.length === 0) setLoading(true)
       setError('')
       try {
         const res = await window.electronAPI.platforms.userPlaylistsPage(
@@ -259,8 +306,9 @@ export default function PlaylistSection({
           0,
           PLAYLIST_PAGE_SIZE,
           force,
+          silent,
         )
-        if (res.throttled) {
+        if (res.throttled && !silent) {
           notify('warning', t('playlist.refreshThrottled'))
         }
         log.info('playlist.list.fetch', '拉取歌单列表第一页', {
@@ -268,6 +316,7 @@ export default function PlaylistSection({
           count: res.items.length,
           total: res.total,
           fromCache: res.fromCache,
+          stale: res.stale === true,
           force,
         })
         setPlaylists(res.items)
@@ -288,6 +337,33 @@ export default function PlaylistSection({
     },
     [active, loggedIn, t],
   )
+
+  // 歌单列表后台重新验证完成：整份数据替换 + 变化行行级高亮（不整区 loading、不动其他行）
+  useEffect(() => {
+    // preload 与渲染层版本不同步时（如 dev 下 preload 未重载）可选调用降级，避免白屏
+    const off = window.electronAPI.platforms.onPlaylistsRefreshed?.((e) => {
+      if (e.platform !== active) return
+      // unchanged：主进程已刷新时间参数，无需动作；failed：保留缓存兜底，静默
+      if (e.status !== 'updated' || !e.data) return
+      log.info('playlist.list.refreshed', '歌单列表后台重新验证完成', {
+        platform: e.platform,
+        changed: e.changedIds?.length ?? 0,
+        added: e.addedIds?.length ?? 0,
+        removed: e.removedIds?.length ?? 0,
+      })
+      setPlaylists(e.data)
+      setPlaylistTotal(e.data.length)
+      const flash = new Set([...(e.changedIds ?? []), ...(e.addedIds ?? [])])
+      if (flash.size > 0) setListFlashIds(flash)
+      // 剔除已不存在的选择
+      setSelectedIds((prev) => {
+        const ids = new Set(e.data!.map((p) => p.id))
+        const next = new Set([...prev].filter((id) => ids.has(id)))
+        return next.size === prev.size ? prev : next
+      })
+    })
+    return off ?? (() => {})
+  }, [active])
 
   /** 滚动到底部时加载下一页歌单 */
   const loadMorePlaylists = async () => {
@@ -332,6 +408,10 @@ export default function PlaylistSection({
     setSelectedIds(new Set())
     setMenu(null)
     setRenamingId(null)
+    setListFlashIds(new Set())
+    setSongFlashIds(new Set())
+    setListEnteredIds(new Set())
+    songsPlaylistIdRef.current = null
     autoOpenedRef.current = {}
     void fetchPlaylists()
   }, [fetchPlaylists])
@@ -365,7 +445,7 @@ export default function PlaylistSection({
     }
   }, [])
 
-  // 手动刷新冷却倒计时
+  // 手动刷新冷却倒计时（仅按钮 UX 防连点；真实限流由主进程令牌桶控制）
   useEffect(() => {
     if (refreshCooldown <= 0) return
     const timer = setInterval(() => setRefreshCooldown((s) => s - 1), 1000)
@@ -376,7 +456,7 @@ export default function PlaylistSection({
     if (refreshCooldown > 0 || refreshing || syncRunning) return
     log.info('playlist.list.refresh', '手动强制刷新歌单列表', { platform: active })
     setRefreshing(true)
-    setRefreshCooldown(Math.ceil(MANUAL_REFRESH_MIN_INTERVAL_MS / 1000))
+    setRefreshCooldown(Math.ceil(MANUAL_REFRESH_COOLDOWN_MS / 1000))
     await fetchPlaylists(true)
     setRefreshing(false)
   }
@@ -386,7 +466,8 @@ export default function PlaylistSection({
       // 记录该平台最后打开的歌单，切回时恢复
       lastOpenedRef.current[active] = id
       setActiveId(id)
-      setLoading(true)
+      // 跨歌单切换才显示整区 loading；同歌单重开有缓存兜底，静默返回后经事件行级更新
+      if (songsPlaylistIdRef.current !== id) setLoading(true)
       setError('')
       // 切换歌单时重置管理操作状态
       setRenamingId(null)
@@ -394,14 +475,25 @@ export default function PlaylistSection({
       setSearchInput('')
       setSearchError('')
       try {
-        const res = await window.electronAPI.platforms.playlistSongsPage(active, id, 0, SONG_PAGE_SIZE)
+        // 打开即静默强制重新验证一次（令牌桶约束，桶允许才请求接口）：先缓存兜底展示，
+        // 后台验证完成后经事件推送行级更新
+        const res = await window.electronAPI.platforms.playlistSongsPage(
+          active,
+          id,
+          0,
+          SONG_PAGE_SIZE,
+          true,
+          true,
+        )
         log.info('playlist.songs.fetch', '拉取歌单歌曲第一页', {
           platform: active,
           playlistId: id,
           count: res.items.length,
           total: res.total,
           fromCache: res.fromCache,
+          stale: res.stale === true,
         })
+        songsPlaylistIdRef.current = id
         setSongs(res.items)
         setSongTotal(res.total)
       } catch (e) {
@@ -413,6 +505,88 @@ export default function PlaylistSection({
     },
     [active, t],
   )
+
+  // --- 可见性驱动刷新：只在用户看得到的时候更新，显示与更新两条线 ---
+  // 进入歌单页（挂载）、窗口重新聚焦、切回前台 → 静默强制重新验证一次（令牌桶约束）；
+  // 打开期间每 VISIBLE_REFRESH_CHECK_MS 检查一次缓存是否过期（过期才请求接口）。
+  const refreshVisible = useCallback(() => {
+    if (!loggedIn) return
+    log.debug('playlist.visible-refresh', '可见性驱动刷新', { platform: active })
+    void fetchPlaylists(true, true)
+    const playlistId = activeIdRef.current
+    if (playlistId) {
+      void window.electronAPI.platforms.playlistSongsPage(
+        active,
+        playlistId,
+        0,
+        SONG_PAGE_SIZE,
+        true,
+        true,
+      )
+    }
+  }, [loggedIn, active, fetchPlaylists])
+
+  const visibleRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => {
+    if (!loggedIn) return
+    // 挂载/切回页面/聚焦等连续触发 300ms 去抖合并为一次刷新
+    const schedule = () => {
+      if (visibleRefreshTimerRef.current) clearTimeout(visibleRefreshTimerRef.current)
+      visibleRefreshTimerRef.current = setTimeout(() => {
+        visibleRefreshTimerRef.current = null
+        refreshVisible()
+      }, 300)
+    }
+    schedule()
+    // 打开期间定期检查：非强制，主进程按 TTL 判断（过期才请求接口，走令牌桶）
+    const interval = setInterval(() => {
+      void fetchPlaylists(false, true)
+      const playlistId = activeIdRef.current
+      if (playlistId) {
+        void window.electronAPI.platforms.playlistSongsPage(
+          active,
+          playlistId,
+          0,
+          SONG_PAGE_SIZE,
+          false,
+          true,
+        )
+      }
+    }, VISIBLE_REFRESH_CHECK_MS)
+    const onFocus = () => schedule()
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') schedule()
+    }
+    window.addEventListener('focus', onFocus)
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      if (visibleRefreshTimerRef.current) clearTimeout(visibleRefreshTimerRef.current)
+      clearInterval(interval)
+      window.removeEventListener('focus', onFocus)
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
+  }, [loggedIn, active, refreshVisible, fetchPlaylists])
+
+  // 歌单歌曲后台重新验证完成：仅当前打开歌单生效，整份替换 + 变化行行级高亮
+  useEffect(() => {
+    // preload 与渲染层版本不同步时可选调用降级，避免白屏
+    const off = window.electronAPI.platforms.onSongsRefreshed?.((e) => {
+      if (e.platform !== active || e.playlistId !== activeId) return
+      if (e.status !== 'updated' || !e.data) return
+      log.info('playlist.songs.refreshed', '歌单歌曲后台重新验证完成', {
+        platform: e.platform,
+        playlistId: e.playlistId,
+        changed: e.changedIds?.length ?? 0,
+        added: e.addedIds?.length ?? 0,
+        removed: e.removedIds?.length ?? 0,
+      })
+      setSongs(e.data)
+      setSongTotal(e.data.length)
+      const flash = new Set([...(e.changedIds ?? []), ...(e.addedIds ?? [])])
+      if (flash.size > 0) setSongFlashIds(flash)
+    })
+    return off ?? (() => {})
+  }, [active, activeId])
 
   // 歌单列表加载完成后自动打开详情：该平台首次访问打开第一个，曾打开过则恢复上次选择
   useEffect(() => {
@@ -684,6 +858,7 @@ export default function PlaylistSection({
         setSongTotal(0)
         setActiveId(null)
         setSearchResults(null)
+        songsPlaylistIdRef.current = null
       }
       setDeleteTarget(null)
     } catch (e) {
@@ -967,11 +1142,26 @@ export default function PlaylistSection({
                     {keyword ? t('playlist.noMatch') : t('playlist.empty')}
                   </li>
                 )}
-                {visiblePlaylists.map((p, i) => (
+                {visiblePlaylists.map((p, i) => {
+                  const flashing = listFlashIds.has(p.id)
+                  const entered = listEnteredIds.has(p.id)
+                  return (
                   <li
                     key={p.id}
-                    className="list-item-enter"
-                    style={{ animationDelay: `${Math.min(i, 15) * 24}ms` }}
+                    className={flashing ? 'row-updated' : entered ? '' : 'list-item-enter'}
+                    style={
+                      flashing || entered ? undefined : { animationDelay: `${Math.min(i, 15) * 24}ms` }
+                    }
+                    onAnimationEnd={(e) => {
+                      if (e.target !== e.currentTarget) return
+                      if (flashing) {
+                        // 高亮结束：移除高亮并标记已入场，避免切回入场 class 重播动画
+                        clearListFlash(p.id)
+                      } else {
+                        // 入场动画结束：标记已入场，后续 class 变化不再触发动画
+                        markListEntered(p.id)
+                      }
+                    }}
                   >
                     {renamingId === p.id ? (
                       <div className="flex w-full items-center gap-1.5 rounded-lg bg-primary-container/15 px-2 py-1.5 text-primary">
@@ -1042,7 +1232,8 @@ export default function PlaylistSection({
                       </div>
                     )}
                   </li>
-                ))}
+                  )
+                })}
                 {playlists.length < playlistTotal && (
                   <li className="list-none">
                     <LoadMoreSentinel onVisible={() => void loadMorePlaylists()} />
@@ -1157,6 +1348,8 @@ export default function PlaylistSection({
             {!loading && activeId && (
               <SongList
                 songs={songs}
+                flashIds={songFlashIds}
+                onFlashEnd={clearSongFlash}
                 className="min-h-0 flex-1"
                 renderFooter={
                   songs.length < songTotal

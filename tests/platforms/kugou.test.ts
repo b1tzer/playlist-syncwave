@@ -27,7 +27,7 @@ function makeApi(overrides: Partial<KugouApi> = {}): KugouApi {
     }),
     user_playlist: async () => ({ status: 200, body: { data: { info: [] } }, cookie: [] }),
     playlist_track_all_new: async () => ({ status: 200, body: { data: { info: [] } }, cookie: [] }),
-    playlist_track_all: async () => ({ status: 200, body: { data: { info: [] } }, cookie: [] }),
+    playlist_track_all: async () => ({ status: 200, body: { data: { songs: [] } }, cookie: [] }),
     search: async () => ({ status: 200, body: { data: { lists: [] } }, cookie: [] }),
     playlist_add: async () => ({ status: 200, body: { data: { listid: 99 } }, cookie: [] }),
     playlist_tracks_add: async () => ({ status: 200, body: {}, cookie: [] }),
@@ -152,7 +152,7 @@ describe('KugouAdapter — 映射契约', () => {
                 name: '我的歌单',
                 count: 42,
                 pic: 'http://c1.kgimg.com/stdmusic/{size}/20190626/a.jpg',
-                type: 1,
+                type: 0,
                 from_listid: 12345,
                 list_create_gid: 'collection_3_1_4_0',
               },
@@ -174,6 +174,27 @@ describe('KugouAdapter — 映射契约', () => {
     ])
   })
 
+  it('歌单列表过滤：收藏的他人歌单（type=1）不显示，自建/系统歌单保留', async () => {
+    const api = makeApi({
+      user_playlist: async () => ({
+        status: 200,
+        body: {
+          data: {
+            info: [
+              { listid: 1, name: '默认收藏', count: 0, type: 0, is_def: 1 },
+              { listid: 2, name: '我喜欢', count: 42, type: 0, is_def: 2 },
+              { listid: 3, name: '收藏的官方歌单', count: 224, type: 1 },
+              { listid: 7, name: '自建歌单', count: 24, type: 0 },
+            ],
+          },
+        },
+        cookie: [],
+      }),
+    })
+    const list = await new KugouAdapter(api, DEVICE).getUserPlaylists('c', '1')
+    expect(list.map((p) => p.name)).toEqual(['默认收藏', '我喜欢', '自建歌单'])
+  })
+
   it('歌单列表映射：带 encode_gcid 时优先用官方分享页 songlist 链接（自建/收藏通用）', async () => {
     const api = makeApi({
       user_playlist: async () => ({
@@ -191,9 +212,9 @@ describe('KugouAdapter — 映射契约', () => {
               },
               {
                 listid: 6,
-                name: '收藏歌单',
+                name: '自建歌单2',
                 count: 8,
-                type: 1,
+                type: 0,
                 from_listid: 12345,
                 gcid: 'gcid_abcdefgh1234',
                 list_create_userid: 666646761,
@@ -210,7 +231,7 @@ describe('KugouAdapter — 映射契约', () => {
       'https://www.kugou.com/songlist/gcid_3zco8lfbz7z0f8/' +
         '?src_cid=3zco8lfbz7z0f8&uid=1&chl=link&iszlist=1',
     )
-    // 收藏歌单：创建者 uid 取条目 list_create_userid
+    // 条目提供 list_create_userid 时优先使用
     expect(list[1].webUrl).toBe(
       'https://www.kugou.com/songlist/gcid_abcdefgh1234/' +
         '?src_cid=abcdefgh1234&uid=666646761&chl=link&iszlist=1',
@@ -382,7 +403,15 @@ describe('KugouAdapter — 映射契约', () => {
   it('歌单歌曲：收藏歌单直接走公开歌单接口，不调云歌单接口', async () => {
     const fallback = vi.fn(async () => ({
       status: 200,
-      body: { data: { info: [{ hash: 'DEF456', name: '刘若英 - 后来.mp3', timelen: 240000 }] } },
+      // 公开接口歌曲在 songs 字段，混有 {fileid, shield} 屏蔽位条目（缺 hash）需过滤
+      body: {
+        data: {
+          songs: [
+            { hash: 'DEF456', name: '刘若英 - 后来.mp3', timelen: 240000 },
+            { fileid: 1, shield: 1 },
+          ],
+        },
+      },
       cookie: [],
     }))
     const newApi = vi.fn(async () => ({ status: 200, body: { data: { info: [] } }, cookie: [] }))
@@ -406,6 +435,45 @@ describe('KugouAdapter — 映射契约', () => {
     expect(newApi).not.toHaveBeenCalled()
     expect(fallback).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'collection_3_1_4_0' }),
+    )
+    // 屏蔽位条目被过滤，仅映射真实歌曲
+    expect(songs).toHaveLength(1)
+    expect(songs[0]).toMatchObject({ id: 'def456', title: '后来', artist: '刘若英' })
+  })
+
+  it('歌单歌曲：收藏歌单公开接口返回空时回退云歌单接口', async () => {
+    const fallback = vi.fn(async () => ({
+      status: 200,
+      body: { data: { songs: [] } },
+      cookie: [],
+    }))
+    const newApi = vi.fn(async () => ({
+      status: 200,
+      body: { data: { info: [{ hash: 'DEF456', name: '刘若英 - 后来.mp3', timelen: 240000 }] } },
+      cookie: [],
+    }))
+    const api = makeApi({
+      user_playlist: async () => ({
+        status: 200,
+        body: {
+          data: {
+            info: [
+              { listid: 5, name: 'x', count: 1, type: 1, list_create_gid: 'collection_3_1_4_0' },
+            ],
+          },
+        },
+        cookie: [],
+      }),
+      playlist_track_all: fallback,
+      playlist_track_all_new: newApi,
+    })
+    const adapter = new KugouAdapter(api, DEVICE)
+    const songs = await adapter.getPlaylistSongs('c', '5')
+    expect(fallback).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'collection_3_1_4_0' }),
+    )
+    expect(newApi).toHaveBeenCalledWith(
+      expect.objectContaining({ listid: '5', type: 1 }),
     )
     expect(songs[0]).toMatchObject({ id: 'def456', title: '后来', artist: '刘若英' })
   })

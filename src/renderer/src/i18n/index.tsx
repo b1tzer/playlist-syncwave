@@ -23,8 +23,9 @@ interface I18nContextValue {
   locale: Locale
   setLocale: (locale: Locale) => void
   t: (key: TranslationKey, params?: TranslateParams) => string
-  formatTime: (date: Date) => string
   formatDate: (date: Date) => string
+  /** 带年月日的完整时间（如 2026/11/25 11:35:40），按当前系统时区与界面语言格式化 */
+  formatDateTime: (date: Date) => string
 }
 
 const I18nContext = createContext<I18nContextValue | null>(null)
@@ -68,15 +69,18 @@ export function I18nProvider({ children }: { children: ReactNode }) {
     [locale],
   )
 
-  const formatTime = useCallback(
-    (date: Date) => date.toLocaleTimeString(locale, { hour12: false }),
+  const formatDate = useCallback((date: Date) => date.toLocaleDateString(locale), [locale])
+
+  // toLocaleString 由 V8/Chromium 的 ICU 提供，跨平台（macOS/Windows/Linux）行为一致，
+  // 且基于传入 Date 的绝对时间按「当前」系统时区换算：OS 修改时区后无需重启即可正确显示。
+  const formatDateTime = useCallback(
+    (date: Date) =>
+      `${date.toLocaleDateString(locale)} ${date.toLocaleTimeString(locale, { hour12: false })}`,
     [locale],
   )
 
-  const formatDate = useCallback((date: Date) => date.toLocaleDateString(locale), [locale])
-
   return (
-    <I18nContext.Provider value={{ locale, setLocale, t, formatTime, formatDate }}>
+    <I18nContext.Provider value={{ locale, setLocale, t, formatDate, formatDateTime }}>
       {children}
     </I18nContext.Provider>
   )

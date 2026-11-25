@@ -138,7 +138,7 @@ export const LOG_MESSAGE_EN: Record<string, string> = {
   移除歌曲失败: 'Remove song failed',
   添加歌曲失败: 'Add song failed',
 
-  // --- 同步中心 ---
+  // --- 同步历史 ---
   开始同步: 'Sync started',
   同步结束: 'Sync finished',
   同步失败: 'Sync failed',

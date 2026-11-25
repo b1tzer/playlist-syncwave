@@ -54,6 +54,27 @@ describe('runMigrations — 版本化迁移', () => {
     expect(row.created_at_ms).toBe(0)
   })
 
+  it('v5：从任务 id 回填 created_at_ms，历史任务可显示带年月日的完整时间', () => {
+    // 模拟迁移前的老库数据：T9 之前无 detail 列，created_at 仅时刻
+    db.prepare(
+      `INSERT INTO sync_tasks
+       (id, name, target_platform, source, status, total, added, failed, created_at, progress, failed_detail)
+       VALUES
+         ('task-1764043200000', '旧任务A', 'netease', 'text-import', 'done', 1, 1, 0, '11:35:40', 1, '[]'),
+         ('sync-1764043260000-abc123', '旧任务B', 'netease', 'text-import', 'done', 1, 1, 0, '12:01:00', 1, '[]'),
+         ('legacy-fixed-id', '旧任务C', 'netease', 'text-import', 'done', 1, 1, 0, '13:00:00', 1, '[]')`,
+    ).run()
+    runMigrations(db)
+    const ms = (id: string) =>
+      (db.prepare('SELECT created_at_ms FROM sync_tasks WHERE id = ?').get(id) as {
+        created_at_ms: number
+      }).created_at_ms
+    expect(ms('task-1764043200000')).toBe(1764043200000)
+    expect(ms('sync-1764043260000-abc123')).toBe(1764043260000)
+    // id 无法解析时间戳的行保持 0，展示回退存储的可读字符串
+    expect(ms('legacy-fixed-id')).toBe(0)
+  })
+
   it('幂等：重复执行不报错且版本不重复', () => {
     runMigrations(db)
     const first = db.prepare('SELECT COUNT(*) AS c FROM schema_migrations').get() as { c: number }
