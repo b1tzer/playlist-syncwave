@@ -98,7 +98,8 @@ tests/             # Vitest 单元测试（core/main/platforms/renderer）
 - 快捷键：`main/menu.ts` 统一定义——导航 `CmdOrCtrl+1..5`（快速创建/歌单/同步/账号/设置），`CmdOrCtrl+N` 为隐藏别名；`before-input-event` 处理 `Cmd/Ctrl+,`（设置）与正式包吞掉 `Cmd/Ctrl+R`（含 Shift）/F5；View 菜单 Reload/DevTools 仅开发模式，`webPreferences.devTools: isDev`；不注册 globalShortcut
 - 设置页：分区（外观/通用/网络/高级/数据/关于）+ 设置搜索（命中自动展开高级区）+ 主题三态 `light/dark/system`（默认深色；渲染层 `prefers-color-scheme` 联动，主进程同步 `nativeTheme.themeSource`）+ 阈值语义预设（宽松 0.45 / 平衡 0.6 / 严格 0.75）+ 重试/间隔滑块（350ms 防抖回写）+ 高级区默认折叠与「恢复默认」+ 开关失败回滚 + 代理「先测后用」（`main/proxy.ts testProxy` 独立 axios 请求 Cloudflare 204，测试通过且输入未改动才应用，未通过时 Apply 置灰、外层 span 悬浮 Tooltip、Enter 同样拦截）+ 清空歌曲缓存两步确认（`playlistCacheStore.clearAll` 物理删除）
 - 调优参数单一事实源 `core/sync/tuning.ts`：`SYNC_TUNING_DEFAULTS`（threshold 0.6 / retries 2 / interval 500ms）、`SYNC_TUNING_RANGE`（0.4~0.9 / 0~5 / 300~3000ms）、`THRESHOLD_PRESETS`（0.45/0.6/0.75）；引擎、主进程、设置页三处同源引用
-- i18n：自研轻量类型安全方案（`renderer/src/i18n/translations.ts`，en-US 以 `Record<TranslationKey, string>` 强制键一致）；语言偏好存 SQLite，非法值回退 zh-CN；同步失败/解析失败按稳定 reason 码翻译
+- i18n：自研轻量类型安全方案（`renderer/src/i18n/translations.ts`，en-US 以 `Record<TranslationKey, string>` 强制键一致）；语言偏好存 SQLite，非法值回退 zh-CN；同步失败/解析失败按稳定 reason 码翻译。首帧用 preload `settings:initial` 同步快照取语言/主题，缺键回退中文文案；避免异步恢复导致 key 或深色闪烁
+- 视图切换：已访问视图保持挂载、`display:none` 隐藏，切回不重新挂载、不重复 IPC；歌单页 `visible` prop 在隐藏时暂停轮询；去掉 0.3s 整页入场动画。拉伸窗口原生底色与 CSS 表面色一致，长列表行改为悬浮时测量一次（不再每行常驻 `ResizeObserver`）
 - 安全：渲染层 `sandbox: true`、`contextIsolation: true`，通信仅走 preload 白名单；打包环境由 `main/security.ts` 注入 CSP 与 nosniff；`core/logging/redact.ts` 递归脱敏
 
 ---
@@ -116,7 +117,7 @@ tests/             # Vitest 单元测试（core/main/platforms/renderer）
 
 | 项目 | 当前值 | 证据 |
 |---|---|---|
-| 应用版本 / 名称 | 0.1.0 / playlist-sync（产品名 SyncWave） | `package.json:2-3` |
+| 应用版本 / 名称 | 0.1.1 / playlist-sync（产品名 SyncWave） | `package.json:2-3` |
 | 平台 | 4：netease / qqmusic / kugou / applemusic | `src/platforms/*/index.ts` |
 | SQLite 表 | 10（含 `schema_migrations`） | `src/main/*Store.ts`、`migrations.ts` |
 | 迁移 | 唯一基线 `version=6`，启动先于 Store 建表 | `src/main/migrations.ts:43-106`、`appDatabase.ts:73-80` |
@@ -124,7 +125,7 @@ tests/             # Vitest 单元测试（core/main/platforms/renderer）
 | 缓存常量 | 列表 TTL 10min / 歌曲 TTL 30min / 令牌桶 3 个、10s 补 1 | `src/core/cachePolicy.ts:17-36` |
 | 同步调优 | 默认 0.6 / 2 / 500ms；预设 0.45 / 0.6 / 0.75 | `src/core/sync/tuning.ts:17-40` |
 | 更新源 | GitHub Releases（唯一源） | `electron-builder.yml:26-32`、`src/main/updater.ts:14-15` |
-| 测试数 | 383 | `npm run test` 输出 |
+| 测试数 | 384 | `npm run test` 输出 |
 
 **构建**：本地未执行 `electron-builder` 打包；tag 推送后由发布工作流在 CI 完成三平台未签名构建、更新元数据生成与 draft release（见第 8 节，尚未执行）。
 

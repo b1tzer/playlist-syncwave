@@ -2,6 +2,14 @@
 
 本项目遵循语义化版本（SemVer）。首个正式版本为 `v0.1.0`。
 
+## [0.1.1] - 2026-11-25
+
+### 修复
+- 首屏用 preload 同步快照恢复语言与主题，消除先显示默认文案/key、再切换语言的闪烁
+- 窗口原生底色与主题表面色一致，拉伸时不再露出白边；主题切换同步更新原生窗口底色
+- 已访问视图保持挂载，切回不再重新拉取歌单/触发整页动画；隐藏歌单页暂停轮询
+- 长列表超宽文本改为悬浮时测量一次，不再为每行常驻 `ResizeObserver`，降低拉伸与切换卡顿
+
 ## [0.1.0] - 2026-11-25
 
 首个正式版：本地优先的跨平台歌单同步桌面应用，接入网易云音乐、QQ音乐、酷狗音乐、Apple Music 四个平台（均可作为来源与目标）。
@@ -32,4 +40,5 @@
 - Apple Music 写接口 401：写操作改走 `amp-api.music.apple.com`
 - 歌单列表混入收藏的他人歌单：酷狗按 `type≠1`、网易云过滤 `specialType=5` 与 `subscribed=true`
 
+[0.1.1]: https://github.com/b1tzer/playlist-syncwave/releases/tag/v0.1.1
 [0.1.0]: https://github.com/b1tzer/playlist-syncwave/releases/tag/v0.1.0

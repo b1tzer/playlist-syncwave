@@ -39,6 +39,18 @@ describe('i18n translations', () => {
     expect(translate('zh-CN', 'sidebar.platformsOnline')).toBe('{count}/{total} 平台在线')
   })
 
+  it('单语缺键回退中文文案，不向用户显示原始 key', () => {
+    const key = 'nav.playlists' as TranslationKey
+    const original = translations['en-US'][key]
+    try {
+      // 用类型安全的键做运行时缺键模拟（覆盖旧构建产物/增量字典场景）
+      Reflect.deleteProperty(translations['en-US'], key)
+      expect(translate('en-US', key)).toBe(translations['zh-CN'][key])
+    } finally {
+      translations['en-US'][key] = original
+    }
+  })
+
   it('normalizeLocale 过滤非法值', () => {
     expect(normalizeLocale('en-US')).toBe('en-US')
     expect(normalizeLocale('zh-CN')).toBe('zh-CN')

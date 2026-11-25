@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import type { PlatformAccount, PlatformMeta } from '@core/models/platform'
 import type { MatchQuery } from '@core/models/match'
 import Sidebar, { type View } from './components/Sidebar'
@@ -23,6 +23,12 @@ export default function App() {
   // 同步历史重新执行：App 层持有独立 runner 实例（与各入口组件互不干扰，进度按 taskId 过滤）
   const { run: runRetry } = useSyncRunner()
   const [view, setView] = useState<View>('create')
+  // 已访问视图保持挂载：切回时复用列表状态与已加载数据，避免整棵子树重新挂载、重复 IPC 与 0.3s 入场动画
+  const [visitedViews, setVisitedViews] = useState<Set<View>>(() => new Set(['create']))
+  const navigate = useCallback((next: View) => {
+    setView(next)
+    setVisitedViews((prev) => (prev.has(next) ? prev : new Set(prev).add(next)))
+  }, [])
   const [platforms, setPlatforms] = useState<PlatformMeta[]>([])
   const [accounts, setAccounts] = useState<Record<string, PlatformAccount | null>>({})
   const [tasks, setTasks] = useState<SyncTaskRecord[]>([])
@@ -152,11 +158,11 @@ export default function App() {
         target === 'settings'
       ) {
         log.info('app.menu-navigate', '菜单导航切换视图', { view: target })
-        setView(target)
+        navigate(target)
       }
     })
     return off
-  }, [])
+  }, [navigate])
 
   // 主进程执行中定期落库后广播任务快照（含重启后的自动恢复执行）：
   // 渲染层据此实时刷新列表，无需重新全量查询（落库已在主进程完成，这里只更新内存）
@@ -424,7 +430,7 @@ export default function App() {
 
   const handleSearch = (value: string) => {
     setSearch(value)
-    if (value.trim() && view !== 'playlists') setView('playlists')
+    if (value.trim() && view !== 'playlists') navigate('playlists')
   }
 
   const runningTasks = tasks.filter((t) => t.status === 'running').length
@@ -439,7 +445,7 @@ export default function App() {
     <div className="flex h-full overflow-hidden">
       <Sidebar
         view={view}
-        onNavigate={setView}
+        onNavigate={navigate}
         runningTasks={runningTasks}
         accounts={accounts}
       />
@@ -478,11 +484,8 @@ export default function App() {
         </header>
 
         <main className="flex-1 overflow-y-auto">
-          <div
-            key={view}
-            className={`view-enter px-6 py-6 ${view === 'playlists' ? 'flex h-full flex-col' : ''}`}
-          >
-            {view === 'create' && (
+          {visitedViews.has('create') && (
+            <div className="px-6 py-6" style={{ display: view === 'create' ? undefined : 'none' }}>
               <TextCreator
                 platforms={configuredPlatforms}
                 accounts={accounts}
@@ -490,44 +493,65 @@ export default function App() {
                 pendingConfirm={pendingConfirm}
                 onPendingConfirmChange={handlePendingConfirmChange}
               />
-            )}
-            {view === 'playlists' && (
+            </div>
+          )}
+          {visitedViews.has('playlists') && (
+            <div
+              className="px-6 py-6"
+              style={{
+                display: view === 'playlists' ? 'flex' : 'none',
+                height: view === 'playlists' ? '100%' : undefined,
+                flexDirection: 'column',
+              }}
+            >
               <PlaylistSection
                 platforms={configuredPlatforms}
                 accounts={accounts}
                 searchQuery={search}
+                visible={view === 'playlists'}
                 onTaskUpdate={handleTaskUpdate}
                 pendingConfirm={pendingConfirm}
                 onPendingConfirmChange={handlePendingConfirmChange}
               />
-            )}
-            {view === 'sync' && (
+            </div>
+          )}
+          {visitedViews.has('sync') && (
+            <div className="px-6 py-6" style={{ display: view === 'sync' ? undefined : 'none' }}>
               <SyncHistory
                 platforms={platforms}
                 tasks={tasks}
-                onNewTask={() => setView('create')}
+                onNewTask={() => navigate('create')}
                 onTaskRemove={handleTaskRemove}
                 onClearAll={handleClearAll}
                 pendingChoicesCount={pendingConfirm?.choices.length ?? 0}
                 onGoConfirm={() => {
                   log.info('sync.go-confirm', '重新打开待确认窗口')
                   setConfirmDismissed(false)
-                  setView('create')
+                  navigate('create')
                 }}
                 intervenableIds={intervenableIds}
                 onStopTask={(id) => void handleStopTask(id)}
                 onRetryTask={(task) => void handleRetryTask(task)}
               />
-            )}
-            {view === 'accounts' && (
+            </div>
+          )}
+          {visitedViews.has('accounts') && (
+            <div className="px-6 py-6" style={{ display: view === 'accounts' ? undefined : 'none' }}>
               <LoginSection
                 platforms={platforms}
                 accounts={accounts}
                 onAccountChange={handleAccountChange}
               />
-            )}
-            {view === 'settings' && <SettingsView />}
-          </div>
+            </div>
+          )}
+          {visitedViews.has('settings') && (
+            <div
+              className="px-6 py-6"
+              style={{ display: view === 'settings' ? undefined : 'none' }}
+            >
+              <SettingsView />
+            </div>
+          )}
         </main>
       </div>
 

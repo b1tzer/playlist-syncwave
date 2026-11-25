@@ -79,6 +79,11 @@ export interface PlaylistRefreshEvent<T> {
 const api = {
   /** 运行平台（darwin/win32/linux），渲染层用于红绿灯避让等平台差异布局 */
   platform: process.platform,
+  /** 主进程启动快照：首帧同步取回语言/主题，避免异步 IPC 造成文案与配色闪烁 */
+  initialSettings: ipcRenderer.sendSync('settings:initial') as {
+    language: string
+    theme: string
+  },
   getVersion: (): Promise<string> => ipcRenderer.invoke('app:get-version'),
   encrypt: (plain: string): Promise<string> => ipcRenderer.invoke('crypto:encrypt', plain),
   /** 在系统浏览器/平台应用中打开链接（http/https/平台深链白名单） */

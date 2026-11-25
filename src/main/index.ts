@@ -196,6 +196,18 @@ function handleRenderProcessGone(reason: string): void {
     })
 }
 
+/** 与 renderer/styles.css 的 --sw-surface 保持一致；拉伸时新暴露区域先由原生窗口填色，避免白边 */
+function windowBackgroundColor(): string {
+  return nativeTheme.shouldUseDarkColors ? '#121318' : '#f7f7f9'
+}
+
+function syncWindowBackground(): void {
+  const color = windowBackgroundColor()
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) win.setBackgroundColor(color)
+  }
+}
+
 function createWindow(): void {
   const state = loadWindowState()
   const win = new BrowserWindow({
@@ -203,6 +215,7 @@ function createWindow(): void {
     height: state.height,
     x: state.x,
     y: state.y,
+    backgroundColor: windowBackgroundColor(),
     // macOS 隐藏标题栏（红绿灯内嵌），标题文字不再显示；Windows 保留标准标题栏
     ...(isMac ? ({ titleBarStyle: 'hiddenInset' } as const) : {}),
     webPreferences: {
@@ -1059,6 +1072,14 @@ ipcMain.handle('settings:get-all', () =>
   ipcLog.time('settings.get-all', async () => getAllSettings(), undefined, 'debug'),
 )
 
+// 首帧同步快照：preload 在渲染进程启动前取回，避免语言/主题异步恢复导致的闪烁与卡顿
+ipcMain.on('settings:initial', (event) => {
+  event.returnValue = {
+    language: getSetting<string>('language', 'zh-CN'),
+    theme: getSetting<string>('theme', SETTINGS_DEFAULTS.theme),
+  }
+})
+
 ipcMain.handle('settings:set', (_event, key: string, value: unknown) =>
   ipcLog.time(
     'settings.set',
@@ -1076,6 +1097,7 @@ ipcMain.handle('settings:set', (_event, key: string, value: unknown) =>
       // 主题变更：同步原生 UI 主题源（light/dark/system），渲染层经媒体查询联动
       if (key === 'theme' && (value === 'light' || value === 'dark' || value === 'system')) {
         nativeTheme.themeSource = value
+        syncWindowBackground()
       }
     },
     { key },
@@ -1238,6 +1260,7 @@ app.whenReady().then(() => {
   const theme = getSetting<string>('theme', SETTINGS_DEFAULTS.theme)
   nativeTheme.themeSource =
     theme === 'light' || theme === 'dark' || theme === 'system' ? theme : SETTINGS_DEFAULTS.theme
+  nativeTheme.on('updated', syncWindowBackground)
   buildApplicationMenu()
   setupAutoUpdater()
   restoreProxy()

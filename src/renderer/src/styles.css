@@ -151,9 +151,18 @@
   body,
   #root {
     height: 100%;
+    /* 拉伸窗口时新暴露区域立即用主题表面色填充，不等 React 重绘 */
+    background-color: var(--sw-surface);
+  }
+  html {
+    color-scheme: light;
+  }
+  html.dark {
+    color-scheme: dark;
   }
   body {
-    @apply bg-surface text-on-surface antialiased;
+    @apply text-on-surface antialiased;
+    background-color: var(--sw-surface);
     overscroll-behavior: none;
   }
   ::-webkit-scrollbar {

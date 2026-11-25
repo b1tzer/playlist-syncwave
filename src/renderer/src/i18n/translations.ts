@@ -615,7 +615,8 @@ export const translations: Record<Locale, Record<TranslationKey, string>> = {
 export type TranslateParams = Record<string, string | number>
 
 export function translate(locale: Locale, key: TranslationKey, params?: TranslateParams): string {
-  const raw = translations[locale][key]
+  // 单语缺键时回退中文文案，避免用户看到 `sidebar.playlists` 这类原始 key
+  const raw = translations[locale][key] ?? translations['zh-CN'][key]
   if (raw === undefined) return key
   if (!params) return raw
   return raw.replace(/\{(\w+)\}/g, (match, name: string) =>

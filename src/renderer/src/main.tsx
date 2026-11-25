@@ -14,8 +14,8 @@ import { restoreTheme } from './theme'
 installRendererLogging()
 installRendererErrorHandlers(createRendererLogger('renderer'))
 
-// 恢复主题设置（html 默认深色，浅色用户首帧后切换）
-void restoreTheme()
+// 用 preload 同步快照恢复主题：首帧即为持久化配色，避免浅色用户看到深色闪烁
+restoreTheme()
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

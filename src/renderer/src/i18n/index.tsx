@@ -30,24 +30,11 @@ interface I18nContextValue {
 
 const I18nContext = createContext<I18nContextValue | null>(null)
 
-/** 语言偏好持久化到主进程 SQLite（settings 表），启动时恢复。 */
+/** 语言偏好持久化到主进程 SQLite（settings 表）；首帧用 preload 同步快照，避免先显示默认语言再切换。 */
 export function I18nProvider({ children }: { children: ReactNode }) {
-  const [locale, setLocaleState] = useState<Locale>('zh-CN')
-
-  useEffect(() => {
-    let cancelled = false
-    window.electronAPI.settings
-      .get('language', 'zh-CN')
-      .then((v) => {
-        if (!cancelled) setLocaleState(normalizeLocale(v))
-      })
-      .catch((e) => {
-        log.warn('i18n.restore-failed', '恢复语言偏好失败', e)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [])
+  const [locale, setLocaleState] = useState<Locale>(() =>
+    normalizeLocale(window.electronAPI.initialSettings?.language),
+  )
 
   useEffect(() => {
     document.documentElement.lang = locale

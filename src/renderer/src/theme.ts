@@ -39,15 +39,10 @@ export function applyTheme(theme: Theme): void {
   applyResolved()
 }
 
-/** 启动时恢复主题设置（非法值回退默认深色） */
-export async function restoreTheme(): Promise<Theme> {
-  let theme: Theme = DEFAULT_THEME
-  try {
-    const saved = await window.electronAPI.settings.get('theme', DEFAULT_THEME)
-    if (isTheme(saved)) theme = saved
-  } catch {
-    // 设置不可用时保持默认深色
-  }
+/** 启动时用 preload 同步快照恢复主题（非法值回退默认深色），首帧即为正确配色 */
+export function restoreTheme(): Theme {
+  const saved = window.electronAPI.initialSettings?.theme
+  const theme = isTheme(saved) ? saved : DEFAULT_THEME
   applyTheme(theme)
   return theme
 }

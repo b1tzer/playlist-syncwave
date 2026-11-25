@@ -47,6 +47,8 @@ interface PlaylistSectionProps {
   platforms: PlatformMeta[]
   accounts: Record<string, PlatformAccount | null>
   searchQuery: string
+  /** 视图是否可见：隐藏视图暂停轮询与可见性刷新，避免后台重复 IPC */
+  visible: boolean
   /** 同步任务记录上报（同步历史展示与持久化） */
   onTaskUpdate: (task: SyncTaskRecord) => void
   /** 待确认会话（App 层持有，选择流程由 ConfirmSyncDialog 完成） */
@@ -84,26 +86,22 @@ function MarqueeText({ text, className }: { text: string; className?: string }) 
   const [duration, setDuration] = useState(6)
   const [hovered, setHovered] = useState(false)
 
-  useEffect(() => {
+  // 只在真正悬浮时测一次宽度：每行一个 ResizeObserver 会在窗口拉伸时产生数百次回调与 setState
+  const handleMouseEnter = () => {
     const el = ref.current
-    if (!el) return
-    const measure = () => {
+    if (el) {
       const distance = Math.max(0, el.scrollWidth - el.clientWidth)
       setShift(distance)
-      // 单程约 50px/s（滚动段占动画 70%），总时长限制在 2.5s ~ 12s
       setDuration(Math.min(12, Math.max(2.5, distance / 17.5)))
     }
-    measure()
-    const ro = new ResizeObserver(measure)
-    ro.observe(el)
-    return () => ro.disconnect()
-  }, [text])
+    setHovered(true)
+  }
 
   const scrolling = hovered && shift > 0
 
   return (
     <span
-      onMouseEnter={() => setHovered(true)}
+      onMouseEnter={handleMouseEnter}
       onMouseLeave={() => setHovered(false)}
       className={`flex min-w-0 items-center overflow-hidden ${className ?? ''}`}
     >
@@ -131,6 +129,7 @@ export default function PlaylistSection({
   platforms,
   accounts,
   searchQuery,
+  visible,
   onTaskUpdate,
   pendingConfirm,
   onPendingConfirmChange,
@@ -531,7 +530,7 @@ export default function PlaylistSection({
 
   const visibleRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEffect(() => {
-    if (!loggedIn) return
+    if (!loggedIn || !visible) return
     // 挂载/切回页面/聚焦等连续触发 300ms 去抖合并为一次刷新
     const schedule = () => {
       if (visibleRefreshTimerRef.current) clearTimeout(visibleRefreshTimerRef.current)
@@ -568,7 +567,7 @@ export default function PlaylistSection({
       window.removeEventListener('focus', onFocus)
       document.removeEventListener('visibilitychange', onVisibility)
     }
-  }, [loggedIn, active, refreshVisible, fetchPlaylists])
+  }, [loggedIn, visible, refreshVisible, fetchPlaylists])
 
   // 歌单歌曲后台重新验证完成：仅当前打开歌单生效，整份替换 + 变化行行级高亮
   useEffect(() => {

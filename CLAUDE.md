@@ -42,7 +42,7 @@
 要点：
 - `planning.md` 以**当前状态**为准：只描述现行技术约定、已交付能力与发布前人工验收清单；过程叙事（原计划/已变更/修复迭代/历史测试数）不进正文，需要追溯时查 git 历史。
 - `docs/platform-api-fields.md` 是上游接口契约：字段表须标注来源（✅ 实测抓取 / 📐 SDK·NCM·适配器源码），未实测不得冒充实测。
-- 版本号表、测试数等易腐化数字，改完顺手核对一次。当前基线：四平台、十张 SQLite 表（含 `schema_migrations`）、迁移基线 v6、缓存 schema v5、383 项测试、TypeScript 6.0.3 / Vite 8 / Vitest 5 / Electron 45。
+- 版本号表、测试数等易腐化数字，改完顺手核对一次。当前基线：四平台、十张 SQLite 表（含 `schema_migrations`）、迁移基线 v6、缓存 schema v5、384 项测试、TypeScript 6.0.3 / Vite 8 / Vitest 5 / Electron 45。
 - 发布前自动化门禁：`npm run typecheck && npm run lint && npm run test && npm run build` 全绿；人工验收清单见 `planning.md` 第 5 节（2026-11-25 已完成）。
 - 发布相关变更（版本、流程、更新源）同步更新 `CHANGELOG.md`，并在 `README.md`「发布流程」与 `planning.md` 第 8 节保持一致。
 
@@ -53,7 +53,7 @@
 - 依赖版本以 package.json 为准，不臆造不存在的包名或版本。
 
 ## 当前状态
-- V0.1（MVP，package.json version 0.1.0）。已交付：文本快速创建、匹配与单向同步、歌单管理（含本地歌单库）、歌单缓存、同步中心、设置中心与桌面基础能力。接入四平台：网易云、QQ音乐、酷狗、Apple Music。
+- V0.1（MVP，package.json version 0.1.1）。已交付：文本快速创建、匹配与单向同步、歌单管理（含本地歌单库）、歌单缓存、同步中心、设置中心与桌面基础能力。接入四平台：网易云、QQ音乐、酷狗、Apple Music。
 - 当前行为：网易云扫码登录可用；搜索限速 + 指数退避重试；主进程吞掉 EPIPE；npm 11 安装脚本需 `npm install-scripts approve <pkg>` 放行。异常提示统一走右上角 toast（`renderer/src/utils/notifyError.ts`），代码性报错过滤为通用标题；主进程歌单拉取（列表/歌曲）带 30s 超时；慢加载超 3s 文案切为「网络较慢，正在获取中…」并保持转圈。
 - 同步匹配：受控并发池（`searchConcurrency` 默认 3）+ 双关键词并行预取 + 任务内关键词缓存（normalize key，含在途去重）+ 全局相邻搜索最小间隔（`searchIntervalMs`，预约式限速器）+ rateLimited 全局冷却 4s + 搜索超时 15s（建单/加歌 60s）；同歌不同作者走 choice-needed 两阶段确认；运行中任务可停止/跳过当前歌，逐首明细持久化。
 - 歌单添加歌曲搜索：`page` 参数贯通 IPC/适配器，单页 20 条 + 哨兵提前 200px 预取，`SongSearchResults` 两处复用；歌单卡片歌曲数增删后就地同步。同步中心任务卡片展示「来源 → 目标平台」及品牌 logo、状态徽标置于时间前、状态多选筛选（空集合＝全部）；歌曲列表带「# / 歌名 / 歌手 / 专辑 / 时长」固定表头。
@@ -79,4 +79,5 @@
 - 同步金标准（T6.4）：标题+歌手归一化精确相等 = 自动选（`core/matcher/exactMatch.ts`）；同歌不同作者（标题精确、歌手不同）→ `choice-needed` 两阶段（planSync/executeSync + `pendingSyncs` 缓存 + `platform:confirm-sync`），用户手动选择。行业真金标准 ISRC 国内平台不暴露，故用代理金标准。
 - 基础能力要点：渲染层 `sandbox: true`，preload 必须是 **CJS**（electron-vite preload 已配置 `format: 'cjs'` 输出 `out/preload/index.js`，主进程加载 `../preload/index.js`，勿改回 .mjs）；打包环境 CSP 由 `main/security.ts` 注入响应头；`electron-updater` 等 CJS 包在主进程 ESM 下需内联 `createRequire(import.meta.url)(...)` 加载（named import 运行时失败）。打包用 `npm run dist`；正式发布由 `v*` tag 触发 `.github/workflows/release.yml`，不在本地执行 `--publish always`（详见 `README.md`「发布流程」）；更新源为 GitHub Releases（`electron-builder.yml` 的 `publish`），无备用源。
 - 设置页：分区（外观/通用/网络/高级/数据/关于）+ 设置搜索（标题/描述过滤，命中自动展开高级区）+ 主题三态 `light/dark/system`（默认深色；渲染层经 `prefers-color-scheme` 媒体查询联动，主进程启动恢复与 `settings:set` 时同步 `nativeTheme.themeSource`，两侧同源保持一致）+ 匹配阈值语义预设（宽松 0.45/平衡 0.6/严格 0.75）。同步调优参数单一事实源 `core/sync/tuning.ts`（`SYNC_TUNING_DEFAULTS`/`SYNC_TUNING_RANGE`/`THRESHOLD_PRESETS`），引擎（syncPlaylist/matchSong）、主进程（settingsService.syncTuning）、设置页滑块/预设三处同源引用，禁止再散落 `?? 0.6` 类魔数。设置页交互约定：滑块防抖回写（350ms）、开关/主题切换失败回滚 + toast、代理「测试」走 `main/proxy.ts testProxy`（独立 axios 实例请求 Cloudflare 204 端点）、清空歌曲缓存走 `playlistCacheStore.clearAll`（物理删除，区别于 markStale 兜底）。代理交互为「先测后用」：仅连通性测试通过且输入未再改动时才真正应用；未通过时 Apply 置灰禁用、悬浮即时 Tooltip 显示「请先测试代理连接」（对齐歌单移除歌曲效果：disabled 不响应鼠标事件，悬浮事件挂外层 span；不用 not-allowed 光标），Enter 键同拦截并弹 warning 兜底。
+- 首屏与切换性能：`settings:initial` 是 preload 阶段的**同步 IPC 快照**（语言 + 主题），`I18nProvider` 与 `restoreTheme()` 必须用该快照作为首帧 state，不得再在首帧用异步 `settings:get`（会看到 key 或深色闪烁）；`BrowserWindow.backgroundColor` 与 `html/body/#root` 背景都跟随主题表面色（深色 `#121318`、浅色 `#f7f7f9`），主题变更时主进程 `syncWindowBackground()` 同步原生窗口底色。已访问视图保持挂载并按 `display:none` 隐藏，切回不重挂载/不重复 IPC；歌单页 `visible` prop 控制隐藏时暂停轮询。长列表行不要恢复每行一个 `ResizeObserver`（悬浮时测量一次即可）。
 - 快捷键：`main/menu.ts` 统一定义。导航 `CmdOrCtrl+1..5`（快速创建/歌单/同步/账号/设置），`CmdOrCtrl+N` 作为快速创建的隐藏别名；`Cmd/Ctrl+,` 由 `before-input-event` 打开设置（macOS 惯例）。Edit 菜单保留系统剪贴板快捷键；View 菜单的 Reload/Force Reload/DevTools 仅开发模式提供，正式包屏蔽 `Cmd/Ctrl+R`（含 Shift）与 F5，并设 `webPreferences.devTools: isDev`；不注册全局快捷键。

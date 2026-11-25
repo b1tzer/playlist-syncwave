@@ -86,7 +86,10 @@ export default function SettingsView() {
   const [proxyTestedOk, setProxyTestedOk] = useState('')
   /** Apply 按钮悬浮即时提示（未测通过时显示引导语，锚点 = 按钮底边中心） */
   const [proxyApplyTip, setProxyApplyTip] = useState<{ x: number; y: number; text: string } | null>(null)
-  const [theme, setTheme] = useState<Theme>(DEFAULT_THEME)
+  const [theme, setTheme] = useState<Theme>(() => {
+    const saved = window.electronAPI.initialSettings?.theme
+    return isTheme(saved) ? saved : DEFAULT_THEME
+  })
   const [version, setVersion] = useState('')
   const [search, setSearch] = useState('')
   const [advancedOpen, setAdvancedOpen] = useState(false)
@@ -308,12 +311,6 @@ export default function SettingsView() {
       .catch((e) => {
         log.warn('settings.proxy-read-failed', '读取代理设置失败', e)
       })
-    window.electronAPI.settings
-      .get('theme', DEFAULT_THEME)
-      .then((value) => {
-        if (isTheme(value)) setTheme(value)
-      })
-      .catch(() => {})
     window.electronAPI
       .getVersion()
       .then(setVersion)
