@@ -57,12 +57,17 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   }, [locale])
 
   const setLocale = useCallback((next: Locale) => {
+    const prev = locale
     setLocaleState(next)
     window.electronAPI.settings
       .set('language', next)
       .then(() => log.info('i18n.language-saved', '语言偏好已保存', { locale: next }))
-      .catch((e) => log.error('i18n.language-save-failed', '语言偏好保存失败', e, { locale: next }))
-  }, [])
+      .catch((e) => {
+        // 保存失败回滚界面语言，避免界面与持久化状态不一致
+        setLocaleState(prev)
+        log.error('i18n.language-save-failed', '语言偏好保存失败', e, { locale: next })
+      })
+  }, [locale])
 
   const t = useCallback(
     (key: TranslationKey, params?: TranslateParams) => translate(locale, key, params),

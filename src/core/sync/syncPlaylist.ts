@@ -1,5 +1,6 @@
 import { findBestMatch, normalize } from '@core/matcher/matchSong'
 import { classifyCandidates } from '@core/matcher/exactMatch'
+import { SYNC_TUNING_DEFAULTS } from '@core/sync/tuning'
 import { createLogger, errorMessage } from '@core/logging'
 import type { MatchQuery } from '@core/models/match'
 import type { PlatformSong } from '@core/models/platform'
@@ -51,9 +52,9 @@ export async function planSync(
   target: SyncTarget,
   options: SyncOptions = {},
 ): Promise<SyncPlan> {
-  const threshold = options.threshold ?? 0.6
-  const searchIntervalMs = options.searchIntervalMs ?? 500
-  const searchRetries = options.searchRetries ?? 2
+  const threshold = options.threshold ?? SYNC_TUNING_DEFAULTS.threshold
+  const searchIntervalMs = options.searchIntervalMs ?? SYNC_TUNING_DEFAULTS.searchIntervalMs
+  const searchRetries = options.searchRetries ?? SYNC_TUNING_DEFAULTS.searchRetries
   const concurrency = Math.max(1, options.searchConcurrency ?? 3)
   const budget = options.maxSearchesPerSong ?? 4
 

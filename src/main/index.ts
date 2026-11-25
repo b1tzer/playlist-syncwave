@@ -3,6 +3,7 @@ import {
   BrowserWindow,
   dialog,
   ipcMain,
+  nativeTheme,
   safeStorage,
   shell,
 } from 'electron'
@@ -21,8 +22,8 @@ import {
 import type { MatchQuery } from '@core/models/match'
 import { logCenter } from './logging/logCenter'
 import { upsertSyncTask, listSyncTasks, removeSyncTask, clearSyncTasks } from './syncHistoryService'
-import { getSetting, setSetting, getAllSettings, syncTuning } from './settingsService'
-import { restoreProxy, getProxySetting, setProxySetting } from './proxy'
+import { getSetting, setSetting, getAllSettings, syncTuning, SETTINGS_DEFAULTS } from './settingsService'
+import { restoreProxy, getProxySetting, setProxySetting, testProxy } from './proxy'
 import { applySecurityHeaders } from './security'
 import {
   saveConfirmedMapping,
@@ -258,6 +259,17 @@ ipcMain.handle('proxy:set', (_event, url: unknown) =>
     'proxy.set',
     async () => {
       setProxySetting(url)
+    },
+    { url: typeof url === 'string' ? url : '' },
+  ),
+)
+
+ipcMain.handle('proxy:test', (_event, url: unknown) =>
+  ipcLog.time(
+    'proxy.test',
+    async () => {
+      if (typeof url !== 'string' || url.trim() === '') throw new Error('无效的代理地址')
+      return testProxy(url.trim())
     },
     { url: typeof url === 'string' ? url : '' },
   ),
@@ -1059,6 +1071,10 @@ ipcMain.handle('settings:set', (_event, key: string, value: unknown) =>
       if (key === 'autoUpdateEnabled' && typeof value === 'boolean') {
         setAutoUpdateEnabled(value)
       }
+      // 主题变更：同步原生 UI 主题源（light/dark/system），渲染层经媒体查询联动
+      if (key === 'theme' && (value === 'light' || value === 'dark' || value === 'system')) {
+        nativeTheme.themeSource = value
+      }
     },
     { key },
     'debug',
@@ -1081,6 +1097,12 @@ ipcMain.handle('settings:get', (_event, key: string, fallback: unknown) =>
     { key },
     'debug',
   ),
+)
+
+// --- 缓存清理（设置页「数据」危险区）---
+
+ipcMain.handle('cache:clear', () =>
+  ipcLog.time('cache.clear', async () => getDatabase().playlistCache.clearAll(), undefined, 'info'),
 )
 
 // --- 歌曲映射缓存 ---
@@ -1209,6 +1231,11 @@ ipcMain.handle(
 )
 
 app.whenReady().then(() => {
+  // 主题跟随设置（light/dark/system）：system 让原生 UI（菜单/滚动条等）跟随系统外观，
+  // 渲染层经 prefers-color-scheme 媒体查询感知同一来源，两者保持一致。
+  const theme = getSetting<string>('theme', SETTINGS_DEFAULTS.theme)
+  nativeTheme.themeSource =
+    theme === 'light' || theme === 'dark' || theme === 'system' ? theme : SETTINGS_DEFAULTS.theme
   buildApplicationMenu()
   setupAutoUpdater()
   restoreProxy()

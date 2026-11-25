@@ -24,7 +24,7 @@ function axiosDefaults(): AxiosDefaults {
 }
 
 /** 解析并校验代理地址 */
-function parseProxyUrl(raw: string): { protocol: string; host: string; port: number; auth?: { username: string; password: string } } {
+export function parseProxyUrl(raw: string): { protocol: string; host: string; port: number; auth?: { username: string; password: string } } {
   let parsed: URL
   try {
     parsed = new URL(raw)
@@ -88,5 +88,32 @@ export function restoreProxy(): void {
     applyProxy(saved)
   } catch (e) {
     log.warn('proxy.restore-failed', '恢复代理失败，已忽略', { error: String(e) })
+  }
+}
+
+export interface ProxyTestResult {
+  ok: boolean
+  latencyMs?: number
+  error?: string
+}
+
+/**
+ * 代理连通性测试：经指定代理请求 Cloudflare 连通性探测端点（204）。
+ * 独立 axios 实例，不改动全局单例代理配置；8s 超时。
+ */
+export async function testProxy(url: string): Promise<ProxyTestResult> {
+  const { protocol, host, port, auth } = parseProxyUrl(url)
+  const axiosLib = createRequire(import.meta.url)('axios')
+  const client = axiosLib.create({
+    proxy: { protocol, host, port, ...(auth ? { auth } : {}) },
+    timeout: 8_000,
+    validateStatus: (status: number) => status === 204,
+  })
+  const started = Date.now()
+  try {
+    await client.get('https://cp.cloudflare.com/generate_204')
+    return { ok: true, latencyMs: Date.now() - started }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
   }
 }

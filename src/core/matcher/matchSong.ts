@@ -1,5 +1,6 @@
 import { Converter } from 'opencc-js'
 import type { CandidateSong, MatchOptions, MatchQuery, MatchResult } from '@core/models/match'
+import { SYNC_TUNING_DEFAULTS } from '@core/sync/tuning'
 
 const t2s = Converter({ from: 'tw', to: 'cn' })
 
@@ -88,7 +89,7 @@ export function findBestMatch(
   candidates: CandidateSong[],
   options: MatchOptions = {},
 ): MatchResult | null {
-  const threshold = options.threshold ?? 0.6
+  const threshold = options.threshold ?? SYNC_TUNING_DEFAULTS.threshold
   const queryTitle = normalize(query.title)
   const queryHasParen = HAS_PAREN.test(query.title)
   const queryTag = extractVersionTag(query.title)

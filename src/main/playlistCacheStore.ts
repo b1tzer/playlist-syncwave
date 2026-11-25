@@ -243,6 +243,18 @@ CREATE TABLE IF NOT EXISTS playlist_song_meta (
         'UPDATE playlist_song_meta SET updated_at = ? WHERE platform = ? AND playlist_id = ?',
       ).run(now, platform, playlistId)
     },
+
+    /**
+     * 清空全部歌单/歌曲缓存与 schema 版本记录（设置页「数据」危险区操作）。
+     * 与 markStale 不同：这里是物理删除，下次访问无兜底数据、直接重新拉取。
+     */
+    clearAll(): { playlists: number; songs: number } {
+      const playlists = db.prepare('DELETE FROM playlist_cache').run().changes
+      const songs = db.prepare('DELETE FROM playlist_song_cache').run().changes
+      db.prepare('DELETE FROM playlist_song_meta').run()
+      db.prepare('DELETE FROM playlist_cache_schema').run()
+      return { playlists, songs }
+    },
   }
 }
 

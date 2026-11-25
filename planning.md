@@ -521,6 +521,15 @@ tests/             # Vitest 单元测试（core/main/platforms/renderer）
   - `LoginSection`：`pending` 时显示「正在完善账号资料…」（中英 i18n 同补），正式账号到达后替换。
 - **验证**：新增 2 项适配器测试（最小凭证经保活自动补 token、后台资料补写凭证不丢字段），全量 379 项测试、typecheck、lint 通过。待手工验收：Electron 登录后账号卡片应立即出现「正在完善账号资料…」，随后自动刷新为正式用户名与邮箱；若登录无效应自动退回未连接。
 
+### 补记 — 设置页按行业实践重构 ✅
+- **需求**：原设置页为 10 项平铺列表，对照行业实践存在四类缺口：① 主题缺「跟随系统」三态；② 同步引擎裸参数（阈值/重试/间隔）直接暴露给普通用户、滑块逐像素写库、无恢复默认；③ 默认值散落三处（UI 初始 state / settingsService fallback / 引擎 `?? 0.6`）易漂移，代理无连通性测试、开关失败不回滚、关于页过薄；④ 无设置搜索、无数据危险区、无无障碍 label。
+- **改动**：
+  - `core/sync/tuning.ts`（新增）：调优参数单一事实源——`SYNC_TUNING_DEFAULTS`（0.6/2/500）、`SYNC_TUNING_RANGE`（越界回退范围）、`THRESHOLD_PRESETS`（宽松 0.45/平衡 0.6/严格 0.75）；`syncPlaylist.ts`/`matchSong.ts` 引擎默认值同源引用，`settingsService.ts` 引用同一常量，UI 滑块范围/初始值也从此导入。
+  - 主题三态（`theme.ts`）：`Theme = 'light'|'dark'|'system'`（默认仍深色，设计规范深色优先）；system 模式渲染层监听 `prefers-color-scheme` 媒体查询；主进程启动恢复 + `settings:set` 时同步 `nativeTheme.themeSource`，原生菜单/滚动条与界面一致。
+  - `SettingsView` 重写：分区（外观/通用/网络/高级/隐私/数据/关于）；设置搜索（按标题/描述过滤，命中自动展开高级区）；阈值改语义预设分段控件（显示对应数值）；重试/间隔滑块 350ms 防抖回写（恢复完成前不回写）；高级区默认折叠 + 「恢复默认」按钮；所有开关与主题切换失败回滚 + toast；语言保存失败回滚（i18n provider）；代理新增「测试」连通性（`main/proxy.ts testProxy`，独立 axios 实例请求 Cloudflare `cp.cloudflare.com/generate_204` 探测端点，8s 超时，不改全局单例）；关于页版本号可复制；数据区「清空歌曲缓存」两步确认（`playlistCacheStore.clearAll` 物理删除，与 markStale 的兜底语义不同，返回删除行数）。
+  - `ToggleSwitch` 与滑块/分段控件补 `aria-label`/`aria-pressed`；i18n 中英补齐全部新键。
+- **验证**：新增 4 项测试（tuning 不变式 3 项 + cacheStore clearAll 1 项），全量 383 项测试、typecheck、lint 通过。待手工验收：主题三态随系统切换、搜索过滤、代理测试、清空缓存后列表重新拉取。
+
 ---
 
 | 风险 | 缓解 |

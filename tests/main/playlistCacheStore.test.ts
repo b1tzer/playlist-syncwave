@@ -157,4 +157,19 @@ describe('playlistCacheStore — 歌单缓存存储（缓存永不清空，失�
     // netease 版本匹配正常
     expect(store.listPlaylists('netease', 2)?.updatedAt).toBe(2000)
   })
+
+  it('clearAll：物理清空全部缓存与版本记录（危险区操作），返回删除行数', () => {
+    store.savePlaylists('netease', [playlist('1', 'A'), playlist('2', 'B')], 1000, 5)
+    store.savePlaylists('qqmusic', [playlist('9', 'X')], 1000, 5)
+    store.saveSongs('netease', '1', [song('a', 'A', 'X'), song('b', 'B', 'X')], 3000, 5)
+
+    const { playlists, songs } = store.clearAll()
+
+    expect(playlists).toBe(3)
+    expect(songs).toBe(2)
+    // 数据物理删除：无版本参数读取也为 null（与 markStale 的兜底语义不同）
+    expect(store.listPlaylists('netease')).toBeNull()
+    expect(store.listPlaylists('qqmusic')).toBeNull()
+    expect(store.listSongs('netease', '1')).toBeNull()
+  })
 })

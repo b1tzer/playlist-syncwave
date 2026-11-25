@@ -90,10 +90,12 @@ const api = {
   saveTextFile: (defaultName: string, content: string, extension: string): Promise<string | null> =>
     ipcRenderer.invoke('app:save-text-file', defaultName, content, extension),
 
-  /** 网络代理：读取/设置（空串清除） */
+  /** 网络代理：读取/设置（空串清除）/连通性测试 */
   proxy: {
     get: (): Promise<string> => ipcRenderer.invoke('proxy:get'),
     set: (url: string): Promise<void> => ipcRenderer.invoke('proxy:set', url),
+    test: (url: string): Promise<{ ok: boolean; latencyMs?: number; error?: string }> =>
+      ipcRenderer.invoke('proxy:test', url),
   },
   /** 渲染进程日志上报：主进程校验后写入统一日志管线 */
   log: (entry: LogEntry): void => {
@@ -301,6 +303,11 @@ const api = {
     stats: (): Promise<Array<{ platform: string; count: number; confirmed: number }>> =>
       ipcRenderer.invoke('mappings:stats'),
     clear: (platform: string): Promise<void> => ipcRenderer.invoke('mappings:clear', platform),
+  },
+
+  /** 清空歌单/歌曲本地缓存（危险区操作，返回删除行数） */
+  cache: {
+    clear: (): Promise<{ playlists: number; songs: number }> => ipcRenderer.invoke('cache:clear'),
   },
 
   localPlaylists: {

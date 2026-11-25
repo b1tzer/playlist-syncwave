@@ -1,9 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { createRendererLogger } from '../logging/rendererLogger'
 import { LOCALES, useI18n } from '../i18n'
 import ToggleSwitch from './ToggleSwitch'
+import { notify } from './toast'
 import { notifyError } from '../utils/notifyError'
-import { applyTheme, type Theme } from '../theme'
+import { applyTheme, isTheme, DEFAULT_THEME, type Theme } from '../theme'
+import { SYNC_TUNING_DEFAULTS, SYNC_TUNING_RANGE, THRESHOLD_PRESETS, type ThresholdPreset } from '@core/sync/tuning'
 import type { UpdateStatus } from '../../../preload/index'
 
 const log = createRendererLogger('renderer.settings')
@@ -12,22 +14,61 @@ interface SettingRowProps {
   icon: string
   title: string
   description: string
-  children?: React.ReactNode
+  children?: ReactNode
+  /** 控件下方补充内容（如更新状态行） */
+  extra?: ReactNode
 }
 
-function SettingRow({ icon, title, description, children }: SettingRowProps) {
+function SettingRow({ icon, title, description, children, extra }: SettingRowProps) {
   return (
-    <div className="flex items-center justify-between rounded-lg border border-outline-variant bg-surface-container-low p-4">
-      <div className="flex items-center gap-3">
-        <span className="material-symbols-outlined text-lg text-on-surface-variant">{icon}</span>
-        <div>
-          <p className="font-body-md text-body-md font-medium">{title}</p>
-          <p className="font-label-sm text-label-sm text-on-surface-variant">{description}</p>
+    <div className="rounded-lg border border-outline-variant bg-surface-container-low p-4">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <span className="material-symbols-outlined text-lg text-on-surface-variant">{icon}</span>
+          <div>
+            <p className="font-body-md text-body-md font-medium">{title}</p>
+            <p className="font-label-sm text-label-sm text-on-surface-variant">{description}</p>
+          </div>
         </div>
+        {children}
       </div>
-      {children}
+      {extra && <div className="mt-2 pl-8">{extra}</div>}
     </div>
   )
+}
+
+const SECTION_ORDER = [
+  { id: 'appearance', labelKey: 'settings.sectionAppearance' },
+  { id: 'general', labelKey: 'settings.sectionGeneral' },
+  { id: 'network', labelKey: 'settings.sectionNetwork' },
+  { id: 'advanced', labelKey: 'settings.sectionAdvanced' },
+  { id: 'privacy', labelKey: 'settings.sectionPrivacy' },
+  { id: 'data', labelKey: 'settings.sectionData' },
+  { id: 'about', labelKey: 'settings.sectionAbout' },
+] as const
+
+type SectionId = (typeof SECTION_ORDER)[number]['id']
+
+interface RowDef {
+  section: SectionId
+  icon: string
+  title: string
+  desc: string
+  control: ReactNode
+  extra?: ReactNode
+}
+
+/** 当前阈值映射到最近的语义预设档位（历史自定义值取最近档） */
+function nearestPreset(value: number): ThresholdPreset {
+  return (Object.keys(THRESHOLD_PRESETS) as ThresholdPreset[]).reduce((best, cur) =>
+    Math.abs(THRESHOLD_PRESETS[cur] - value) < Math.abs(THRESHOLD_PRESETS[best] - value) ? cur : best,
+  )
+}
+
+const PRESET_LABEL_KEYS: Record<ThresholdPreset, 'settings.matchLoose' | 'settings.matchBalanced' | 'settings.matchStrict'> = {
+  loose: 'settings.matchLoose',
+  balanced: 'settings.matchBalanced',
+  strict: 'settings.matchStrict',
 }
 
 export default function SettingsView() {
@@ -36,19 +77,29 @@ export default function SettingsView() {
   const [reportEnabled, setReportEnabled] = useState(false)
   const [autoUpdateEnabled, setAutoUpdateEnabled] = useState(true)
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null)
-  const [syncThreshold, setSyncThreshold] = useState(0.6)
-  const [syncRetries, setSyncRetries] = useState(2)
-  const [syncInterval, setSyncInterval] = useState(500)
+  const [syncThreshold, setSyncThreshold] = useState(SYNC_TUNING_DEFAULTS.threshold)
+  const [syncRetries, setSyncRetries] = useState(SYNC_TUNING_DEFAULTS.searchRetries)
+  const [syncInterval, setSyncInterval] = useState(SYNC_TUNING_DEFAULTS.searchIntervalMs)
   const [proxyUrl, setProxyUrl] = useState('')
   const [proxyDraft, setProxyDraft] = useState('')
-  const [theme, setTheme] = useState<Theme>('dark')
+  const [proxyTesting, setProxyTesting] = useState(false)
+  const [theme, setTheme] = useState<Theme>(DEFAULT_THEME)
   const [version, setVersion] = useState('')
+  const [search, setSearch] = useState('')
+  const [advancedOpen, setAdvancedOpen] = useState(false)
+  const [cacheConfirm, setCacheConfirm] = useState(false)
+  /** 设置从 SQLite 恢复完成前，防抖 effect 不回写 */
+  const restoredRef = useRef(false)
+  const cacheConfirmTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+
+  // --- 代理 ---
 
   const handleProxyApply = async () => {
     try {
       await window.electronAPI.proxy.set(proxyDraft.trim())
       setProxyUrl(proxyDraft.trim())
       log.info('settings.proxy-apply', '代理已应用', { url: proxyDraft.trim() })
+      notify('success', t('settings.proxyApplied'))
     } catch (e) {
       log.error('settings.proxy-apply-failed', '应用代理失败', e)
       notifyError(e, t('settings.proxyApplyFailed'))
@@ -61,12 +112,134 @@ export default function SettingsView() {
       setProxyUrl('')
       setProxyDraft('')
       log.info('settings.proxy-clear', '代理已清除')
+      notify('success', t('settings.proxyCleared'))
     } catch (e) {
       log.error('settings.proxy-clear-failed', '清除代理失败', e)
+      notifyError(e, t('settings.proxyApplyFailed'))
     }
   }
 
-  // 自动更新状态流转
+  const handleProxyTest = async () => {
+    const url = proxyDraft.trim()
+    if (!url || proxyTesting) return
+    setProxyTesting(true)
+    try {
+      const result = await window.electronAPI.proxy.test(url)
+      if (result.ok) {
+        log.info('settings.proxy-test-ok', '代理连通性测试通过', { latencyMs: result.latencyMs })
+        notify('success', t('settings.proxyTestOk', { ms: String(result.latencyMs ?? 0) }))
+      } else {
+        log.warn('settings.proxy-test-failed', '代理连通性测试失败', { error: result.error })
+        notifyError(new Error(result.error ?? 'proxy test failed'), t('settings.proxyTestFailed'))
+      }
+    } catch (e) {
+      log.error('settings.proxy-test-failed', '代理连通性测试失败', e)
+      notifyError(e, t('settings.proxyTestFailed'))
+    } finally {
+      setProxyTesting(false)
+    }
+  }
+
+  // --- 主题：切换失败回滚 ---
+
+  const handleThemeChange = (next: Theme) => {
+    const prev = theme
+    setTheme(next)
+    applyTheme(next)
+    window.electronAPI.settings
+      .set('theme', next)
+      .then(() => log.info('settings.theme', '主题已切换', { theme: next }))
+      .catch((e) => {
+        setTheme(prev)
+        applyTheme(prev)
+        log.error('settings.theme-save-failed', '主题保存失败', e, { theme: next })
+        notifyError(e, t('settings.saveFailed'))
+      })
+  }
+
+  // --- 匹配策略预设与高级参数 ---
+
+  const handlePresetChange = (preset: ThresholdPreset) => {
+    const v = THRESHOLD_PRESETS[preset]
+    setSyncThreshold(v)
+    window.electronAPI.settings
+      .set('syncThreshold', v)
+      .then(() => log.info('settings.match-strategy', '匹配策略已切换', { preset, threshold: v }))
+      .catch((e) => notifyError(e, t('settings.saveFailed')))
+  }
+
+  const handleResetTuning = () => {
+    const { threshold, searchRetries, searchIntervalMs } = SYNC_TUNING_DEFAULTS
+    setSyncThreshold(threshold)
+    setSyncRetries(searchRetries)
+    setSyncInterval(searchIntervalMs)
+    Promise.all([
+      window.electronAPI.settings.set('syncThreshold', threshold),
+      window.electronAPI.settings.set('syncRetries', searchRetries),
+      window.electronAPI.settings.set('syncSearchInterval', searchIntervalMs),
+    ])
+      .then(() => {
+        log.info('settings.tuning-reset', '同步参数已恢复默认')
+        notify('success', t('settings.resetDone'))
+      })
+      .catch((e) => notifyError(e, t('settings.saveFailed')))
+  }
+
+  // --- 滑块防抖回写（恢复完成前不触发） ---
+
+  useEffect(() => {
+    if (!restoredRef.current) return
+    const id = setTimeout(() => {
+      window.electronAPI.settings.set('syncRetries', syncRetries).catch(() => {})
+    }, 350)
+    return () => clearTimeout(id)
+  }, [syncRetries])
+
+  useEffect(() => {
+    if (!restoredRef.current) return
+    const id = setTimeout(() => {
+      window.electronAPI.settings.set('syncSearchInterval', syncInterval).catch(() => {})
+    }, 350)
+    return () => clearTimeout(id)
+  }, [syncInterval])
+
+  // --- 危险区：清空缓存（两步确认） ---
+
+  const handleClearCache = () => {
+    if (!cacheConfirm) {
+      setCacheConfirm(true)
+      clearTimeout(cacheConfirmTimer.current)
+      cacheConfirmTimer.current = setTimeout(() => setCacheConfirm(false), 4_000)
+      return
+    }
+    clearTimeout(cacheConfirmTimer.current)
+    setCacheConfirm(false)
+    window.electronAPI.cache
+      .clear()
+      .then(({ playlists, songs }) => {
+        log.info('settings.cache-cleared', '歌曲缓存已清空', { playlists, songs })
+        notify('success', t('settings.clearCacheDone', { playlists: String(playlists), songs: String(songs) }))
+      })
+      .catch((e) => {
+        log.error('settings.cache-clear-failed', '清空缓存失败', e)
+        notifyError(e, t('settings.clearCache'))
+      })
+  }
+
+  // --- 关于：复制版本号 ---
+
+  const handleCopyVersion = async () => {
+    try {
+      await navigator.clipboard.writeText(version ? `SyncWave v${version}` : 'SyncWave')
+      notify('success', t('settings.versionCopied'))
+    } catch (e) {
+      log.error('settings.copy-version-failed', '复制版本号失败', e)
+      notifyError(e, t('settings.saveFailed'))
+    }
+  }
+
+  // --- 自动更新状态流转 ---
+
   useEffect(() => {
     const offStatus = window.electronAPI.updater.onStatus((status) => {
       log.debug('settings.update-status', '更新状态变化', { state: status.state })
@@ -86,7 +259,8 @@ export default function SettingsView() {
     }
   }, [t])
 
-  // 从 SQLite 恢复设置；开机启动读取系统登录项真实状态
+  // --- 从 SQLite 恢复设置；开机启动读取系统登录项真实状态 ---
+
   useEffect(() => {
     window.electronAPI.settings
       .getAll()
@@ -100,6 +274,9 @@ export default function SettingsView() {
       })
       .catch((e) => {
         log.warn('settings.restore-failed', '设置恢复失败', e)
+      })
+      .finally(() => {
+        restoredRef.current = true
       })
     window.electronAPI
       .getAutoLaunch()
@@ -117,9 +294,9 @@ export default function SettingsView() {
         log.warn('settings.proxy-read-failed', '读取代理设置失败', e)
       })
     window.electronAPI.settings
-      .get('theme', 'dark')
+      .get('theme', DEFAULT_THEME)
       .then((value) => {
-        if (value === 'light' || value === 'dark') setTheme(value)
+        if (isTheme(value)) setTheme(value)
       })
       .catch(() => {})
     window.electronAPI
@@ -128,284 +305,458 @@ export default function SettingsView() {
       .catch((e) => {
         log.debug('settings.version', '查询应用版本失败', e)
       })
+    return () => clearTimeout(cacheConfirmTimer.current)
   }, [])
 
-  return (
-    <div>
-      <h1 className="mt-1 font-headline-lg text-headline-lg font-semibold">
-        {t('settings.title')}
-      </h1>
+  // --- 组装分组行 ---
 
-      <div className="mt-6 flex flex-col gap-3">
-        <SettingRow
-          icon="dark_mode"
-          title={t('settings.theme')}
-          description={t('settings.themeDesc')}
-        >
-          <div className="flex gap-1 rounded-lg border border-outline-variant bg-surface-container-highest p-1">
-            {(['light', 'dark'] as const).map((th) => (
-              <button
-                key={th}
-                onClick={() => {
-                  setTheme(th)
-                  applyTheme(th)
-                  window.electronAPI.settings
-                    .set('theme', th)
-                    .then(() => log.info('settings.theme', '主题已切换', { theme: th }))
-                    .catch((e) =>
-                      log.error('settings.theme-save-failed', '主题保存失败', e, { theme: th }),
-                    )
-                }}
-                className={`rounded-md px-3 py-1 font-label-sm text-label-sm transition-colors ${
-                  theme === th
-                    ? 'bg-primary text-on-primary'
-                    : 'text-on-surface-variant hover:text-on-surface'
-                }`}
-              >
-                {th === 'light' ? t('settings.light') : t('settings.dark')}
-              </button>
-            ))}
-          </div>
-        </SettingRow>
-        <SettingRow
-          icon="language"
-          title={t('settings.language')}
-          description={t('settings.languageDesc')}
-        >
-          <div className="flex gap-1 rounded-lg border border-outline-variant bg-surface-container-highest p-1">
-            {LOCALES.map((l) => (
-              <button
-                key={l}
-                onClick={() => {
-                  log.info('settings.language', '切换语言', { locale: l })
-                  setLocale(l)
-                }}
-                className={`rounded-md px-3 py-1 font-label-sm text-label-sm transition-colors ${
-                  locale === l
-                    ? 'bg-primary text-on-primary'
-                    : 'text-on-surface-variant hover:text-on-surface'
-                }`}
-              >
-                {l === 'zh-CN' ? t('settings.zh') : t('settings.en')}
-              </button>
-            ))}
-          </div>
-        </SettingRow>
-        <SettingRow
-          icon="power_settings_new"
-          title={t('settings.autoLaunch')}
-          description={t('settings.autoLaunchDesc')}
-        >
-          <ToggleSwitch
-            checked={autoLaunch}
-            onChange={(next) => {
-              setAutoLaunch(next)
-              window.electronAPI
-                .setAutoLaunch(next)
-                .then(() => log.info('settings.auto-launch', '开机启动设置已应用', { enabled: next }))
-                .catch((e) =>
-                  log.error('settings.auto-launch', '开机启动设置失败', e, {
-                    enabled: next,
-                  }),
-                )
-            }}
-          />
-        </SettingRow>
-        <SettingRow
-          icon="shield_lock"
-          title={t('settings.logReport')}
-          description={t('settings.logReportDesc')}
-        >
-          <ToggleSwitch
-            checked={reportEnabled}
-            onChange={(next) => {
-              setReportEnabled(next)
-              window.electronAPI.settings
-                .set('reportEnabled', next)
-                .then(() => log.info('settings.log-report', '日志上报设置已保存', { enabled: next }))
-                .catch((e) =>
-                  log.error('settings.log-report', '日志上报设置保存失败', e, {
-                    enabled: next,
-                  }),
-                )
-            }}
-          />
-        </SettingRow>
-        <SettingRow
-          icon="tune"
-          title={t('settings.syncThreshold')}
-          description={t('settings.syncThresholdDesc')}
-        >
-          <div className="flex items-center gap-2">
-            <input
-              type="range"
-              min={0.4}
-              max={0.9}
-              step={0.05}
-              value={syncThreshold}
-              onChange={(e) => {
-                const v = Number(e.target.value)
-                setSyncThreshold(v)
-                window.electronAPI.settings.set('syncThreshold', v).catch(() => {})
-              }}
-              className="w-40 accent-primary"
-            />
-            <span className="w-10 text-right font-label-mono text-label-mono text-on-surface">
-              {syncThreshold.toFixed(2)}
-            </span>
-          </div>
-        </SettingRow>
-        <SettingRow
-          icon="replay"
-          title={t('settings.syncRetries')}
-          description={t('settings.syncRetriesDesc')}
-        >
-          <div className="flex items-center gap-2">
-            <input
-              type="range"
-              min={0}
-              max={5}
-              step={1}
-              value={syncRetries}
-              onChange={(e) => {
-                const v = Number(e.target.value)
-                setSyncRetries(v)
-                window.electronAPI.settings.set('syncRetries', v).catch(() => {})
-              }}
-              className="w-40 accent-primary"
-            />
-            <span className="w-10 text-right font-label-mono text-label-mono text-on-surface">
-              {syncRetries}
-            </span>
-          </div>
-        </SettingRow>
-        <SettingRow
-          icon="speed"
-          title={t('settings.syncInterval')}
-          description={t('settings.syncIntervalDesc')}
-        >
-          <div className="flex items-center gap-2">
-            <input
-              type="range"
-              min={300}
-              max={3000}
-              step={100}
-              value={syncInterval}
-              onChange={(e) => {
-                const v = Number(e.target.value)
-                setSyncInterval(v)
-                window.electronAPI.settings.set('syncSearchInterval', v).catch(() => {})
-              }}
-              className="w-40 accent-primary"
-            />
-            <span className="w-16 text-right font-label-mono text-label-mono text-on-surface">
-              {t('settings.syncIntervalUnit', { value: syncInterval })}
-            </span>
-          </div>
-        </SettingRow>
-        <SettingRow
-          icon="router"
-          title={t('settings.proxy')}
-          description={t('settings.proxyDesc')}
-        >
-          <div className="flex items-center gap-2">
-            <input
-              value={proxyDraft}
-              onChange={(e) => setProxyDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') void handleProxyApply()
-              }}
-              placeholder={t('settings.proxyPlaceholder')}
-              className="w-56 rounded-lg border border-outline-variant bg-surface px-3 py-1.5 font-body-md text-body-md text-on-surface outline-none placeholder:text-outline focus:border-primary"
-            />
+  const updateStatusText = (() => {
+    if (!updateStatus) return null
+    switch (updateStatus.state) {
+      case 'checking':
+        return t('settings.updateChecking')
+      case 'not-available':
+        return t('settings.updateLatest')
+      case 'available':
+        return t('settings.updateAvailable', { version: updateStatus.version })
+      case 'downloading':
+        return t('settings.updateDownloading', { percent: String(updateStatus.percent) })
+      case 'downloaded':
+        return t('settings.updateDownloaded')
+      case 'error':
+        return t('settings.updateFailed')
+    }
+  })()
+
+  const activePreset = nearestPreset(syncThreshold)
+
+  const rows: RowDef[] = [
+    {
+      section: 'appearance',
+      icon: 'dark_mode',
+      title: t('settings.theme'),
+      desc: t('settings.themeDesc'),
+      control: (
+        <div className="flex gap-1 rounded-lg border border-outline-variant bg-surface-container-highest p-1">
+          {(['light', 'dark', 'system'] as const).map((th) => (
             <button
-              onClick={() => void handleProxyApply()}
-              className="rounded-lg border border-outline-variant px-3 py-1.5 font-label-md text-label-md text-on-surface transition-colors hover:bg-surface-container-high hover:text-primary"
+              key={th}
+              aria-pressed={theme === th}
+              onClick={() => handleThemeChange(th)}
+              className={`rounded-md px-3 py-1 font-label-sm text-label-sm transition-colors ${
+                theme === th
+                  ? 'bg-primary text-on-primary'
+                  : 'text-on-surface-variant hover:text-on-surface'
+              }`}
             >
-              {t('settings.proxyApply')}
+              {th === 'light' ? t('settings.light') : th === 'dark' ? t('settings.dark') : t('settings.system')}
             </button>
-            {proxyUrl !== '' && (
-              <button
-                onClick={() => void handleProxyClear()}
-                title={t('settings.proxyClear')}
-                className="flex items-center rounded-md p-1.5 text-on-surface-variant transition-colors hover:bg-surface-container-highest hover:text-error"
-              >
-                <span className="material-symbols-outlined text-base">close</span>
-              </button>
-            )}
-          </div>
-        </SettingRow>
-        <SettingRow
-          icon="system_update"
-          title={t('settings.update')}
-          description={t('settings.updateDesc')}
-        >
-          <div className="flex items-center gap-3">
-            <ToggleSwitch
-              checked={autoUpdateEnabled}
-              onChange={(next) => {
-                setAutoUpdateEnabled(next)
-                window.electronAPI.settings
-                  .set('autoUpdateEnabled', next)
-                  .then(() =>
-                    log.info('settings.auto-update', '自动更新开关已保存', { enabled: next }),
-                  )
-                  .catch((e) =>
-                    log.error('settings.auto-update', '自动更新设置保存失败', e, {
-                      enabled: next,
-                    }),
-                  )
+          ))}
+        </div>
+      ),
+    },
+    {
+      section: 'appearance',
+      icon: 'language',
+      title: t('settings.language'),
+      desc: t('settings.languageDesc'),
+      control: (
+        <div className="flex gap-1 rounded-lg border border-outline-variant bg-surface-container-highest p-1">
+          {LOCALES.map((l) => (
+            <button
+              key={l}
+              aria-pressed={locale === l}
+              onClick={() => {
+                log.info('settings.language', '切换语言', { locale: l })
+                setLocale(l)
               }}
-            />
-            {updateStatus?.state === 'downloaded' ? (
+              className={`rounded-md px-3 py-1 font-label-sm text-label-sm transition-colors ${
+                locale === l
+                  ? 'bg-primary text-on-primary'
+                  : 'text-on-surface-variant hover:text-on-surface'
+              }`}
+            >
+              {l === 'zh-CN' ? t('settings.zh') : t('settings.en')}
+            </button>
+          ))}
+        </div>
+      ),
+    },
+    {
+      section: 'general',
+      icon: 'power_settings_new',
+      title: t('settings.autoLaunch'),
+      desc: t('settings.autoLaunchDesc'),
+      control: (
+        <ToggleSwitch
+          checked={autoLaunch}
+          ariaLabel={t('settings.autoLaunch')}
+          onChange={(next) => {
+            setAutoLaunch(next)
+            window.electronAPI
+              .setAutoLaunch(next)
+              .then(() => log.info('settings.auto-launch', '开机启动设置已应用', { enabled: next }))
+              .catch((e) => {
+                setAutoLaunch(!next)
+                log.error('settings.auto-launch', '开机启动设置失败', e, { enabled: next })
+                notifyError(e, t('settings.saveFailed'))
+              })
+          }}
+        />
+      ),
+    },
+    {
+      section: 'general',
+      icon: 'system_update',
+      title: t('settings.update'),
+      desc: t('settings.updateDesc'),
+      control: (
+        <div className="flex items-center gap-3">
+          <ToggleSwitch
+            checked={autoUpdateEnabled}
+            ariaLabel={t('settings.update')}
+            onChange={(next) => {
+              setAutoUpdateEnabled(next)
+              window.electronAPI.settings
+                .set('autoUpdateEnabled', next)
+                .then(() => log.info('settings.auto-update', '自动更新开关已保存', { enabled: next }))
+                .catch((e) => {
+                  setAutoUpdateEnabled(!next)
+                  log.error('settings.auto-update', '自动更新设置保存失败', e, { enabled: next })
+                  notifyError(e, t('settings.saveFailed'))
+                })
+            }}
+          />
+          {updateStatus?.state === 'downloaded' ? (
+            <button
+              onClick={() => {
+                log.info('settings.update-install', '重启并安装新版本')
+                window.electronAPI.updater.quitAndInstall().catch(() => {})
+              }}
+              className="rounded-lg bg-primary px-3 py-1.5 font-label-md text-label-md font-medium text-on-primary transition-colors hover:brightness-110"
+            >
+              {t('settings.updateRestart')}
+            </button>
+          ) : (
+            <button
+              onClick={() => {
+                log.info('settings.update-check', '手动检查更新')
+                setUpdateStatus({ state: 'checking' })
+                window.electronAPI.updater
+                  .check()
+                  .catch(() => setUpdateStatus({ state: 'error', message: t('settings.updateDevMode') }))
+              }}
+              className="rounded-lg border border-outline-variant px-3 py-1.5 font-label-md text-label-md text-on-surface transition-colors hover:bg-surface-container-high"
+            >
+              {t('settings.updateCheck')}
+            </button>
+          )}
+        </div>
+      ),
+      extra: updateStatusText && (
+        <p className="font-label-sm text-label-sm text-on-surface-variant">{updateStatusText}</p>
+      ),
+    },
+    {
+      section: 'network',
+      icon: 'router',
+      title: t('settings.proxy'),
+      desc: t('settings.proxyDesc'),
+      control: (
+        <div className="flex items-center gap-2">
+          <input
+            value={proxyDraft}
+            onChange={(e) => setProxyDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') void handleProxyApply()
+            }}
+            placeholder={t('settings.proxyPlaceholder')}
+            aria-label={t('settings.proxy')}
+            className="w-48 rounded-lg border border-outline-variant bg-surface px-3 py-1.5 font-body-md text-body-md text-on-surface outline-none placeholder:text-outline focus:border-primary"
+          />
+          <button
+            onClick={() => void handleProxyTest()}
+            disabled={proxyTesting || proxyDraft.trim() === ''}
+            className="rounded-lg border border-outline-variant px-3 py-1.5 font-label-md text-label-md text-on-surface transition-colors hover:bg-surface-container-high hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {proxyTesting ? t('settings.proxyTesting') : t('settings.proxyTest')}
+          </button>
+          <button
+            onClick={() => void handleProxyApply()}
+            className="rounded-lg border border-outline-variant px-3 py-1.5 font-label-md text-label-md text-on-surface transition-colors hover:bg-surface-container-high hover:text-primary"
+          >
+            {t('settings.proxyApply')}
+          </button>
+          {proxyUrl !== '' && (
+            <button
+              onClick={() => void handleProxyClear()}
+              title={t('settings.proxyClear')}
+              aria-label={t('settings.proxyClear')}
+              className="flex items-center rounded-md p-1.5 text-on-surface-variant transition-colors hover:bg-surface-container-highest hover:text-error"
+            >
+              <span className="material-symbols-outlined text-base">close</span>
+            </button>
+          )}
+        </div>
+      ),
+    },
+    {
+      section: 'advanced',
+      icon: 'tune',
+      title: t('settings.matchStrategy'),
+      desc: t('settings.matchStrategyDesc'),
+      control: (
+        <div className="flex items-center gap-2">
+          <div className="flex gap-1 rounded-lg border border-outline-variant bg-surface-container-highest p-1">
+            {(Object.keys(THRESHOLD_PRESETS) as ThresholdPreset[]).map((p) => (
               <button
-                onClick={() => {
-                  log.info('settings.update-install', '重启并安装新版本')
-                  window.electronAPI.updater.quitAndInstall().catch(() => {})
-                }}
-                className="rounded-lg bg-primary px-3 py-1.5 font-label-md text-label-md font-medium text-on-primary transition-colors hover:brightness-110"
+                key={p}
+                aria-pressed={activePreset === p}
+                onClick={() => handlePresetChange(p)}
+                className={`rounded-md px-3 py-1 font-label-sm text-label-sm transition-colors ${
+                  activePreset === p
+                    ? 'bg-primary text-on-primary'
+                    : 'text-on-surface-variant hover:text-on-surface'
+                }`}
               >
-                {t('settings.updateRestart')}
+                {t(PRESET_LABEL_KEYS[p])}
               </button>
-            ) : (
-              <button
-                onClick={() => {
-                  log.info('settings.update-check', '手动检查更新')
-                  setUpdateStatus({ state: 'checking' })
-                  window.electronAPI.updater
-                    .check()
-                    .catch(() =>
-                      setUpdateStatus({ state: 'error', message: t('settings.updateDevMode') }),
-                    )
-                }}
-                className="rounded-lg border border-outline-variant px-3 py-1.5 font-label-md text-label-md text-on-surface transition-colors hover:bg-surface-container-high"
-              >
-                {t('settings.updateCheck')}
-              </button>
-            )}
-            <span className="font-label-sm text-label-sm text-on-surface-variant">
-              {updateStatus?.state === 'checking' && t('settings.updateChecking')}
-              {updateStatus?.state === 'not-available' && t('settings.updateLatest')}
-              {updateStatus?.state === 'available' &&
-                t('settings.updateAvailable', { version: updateStatus.version })}
-              {updateStatus?.state === 'downloading' &&
-                t('settings.updateDownloading', { percent: updateStatus.percent })}
-              {updateStatus?.state === 'downloaded' &&
-                t('settings.updateDownloaded')}
-              {updateStatus?.state === 'error' && t('settings.updateFailed')}
-            </span>
+            ))}
           </div>
-        </SettingRow>
-        <SettingRow
-          icon="info"
-          title={t('settings.about')}
-          description={t('settings.aboutDesc')}
+          <span className="w-20 text-right font-label-mono text-label-mono text-on-surface-variant">
+            {t('settings.matchValue', { value: syncThreshold.toFixed(2) })}
+          </span>
+        </div>
+      ),
+    },
+    {
+      section: 'advanced',
+      icon: 'replay',
+      title: t('settings.syncRetries'),
+      desc: t('settings.syncRetriesDesc'),
+      control: (
+        <div className="flex items-center gap-2">
+          <input
+            type="range"
+            min={SYNC_TUNING_RANGE.searchRetries.min}
+            max={SYNC_TUNING_RANGE.searchRetries.max}
+            step={1}
+            value={syncRetries}
+            aria-label={t('settings.syncRetries')}
+            onChange={(e) => setSyncRetries(Number(e.target.value))}
+            className="w-40 accent-primary"
+          />
+          <span className="w-10 text-right font-label-mono text-label-mono text-on-surface">
+            {syncRetries}
+          </span>
+        </div>
+      ),
+    },
+    {
+      section: 'advanced',
+      icon: 'speed',
+      title: t('settings.syncInterval'),
+      desc: t('settings.syncIntervalDesc'),
+      control: (
+        <div className="flex items-center gap-2">
+          <input
+            type="range"
+            min={SYNC_TUNING_RANGE.searchIntervalMs.min}
+            max={SYNC_TUNING_RANGE.searchIntervalMs.max}
+            step={100}
+            value={syncInterval}
+            aria-label={t('settings.syncInterval')}
+            onChange={(e) => setSyncInterval(Number(e.target.value))}
+            className="w-40 accent-primary"
+          />
+          <span className="w-16 text-right font-label-mono text-label-mono text-on-surface">
+            {t('settings.syncIntervalUnit', { value: syncInterval })}
+          </span>
+        </div>
+      ),
+    },
+    {
+      section: 'privacy',
+      icon: 'shield_lock',
+      title: t('settings.logReport'),
+      desc: t('settings.logReportDesc'),
+      control: (
+        <ToggleSwitch
+          checked={reportEnabled}
+          ariaLabel={t('settings.logReport')}
+          onChange={(next) => {
+            setReportEnabled(next)
+            window.electronAPI.settings
+              .set('reportEnabled', next)
+              .then(() => log.info('settings.log-report', '日志上报设置已保存', { enabled: next }))
+              .catch((e) => {
+                setReportEnabled(!next)
+                log.error('settings.log-report', '日志上报设置保存失败', e, { enabled: next })
+                notifyError(e, t('settings.saveFailed'))
+              })
+          }}
+        />
+      ),
+    },
+    {
+      section: 'data',
+      icon: 'folder_delete',
+      title: t('settings.clearCache'),
+      desc: t('settings.clearCacheDesc'),
+      control: cacheConfirm ? (
+        <div className="flex items-center gap-2">
+          <span className="font-label-sm text-label-sm text-error">{t('settings.clearCacheConfirm')}</span>
+          <button
+            onClick={handleClearCache}
+            className="rounded-lg bg-error px-3 py-1.5 font-label-md text-label-md font-medium text-on-error transition-colors hover:brightness-110"
+          >
+            {t('settings.clearCache')}
+          </button>
+          <button
+            onClick={() => {
+              clearTimeout(cacheConfirmTimer.current)
+              setCacheConfirm(false)
+            }}
+            className="rounded-lg border border-outline-variant px-3 py-1.5 font-label-md text-label-md text-on-surface transition-colors hover:bg-surface-container-high"
+          >
+            {t('settings.cancel')}
+          </button>
+        </div>
+      ) : (
+        <button
+          onClick={handleClearCache}
+          className="rounded-lg border border-outline-variant px-3 py-1.5 font-label-md text-label-md text-on-surface transition-colors hover:border-error hover:text-error"
         >
+          {t('settings.clearCache')}
+        </button>
+      ),
+    },
+    {
+      section: 'about',
+      icon: 'info',
+      title: t('settings.about'),
+      desc: t('settings.aboutDesc'),
+      control: (
+        <div className="flex items-center gap-3">
           <span className="font-label-mono text-label-mono text-outline">
             {version ? `SyncWave v${version}` : 'Electron · React · Tailwind'}
           </span>
-        </SettingRow>
+          <button
+            onClick={() => void handleCopyVersion()}
+            disabled={!version}
+            className="flex items-center gap-1 rounded-lg border border-outline-variant px-2.5 py-1 font-label-sm text-label-sm text-on-surface transition-colors hover:bg-surface-container-high hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <span className="material-symbols-outlined text-sm">content_copy</span>
+            {t('settings.copyVersion')}
+          </button>
+        </div>
+      ),
+    },
+  ]
+
+  const query = search.trim().toLowerCase()
+  const matchesSearch = (row: RowDef): boolean => {
+    if (!query) return true
+    return row.title.toLowerCase().includes(query) || row.desc.toLowerCase().includes(query)
+  }
+  const visibleRows = rows.filter((row) => {
+    if (!matchesSearch(row)) return false
+    // 高级区默认折叠；搜索命中时临时展开
+    if (row.section === 'advanced') return advancedOpen || query !== ''
+    return true
+  })
+
+  const renderSection = (sectionId: SectionId): ReactNode => {
+    const sectionRows = visibleRows.filter((r) => r.section === sectionId)
+    if (sectionRows.length === 0) return null
+    const label = t(SECTION_ORDER.find((s) => s.id === sectionId)!.labelKey)
+    return (
+      <section key={sectionId} className="mt-6 first:mt-2">
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="font-label-md text-label-md font-medium uppercase tracking-wide text-on-surface-variant">
+            {label}
+          </h2>
+          {sectionId === 'advanced' && (
+            <div className="flex items-center gap-3">
+              {!advancedOpen && (
+                <span className="font-label-sm text-label-sm text-outline">
+                  {t('settings.sectionAdvancedHint')}
+                </span>
+              )}
+              <button
+                onClick={handleResetTuning}
+                className="rounded-md px-2 py-1 font-label-sm text-label-sm text-on-surface-variant transition-colors hover:bg-surface-container-high hover:text-primary"
+              >
+                {t('settings.resetDefaults')}
+              </button>
+              <button
+                onClick={() => setAdvancedOpen((v) => !v)}
+                aria-expanded={advancedOpen}
+                aria-label={label}
+                className="flex items-center gap-1 rounded-md px-2 py-1 text-on-surface-variant transition-colors hover:bg-surface-container-high hover:text-on-surface"
+              >
+                <span
+                  className={`material-symbols-outlined text-base transition-transform ${advancedOpen ? 'rotate-180' : ''}`}
+                >
+                  expand_more
+                </span>
+              </button>
+            </div>
+          )}
+        </div>
+        <div className="flex flex-col gap-3">{sectionRows.map((row, i) => renderRow(row, i))}</div>
+      </section>
+    )
+  }
+
+  const renderRow = (row: RowDef, index: number): ReactNode => (
+    <SettingRow
+      key={`${row.section}-${index}`}
+      icon={row.icon}
+      title={row.title}
+      description={row.desc}
+      extra={row.extra}
+    >
+      {row.control}
+    </SettingRow>
+  )
+
+  const totalVisible = visibleRows.length
+
+  return (
+    <div>
+      <div className="flex items-center justify-between">
+        <h1 className="mt-1 font-headline-lg text-headline-lg font-semibold">{t('settings.title')}</h1>
       </div>
+
+      {/* 设置搜索：按标题/描述/分区过滤 */}
+      <div className="sticky top-0 z-10 mt-4 flex items-center gap-2 rounded-lg border border-outline-variant bg-surface-container-low px-3 py-2">
+        <span className="material-symbols-outlined text-base text-on-surface-variant">search</span>
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder={t('settings.searchPlaceholder')}
+          aria-label={t('settings.searchPlaceholder')}
+          className="w-full bg-transparent font-body-md text-body-md text-on-surface outline-none placeholder:text-outline"
+        />
+        {search !== '' && (
+          <button
+            onClick={() => setSearch('')}
+            aria-label={t('toast.close')}
+            className="rounded-md p-1 text-on-surface-variant transition-colors hover:bg-surface-container-highest hover:text-on-surface"
+          >
+            <span className="material-symbols-outlined text-base">close</span>
+          </button>
+        )}
+      </div>
+
+      {totalVisible === 0 ? (
+        <p className="mt-8 text-center font-body-md text-body-md text-on-surface-variant">
+          {t('settings.searchEmpty')}
+        </p>
+      ) : (
+        <div className="pb-4">{SECTION_ORDER.map((s) => renderSection(s.id))}</div>
+      )}
     </div>
   )
 }
