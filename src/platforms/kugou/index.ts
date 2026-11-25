@@ -83,6 +83,12 @@ function toKugouError(e: unknown): KugouApiError {
   return new KugouApiError(status, errorCode, message)
 }
 
+/** 会话明确失效的酷狗错误码：20017/20018 设备绑定问题，20028 触发安全验证 */
+function isSessionDeadError(e: unknown): boolean {
+  const err = e instanceof KugouApiError ? e : toKugouError(e)
+  return err.errorCode === 20017 || err.errorCode === 20018 || err.errorCode === 20028
+}
+
 /** 凭证 cookie 字符串 → 键值对（值内可含 =，用首个 = 分割） */
 function parseCredential(cookie: string): Record<string, string> {
   const out: Record<string, string> = {}
@@ -276,13 +282,39 @@ export class KugouAdapter extends BasePlatformAdapter {
   }
 
   protected async fetchLoginStatus(credential: string): Promise<LoginStatusRaw> {
-    const res = await this.call(this.api.user_detail!, { cookie: this.buildCookie(credential) })
-    const data = asObject(res.data ?? res)
-    const info = asObject(data.info)
-    return {
-      userId: pickString(info.userid, info.uid, data.userid),
-      nickname: pickString(info.nickname, info.nick, data.nickname),
+    let lastErr: unknown
+    // 主路径：get_my_userinfo（社区实测可用，响应为明文平铺 data.userid/nickname）
+    try {
+      const res = await this.call(this.api.user_info!, { cookie: this.buildCookie(credential) })
+      const data = asObject(res.data ?? res)
+      const info = asObject(data.info)
+      const userId = pickString(data.userid, info.userid, info.uid)
+      if (userId) {
+        return { userId, nickname: pickString(data.nickname, info.nickname, info.nick) }
+      }
+    } catch (e) {
+      lastErr = e
     }
+    // 回退：get_my_info（响应结构部分协议版本为 data.info 嵌套）
+    try {
+      const res = await this.call(this.api.user_detail!, { cookie: this.buildCookie(credential) })
+      const data = asObject(res.data ?? res)
+      const info = asObject(data.info)
+      const userId = pickString(info.userid, info.uid, data.userid)
+      if (userId) {
+        return { userId, nickname: pickString(info.nickname, info.nick, data.nickname) }
+      }
+      // 接口可用但账号信息缺失：视为未登录
+      return { userId: undefined }
+    } catch (e) {
+      lastErr = e
+    }
+    // 会话明确失效不兜底（避免保活误判 alive）
+    if (isSessionDeadError(lastErr)) throw toKugouError(lastErr)
+    // 兜底：扫码刚签发的凭证自带 userid，接口暂时不可用时仍视为已登录
+    const parsed = parseCredential(credential)
+    if (parsed.userid) return { userId: parsed.userid, nickname: '酷狗用户' }
+    throw lastErr instanceof Error ? lastErr : new Error('酷狗：查询登录状态失败')
   }
 
   protected async doKeepAlive(credential: string): Promise<KeepAliveResult> {
@@ -306,12 +338,20 @@ export class KugouAdapter extends BasePlatformAdapter {
       }
       return { alive: true }
     } catch (e) {
+      // 会话明确失效（设备不匹配/需验证）直接判死，其余保持现状
+      if (isSessionDeadError(e)) return { alive: false }
       this.log.debug('keepalive.check', 'token 刷新失败，回退为登录态校验', {
         message: e instanceof Error ? e.message : String(e),
       })
     }
-    const raw = await this.fetchLoginStatus(credential)
-    return { alive: Boolean(raw.userId) }
+    try {
+      const raw = await this.fetchLoginStatus(credential)
+      return { alive: Boolean(raw.userId) }
+    } catch (e) {
+      if (isSessionDeadError(e)) return { alive: false }
+      // 网络类异常交由模板方法保持现状，避免误判失效
+      throw e
+    }
   }
 
   protected async fetchPlaylists(credential: string, _userId: string): Promise<PlatformPlaylist[]> {

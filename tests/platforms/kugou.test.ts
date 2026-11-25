@@ -17,6 +17,9 @@ function makeApi(overrides: Partial<KugouApi> = {}): KugouApi {
       cookie: [],
     }),
     login_qr_check: async () => ({ status: 200, body: { data: { status: 1 } }, cookie: [] }),
+    user_info: async () => {
+      throw { status: 502, body: { error_msg: '接口不可用' }, cookie: [] }
+    },
     user_detail: async () => ({
       status: 200,
       body: { data: { info: { userid: 123, nickname: '测试' } } },
@@ -96,6 +99,45 @@ describe('KugouAdapter — 映射契约', () => {
       DEVICE,
     ).getLoginStatus('bad')
     expect(none).toBeNull()
+  })
+
+  it('登录态：优先 get_my_userinfo 的平铺字段', async () => {
+    const api = makeApi({
+      user_info: async () => ({
+        status: 200,
+        body: { data: { userid: 789, nickname: '平铺昵称' } },
+        cookie: [],
+      }),
+    })
+    const account = await new KugouAdapter(api, DEVICE).getLoginStatus('token=t;userid=789')
+    expect(account).toEqual({ platform: 'kugou', userId: '789', nickname: '平铺昵称' })
+  })
+
+  it('登录态：两接口失败时凭证 userid 兜底', async () => {
+    const api = makeApi({
+      user_info: async () => {
+        throw { status: 502, body: { error_msg: '不可用' }, cookie: [] }
+      },
+      user_detail: async () => {
+        throw { status: 502, body: { error_msg: '也不可用' }, cookie: [] }
+      },
+    })
+    const account = await new KugouAdapter(api, DEVICE).getLoginStatus('token=t;userid=555')
+    expect(account).toEqual({ platform: 'kugou', userId: '555', nickname: '酷狗用户' })
+  })
+
+  it('登录态：会话失效错误码不兜底，抛平台错误', async () => {
+    const api = makeApi({
+      user_info: async () => {
+        throw { status: 502, body: { error_code: 20017, error_msg: '设备不匹配' }, cookie: [] }
+      },
+      user_detail: async () => {
+        throw { status: 502, body: { error_code: 20017, error_msg: '设备不匹配' }, cookie: [] }
+      },
+    })
+    await expect(
+      new KugouAdapter(api, DEVICE).getLoginStatus('token=t;userid=555'),
+    ).rejects.toThrow('设备不匹配')
   })
 
   it('歌单列表映射：id/name/songCount/coverUrl', async () => {
@@ -359,9 +401,8 @@ describe('KugouAdapter — 映射契约', () => {
     const dead = new KugouAdapter(
       makeApi({
         login_token: async () => {
-          throw { status: 502, body: { error_msg: '刷新失败' }, cookie: [] }
+          throw { status: 502, body: { error_code: 20017, error_msg: '设备不匹配' }, cookie: [] }
         },
-        user_detail: async () => ({ status: 200, body: { data: {} }, cookie: [] }),
       }),
       DEVICE,
     )

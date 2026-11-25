@@ -26,6 +26,7 @@ import LocalPlaylistPanel from './LocalPlaylistPanel'
 import ProgressBar from './ProgressBar'
 import LoadMoreSentinel from './LoadMoreSentinel'
 import ContextMenu, { type ContextMenuEntry } from './ContextMenu'
+import Tooltip from './Tooltip'
 import { notify } from './toast'
 import { ipcErrorMessage } from '../utils/ipcError'
 import { operationAllowed, operationReason } from '../utils/platformCapabilities'
@@ -193,6 +194,8 @@ export default function PlaylistSection({
   }, [deleteTarget])
   const [managing, setManaging] = useState(false)
   const [removingIds, setRemovingIds] = useState<Set<string>>(new Set())
+  /** 移除按钮悬浮即时提示（锚点 = 按钮底边中心，Tooltip 挂 body 显示） */
+  const [removeTip, setRemoveTip] = useState<{ x: number; y: number; text: string } | null>(null)
   const [searchInput, setSearchInput] = useState('')
   const [searching, setSearching] = useState(false)
   const [searchError, setSearchError] = useState('')
@@ -1150,21 +1153,27 @@ export default function PlaylistSection({
                 }
                 renderAction={(s) =>
                   canManage ? (
-                    // disabled 按钮不响应鼠标事件，原生 title 不显示：
-                    // 提示挂在外层 span（非禁用元素）上，按钮自身置灰
+                    // disabled 按钮不响应鼠标事件：悬浮事件挂在外层 span 上，
+                    // 原生 title 延迟过久改用即时 Tooltip，按钮自身置灰
                     <span
-                      title={
-                        canRemoveSong
-                          ? t('playlist.removeSong')
-                          : (removeSongReason ?? t('playlist.removeSong'))
-                      }
                       className="flex shrink-0 items-center"
+                      onMouseEnter={(e) => {
+                        const rect = e.currentTarget.getBoundingClientRect()
+                        setRemoveTip({
+                          x: rect.left + rect.width / 2,
+                          y: rect.bottom,
+                          text: canRemoveSong
+                            ? t('playlist.removeSong')
+                            : (removeSongReason ?? t('playlist.removeSong')),
+                        })
+                      }}
+                      onMouseLeave={() => setRemoveTip(null)}
                     >
                       <button
                         onClick={() => void handleRemoveSong(s.id)}
                         disabled={!canRemoveSong || removingIds.has(s.id)}
                         aria-disabled={!canRemoveSong}
-                        className="flex items-center rounded-md p-1 text-on-surface-variant opacity-0 transition-all group-hover:opacity-100 hover:bg-error/10 hover:text-error disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-on-surface-variant"
+                        className="flex items-center rounded-md p-1 text-on-surface-variant opacity-0 transition-all group-hover:opacity-100 hover:bg-error/10 hover:text-error disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-on-surface-variant"
                       >
                         <span
                           className={`material-symbols-outlined text-base ${removingIds.has(s.id) ? 'animate-spin' : ''}`}
@@ -1191,6 +1200,8 @@ export default function PlaylistSection({
           onClose={() => setMenu(null)}
         />
       )}
+
+      {removeTip && <Tooltip x={removeTip.x} y={removeTip.y} text={removeTip.text} />}
 
       {deleteTarget && (
         <div

@@ -81,10 +81,18 @@ export default function LoginSection({ platforms, accounts, onAccountChange }: L
           if (result.status === 'success') {
             stopPolling()
             setQrStatus('success')
-            const status = await window.electronAPI.platforms.loginStatus(platform)
             log.info('login.qr.success', '扫码登录成功', { platform })
             setTicket(null)
-            onAccountChange(platform, status)
+            try {
+              const status = await window.electronAPI.platforms.loginStatus(platform)
+              onAccountChange(platform, status)
+            } catch (e) {
+              // 凭证已保存，账号查询失败不应阻塞流程；重启后会自动恢复登录态
+              log.warn('login.qr.status-failed', '登录成功但查询账号信息失败', {
+                platform,
+                message: e instanceof Error ? e.message : String(e),
+              })
+            }
             setTimeout(closeQr, 800)
           } else if (result.status === 'expired') {
             stopPolling()
