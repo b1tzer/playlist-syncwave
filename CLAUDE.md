@@ -52,7 +52,7 @@
 
 ## 当前阶段
 - V0.1 MVP。已完成：`PRD.md`、`planning.md`、工程骨架、T2 文本解析器、T3 匹配引擎 + 网易云适配器、T4 单向同步引擎 + 最小可用 UI、T5 QQ音乐接入、T6 全自动解析、T7 歌单管理、T8 匹配增强、T9 同步中心、T10 列表模板、T11 歌单页增强、T12 歌单缓存，基础能力补齐 B1-B16（打包分发/单实例/窗口状态/应用菜单/开机启动/自动更新/系统通知/本地歌单库/文件导入/歌单导出/同步参数设置/代理/CSP+沙箱/迁移框架/浅色主题/崩溃恢复），以及酷狗音乐与 Apple Music 平台接入（详见 planning.md 补记条目）。共接入四个平台：网易云、QQ音乐、酷狗、Apple Music。
-- 已验收：网易云扫码登录；已修复：搜索风控（限速+重试）、EPIPE 崩溃、启动失败。
+- 已验收：网易云扫码登录；已修复：搜索风控（限速+重试）、EPIPE 崩溃、启动失败；已完成：同步匹配阶段并发化（并发池 + 双关键词并行 + 任务内关键词缓存 + 限流全局冷却 + 搜索超时收紧 15s）。
 - 待验收：网易云端到端同步、QQ音乐扫码登录与同步、酷狗音乐扫码登录与同步、Apple Music 网页登录与同步、基础能力 B1-B16 手工验收。
 - 已验证的工具链版本：TypeScript 6.0.3（TS7 与 typescript-eslint 冲突）、Vite 8、Vitest 5、Electron 45。
 - 平台集成：网易云用 `NeteaseCloudMusicApi`（CJS + createRequire）；QQ音乐用 `@yakult-green-tea/qq-music-api` 的 **Node 模式**（主进程加载包根模块启动内置 Koa 服务，含 MQTT，监听动态空闲端口；主进程 handler 转发到 127.0.0.1:端口）。QQ音乐 serverless 模式不支持 qqmusic 通道（需 MQTT），勿回退。酷狗用 `kugoumusicapi`（github 依赖）的**库模式**（createRequire 直调扁平函数，不启动 HTTP 服务），token 与设备指纹绑定，指纹持久化到 `userData/kugou-device.json`。Apple Music 走**社区路径**（网页前端 developer token `iss=AMPWebPlay` + 登录 cookie 的 media-user-token），读接口走官方主机 `api.music.apple.com`，写接口必须走 `amp-api.music.apple.com`（删除在官方主机固定 401）。
@@ -66,7 +66,7 @@
 - 数据层模式：`createXxxStore(db)` 依赖注入 + `appDatabase.getDatabase()` 统一入口 + `xxxService.ts` 供 IPC 调用。
 - npm 11 默认拦截安装脚本（如 electron 二进制），需 `npm install-scripts approve <pkg>` 后再 rebuild。
 - 酷狗平台规则：歌单列表仅显示自建/系统歌单，收藏的他人歌单不显示。判定用 v7/get_all_list 条目的 `type` 字段（实测 0=自建/系统收藏夹——默认收藏 `is_def=1`、我喜欢 `is_def=2`，1=收藏他人歌单；`is_mine` 恒为 0 不可用）。过滤只作用于显示列表（`fetchPlaylists`），写操作索引 `playlistIndex` 保留完整；过滤规则变更需 bump `PLAYLIST_CACHE_SCHEMA_VERSION` 使旧缓存重新验证。
-- 网易云 API 风控敏感：搜索请求需限速（>=500ms）并支持重试；连续快速请求会触发 405 风控。
+- 网易云 API 风控敏感：搜索请求需限速（>=500ms）并支持重试；连续快速请求会触发 405 风控。同步匹配阶段为受控并发池（`searchConcurrency` 默认 3）：`searchIntervalMs` 语义为**全局相邻两次搜索请求的最小间隔**（原「每首间隔」收敛为全局限速，预约式限速器）；同一首歌「歌名+歌手」与「纯歌名」并行预取（预算内）；任务内关键词缓存（normalize(keyword)，含在途 promise 去重，失败不缓存）；任一请求被风控（rateLimited）触发全局冷却 4s 暂停后续发起；搜索请求超时 15s（建单/加歌 60s）。
 - QQ音乐 sealed token 依赖 `QQ_SESSION_SECRET`，该密钥已持久化到 userData，删除会导致全部登录失效。
 - 文本快速创建全自动解析（T6）：格式自动探测（json/m3u/lrc/csv/share/lines）→ 行分类去噪 → 字段顺序仅用强结构信号判定（书名号/版本词/多人名/feat/长度，**无本地词典**）+ 整段投票（`core/parser/orderInfer.ts`）→ 无信号行保留双候选，**顺序最终由平台搜索验证裁决**（`exactMatch.classifyCandidates` 反向精确匹配 + `planSync` alternatives 备选搜索）；`ParseOptions.order` 仅高级覆盖，UI 无手动格式选择。
 - 同步金标准（T6.4）：标题+歌手归一化精确相等 = 自动选（`core/matcher/exactMatch.ts`）；同歌不同作者（标题精确、歌手不同）→ `choice-needed` 两阶段（planSync/executeSync + `pendingSyncs` 缓存 + `platform:confirm-sync`），用户手动选择。行业真金标准 ISRC 国内平台不暴露，故用代理金标准。

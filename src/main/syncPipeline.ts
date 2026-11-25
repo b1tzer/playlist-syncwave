@@ -77,8 +77,10 @@ export function skipRunningSync(taskId: string): boolean {
   return false
 }
 
-/** 平台调用超时包装：请求永久挂起会卡死任务，超时转为可重试错误让引擎放弃当前项 */
-const REQUEST_TIMEOUT_MS = 60_000
+/** 搜索请求超时：正常 1~2s 内返回，收紧到 15s 快速失败进入退避重试（并发池下卡死请求不再长时间占坑） */
+const SEARCH_TIMEOUT_MS = 15_000
+/** 建单/批量写入超时：批量操作平台端处理较慢，保留宽松上限 */
+const MUTATION_TIMEOUT_MS = 60_000
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined
   const timeout = new Promise<never>((_, reject) => {
@@ -197,10 +199,11 @@ export async function runSyncPipeline(args: RunSyncPipelineArgs): Promise<SyncRe
 
   const target: SyncTarget = {
     searchSongs: (keyword, limit) =>
-      withTimeout(adapter.searchSongs(credential, keyword, limit), REQUEST_TIMEOUT_MS),
-    createPlaylist: (name) => withTimeout(adapter.createPlaylist(credential, name), REQUEST_TIMEOUT_MS),
+      withTimeout(adapter.searchSongs(credential, keyword, limit), SEARCH_TIMEOUT_MS),
+    createPlaylist: (name) =>
+      withTimeout(adapter.createPlaylist(credential, name), MUTATION_TIMEOUT_MS),
     addSongs: (playlistId, songIds) =>
-      withTimeout(adapter.addSongsToPlaylist(credential, playlistId, songIds), REQUEST_TIMEOUT_MS),
+      withTimeout(adapter.addSongsToPlaylist(credential, playlistId, songIds), MUTATION_TIMEOUT_MS),
     lookupMapping: (query) => {
       // 重新/恢复执行：上次任务已匹配到的目标资源直接命中复用，无需重新搜索
       if (reuseMatches && reuseMatches.length > 0) {

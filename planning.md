@@ -107,7 +107,7 @@ tests/             # Vitest 单元测试（core/main/platforms/renderer）
 ### 修复记录 — 搜索风控与歌单过滤 ✅
 - **问题 1**：18 首全部「搜索失败」并创建了空歌单。诊断：网易云对带登录态的 `search` 请求返回 `405 操作频繁`（瞬时连发触发风控），且空匹配时仍创建空歌单。
 - **修复**：
-  - 同步引擎：搜索限速（默认 500ms/首）+ 可重试错误指数退避重试（默认 2 次）+ 全部未匹配时不建单（失败明细保留）+ `rate-limited` 错误分类。
+  - 同步引擎：搜索限速（默认 500ms/首 ⚠️ 已变更：并发化后为全局最小请求间隔，见「同步匹配阶段并发化」补记）+ 可重试错误指数退避重试（默认 2 次）+ 全部未匹配时不建单（失败明细保留）+ `rate-limited` 错误分类。
   - 网易云适配器：`searchSongs` 把 NCM 风格错误包装为 `SearchError`（405/5xx 可重试）；`getUserPlaylists` 过滤 `specialType=5`（我喜欢的音乐收藏夹）。
   - UI：区分「未建单」与「部分失败」文案；风控提示「稍等几分钟再试」。
   - 测试：同步引擎 9→14 项，适配器 11→13 项，共 51 项全绿。
@@ -457,6 +457,18 @@ tests/             # Vitest 单元测试（core/main/platforms/renderer）
 - **schema 迁移压缩**：发布前将早期演进迁移 v1~v6 压缩为单一基线迁移（version=6，幂等），B14 的「迁移 v1 接管」描述对应压缩前历史；正式发布后 MIGRATIONS 只追加（version ≥ 7）。
 - **React 版本**：工程实际采用 React 19（package.json），技术选型表已同步。
 - 现状：typecheck、lint、全量 371 项测试、build 通过（四个平台：网易云/QQ音乐/酷狗/Apple Music）。
+
+### 补记 — 同步匹配阶段并发化 ✅
+- **需求**：同步导入逐首串行搜索 + 每首固定间隔（默认 500ms），等待时间占大头（500 首匹配约 10 分钟），要求提高同步执行效率、加快创建速度。
+- **变更**（`core/sync/syncPlaylist.ts` planSync 重构 + `SyncOptions.searchConcurrency`）：
+  - P0 受控并发池：`searchConcurrency`（默认 3、最小 1）个 worker 并发处理歌曲；`searchIntervalMs` 语义从「每首之间」演进为「全局相邻两次搜索请求的最小间隔」（预约式限速器，并发池共享）；输出按输入 index 顺序收敛（slots 槽位 + flush 连续前缀），`onStep`/`onProgress`/`onCheckpoint`/明细顺序与串行语义一致，中断恢复与明细落库不受影响。
+  - P1 双关键词并行预取：同一首歌「歌名+歌手」与「纯歌名」并行发出（`maxSearchesPerSong` 预算内），组合精确命中直接采用组合结果，无精确命中时纯歌名结果立即可用（省一次串行 RTT）；任务内关键词缓存（normalize(keyword) 为 key，含在途 promise 去重避免并发重复请求，失败不缓存）。
+  - 风控兜底：任一搜索被风控（`rateLimited`）触发全局冷却 4s（`RATE_LIMIT_COOLDOWN_MS`），后续发起暂停；重试退避逻辑不变。
+  - P2 搜索超时收紧：60s→15s（`SEARCH_TIMEOUT_MS`，建单/加歌保持 60s），卡死请求快速失败进入退避重试。
+  - 中止语义：abort 后在途请求完成保留（partial 按序收敛），不再发起新请求；skipCheck 每首歌处理开始时消耗，语义不变。
+  - 手动确认无二次搜索确认：`executeSync` 直接复用 `plan.choices[].candidates`（plan 完整缓存在 `pendingSyncs`），确认后仅建单 + 分批写入。
+- **验证**：新增 3 项测试（并发在途重叠、任务内关键词缓存、非法并发数回退为 1）；按并发语义更新 3 项既有断言（组合精确命中并行双发、风控双关键词失败不搜备选、中止在途保留后续不发起）。全量 374 项测试、typecheck、lint 通过。
+- **旧记录注记**：T4 修复记录「500ms/首」限速已演进为全局最小间隔；T9 中止检查点语义保持（flush 按序收敛）。
 
 ---
 

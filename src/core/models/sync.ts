@@ -125,8 +125,10 @@ export interface SyncOptions {
   threshold?: number
   /** 每批添加歌曲数，默认 500 */
   batchSize?: number
-  /** 相邻两次搜索的最小间隔（毫秒），默认 500，用于避免触发平台风控 */
+  /** 全局相邻两次搜索请求的最小间隔（毫秒），默认 500，用于避免触发平台风控（并发池内所有搜索共享） */
   searchIntervalMs?: number
+  /** 匹配阶段并发处理的歌曲数（受控并发池），默认 3，最小 1 */
+  searchConcurrency?: number
   /** 单首歌搜索重试次数（仅对可重试错误），默认 2 */
   searchRetries?: number
   /** 单首歌最大搜索次数预算（主/备选候选 × 关键词），默认 4，防止风控 */

@@ -1,4 +1,4 @@
-import { findBestMatch } from '@core/matcher/matchSong'
+import { findBestMatch, normalize } from '@core/matcher/matchSong'
 import { classifyCandidates } from '@core/matcher/exactMatch'
 import { createLogger, errorMessage } from '@core/logging'
 import type { MatchQuery } from '@core/models/match'
@@ -6,6 +6,7 @@ import type { PlatformSong } from '@core/models/platform'
 import {
   SearchError,
   SyncAbortedError,
+  type SyncChoice,
   type SyncFailedItem,
   type SyncItemResult,
   type SyncMatchedResource,
@@ -20,10 +21,30 @@ const log = createLogger({ module: 'sync.playlist' })
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
 
+/** 单首歌的处理结果（并发 worker 产物，flush 按 index 顺序收敛输出） */
+interface SongOutcome {
+  item: SyncItemResult
+  matched?: { query: MatchQuery; songId: string }
+  choice?: SyncChoice
+  failed?: SyncFailedItem
+  /** 匹配结果的风格（第一首用于自动命名歌单） */
+  genre?: string
+}
+
+/** 单首歌搜索后的落定状态：自动匹配 / 待手动选择 */
+type SettledMatch =
+  | { type: 'matched'; songId: string; matchedSong?: SyncMatchedResource }
+  | { type: 'choice'; attempt: MatchQuery; candidates: PlatformSong[] }
+
+/** 限流触发后的全局冷却时长：所有在途/后续搜索暂停，等待平台风控窗口过去 */
+const RATE_LIMIT_COOLDOWN_MS = 4_000
+
 /**
- * 阶段一：逐首搜索 + 金标准判定。
+ * 阶段一：受控并发搜索 + 金标准判定。
+ * 并发池掩盖搜索 RTT（原来逐首串行 + 固定间隔，等待时间占大头）；
+ * 输出仍按输入顺序收敛（onStep/检查点/明细顺序与串行语义一致）。
  * 完全匹配（标题+歌手精确）自动选定；同歌不同作者进入 choices 待手动选择；
- * 其余交给评分引擎。纯逻辑、平台无关，搜索限速 + 可重试错误重试。
+ * 其余交给评分引擎。纯逻辑、平台无关，全局限速 + 限流冷却 + 可重试错误重试。
  */
 export async function planSync(
   queries: MatchQuery[],
@@ -33,6 +54,8 @@ export async function planSync(
   const threshold = options.threshold ?? 0.6
   const searchIntervalMs = options.searchIntervalMs ?? 500
   const searchRetries = options.searchRetries ?? 2
+  const concurrency = Math.max(1, options.searchConcurrency ?? 3)
+  const budget = options.maxSearchesPerSong ?? 4
 
   const matched: SyncPlan['matched'] = []
   const choices: SyncPlan['choices'] = []
@@ -40,39 +63,40 @@ export async function planSync(
   const items: SyncItemResult[] = []
   let firstGenre: string | undefined
 
-  log.info('plan.start', '开始匹配计划', { total: queries.length, threshold })
+  log.info('plan.start', '开始匹配计划', { total: queries.length, threshold, concurrency })
 
-  for (let i = 0; i < queries.length; i++) {
-    const query = queries[i]
+  /** 每首歌的处理结果槽位：并发完成，flush 按 index 顺序收敛输出 */
+  const slots: Array<SongOutcome | null> = new Array(queries.length).fill(null)
 
-    // 用户停止：下一个检查点立即中止
-    if (options.signal?.aborted) {
-      log.info('plan.aborted', '匹配计划被用户停止', { done: items.length, total: queries.length })
-      throw new SyncAbortedError({ items, failed, total: queries.length })
-    }
+  /** 任务内关键词缓存：同关键词共享一次搜索（含在途 promise，避免并发重复请求）；失败不缓存 */
+  const keywordCache = new Map<string, Promise<PlatformSong[] | null>>()
+
+  /** 全局请求限速：并发池内所有搜索请求共享的最小发起间隔（原逐首间隔收敛为全局限速） */
+  let nextRequestAt = 0
+  async function throttleSearch(): Promise<void> {
+    if (searchIntervalMs <= 0) return
+    const wait = nextRequestAt - Date.now()
+    nextRequestAt = Math.max(Date.now(), nextRequestAt) + searchIntervalMs
+    if (wait > 0) await sleep(wait)
+  }
+
+  /** 限流全局冷却：任一搜索被平台风控后，暂停后续发起，避免火上浇油 */
+  let cooldownUntil = 0
+
+  async function processSong(i: number, query: MatchQuery): Promise<SongOutcome | null> {
+    // 用户停止：立即中止
+    if (options.signal?.aborted) return null
     // 用户请求跳过当前歌曲：记 skipped 后直接下一首
     if (options.skipCheck?.()) {
-      const skipped: SyncItemResult = {
-        index: i,
-        query,
-        status: 'skipped',
-        reason: 'skipped',
-        message: `已跳过：${query.title}${query.artist ? ` - ${query.artist}` : ''}`,
-      }
-      items.push(skipped)
-      failed.push({ query, reason: 'skipped', message: skipped.message ?? '' })
-      options.onStep?.(skipped)
-      options.onProgress?.((i + 1) / queries.length, 'matching')
-      options.onCheckpoint?.({ stage: 'matching' })
+      const message = `已跳过：${query.title}${query.artist ? ` - ${query.artist}` : ''}`
+      const item: SyncItemResult = { index: i, query, status: 'skipped', reason: 'skipped', message }
       log.info('plan.item-skipped', '歌曲被用户跳过', { title: query.title })
-      continue
+      return { item, failed: { query, reason: 'skipped', message } }
     }
-
     // 映射缓存：人工确认过的映射直接命中，跳过搜索
     if (target.lookupMapping) {
       const hit = target.lookupMapping(query)
       if (hit?.confirmed) {
-        matched.push({ query, songId: hit.songId })
         const item: SyncItemResult = {
           index: i,
           query,
@@ -80,16 +104,12 @@ export async function planSync(
           songId: hit.songId,
           matchedSong: hit.resource,
         }
-        items.push(item)
-        options.onStep?.(item)
         log.debug('plan.cache-hit', '映射缓存命中，跳过搜索', {
           title: query.title,
           artist: query.artist,
           songId: hit.songId,
         })
-        options.onProgress?.((i + 1) / queries.length, 'matching')
-        options.onCheckpoint?.({ stage: 'matching' })
-        continue
+        return { item, matched: { query, songId: hit.songId } }
       }
     }
 
@@ -99,43 +119,40 @@ export async function planSync(
       ...(query.alternatives ?? []),
     ]
 
-    let settled:
-      | { type: 'matched'; songId: string; matchedSong?: SyncMatchedResource }
-      | { type: 'choice'; attempt: MatchQuery; candidates: PlatformSong[] }
-      | null = null
+    let settled: SettledMatch | null = null
     let lastError: unknown = null
-    const budget = options.maxSearchesPerSong ?? 4
+    let genre: string | undefined
     let searchCount = 0
 
-    for (const attempt of attempts) {
-      // 搜索关键词策略：优先「歌名 + 歌手」提高召回精度；无精确命中时降级纯歌名
-      const keywords = attempt.artist
-        ? [`${attempt.title} ${attempt.artist}`, attempt.title]
-        : [attempt.title]
-
-      let searchFailed = false
-      for (let k = 0; k < keywords.length && settled === null; k++) {
-        if (searchCount >= budget) {
-          log.warn('plan.budget-exhausted', '单曲搜索预算用尽', {
-            title: query.title,
-            budget,
-          })
-          break
+    /** 单次关键词搜索：缓存命中免请求；全局限速 + 冷却；可重试错误按指数退避重试 */
+    const searchKeyword = (keyword: string): Promise<PlatformSong[] | null> => {
+      const cacheKey = normalize(keyword)
+      const inFlight = keywordCache.get(cacheKey)
+      if (inFlight) return inFlight
+      const task = (async (): Promise<PlatformSong[] | null> => {
+        // 限流冷却期内暂停发起，等待平台风控窗口过去
+        while (Date.now() < cooldownUntil) {
+          if (options.signal?.aborted) return null
+          await sleep(Math.min(200, cooldownUntil - Date.now()))
         }
-        const keyword = keywords[k]
-        let candidates: Awaited<ReturnType<SyncTarget['searchSongs']>> | null = null
-
-        for (let retry = 0; retry <= searchRetries && candidates === null; retry++) {
+        if (searchCount >= budget) return null
+        await throttleSearch()
+        searchCount++
+        for (let retry = 0; retry <= searchRetries; retry++) {
           try {
-            searchCount++
-            candidates = await target.searchSongs(keyword, 10)
+            const candidates = await target.searchSongs(keyword, 10)
+            return candidates
           } catch (e) {
             lastError = e
+            if (e instanceof SearchError && e.rateLimited) {
+              // 平台风控：全局冷却，其他在途/后续搜索暂停
+              cooldownUntil = Math.max(cooldownUntil, Date.now() + RATE_LIMIT_COOLDOWN_MS)
+            }
             const retryable = e instanceof SearchError ? e.retryable : false
-            if (!retryable || retry === searchRetries) break
+            if (!retryable || retry === searchRetries) return null
             const waitMs = Math.min(1000 * 2 ** retry, 5000)
             log.warn('plan.search-retry', '搜索失败，准备重试', {
-              title: attempt.title,
+              title: query.title,
               keyword,
               attempt: retry + 1,
               waitMs,
@@ -143,18 +160,42 @@ export async function planSync(
             })
             await sleep(waitMs)
             // 重试等待期间用户可能已请求停止：立即响应，不再发起下一次请求
-            if (options.signal?.aborted) {
-              throw new SyncAbortedError({ items, failed, total: queries.length })
-            }
+            if (options.signal?.aborted) return null
+            if (searchCount >= budget) return null
+            await throttleSearch()
+            searchCount++
           }
         }
+        return null
+      })()
+      keywordCache.set(cacheKey, task)
+      // 失败结果不缓存：后续歌曲仍可重试该关键词
+      void task.then((result) => {
+        if (result === null) keywordCache.delete(cacheKey)
+      })
+      return task
+    }
 
-        // 搜索失败不降级：网络/风控错误时换关键词再发请求无意义
-        if (candidates === null) {
-          searchFailed = true
-          break
-        }
+    for (const attempt of attempts) {
+      if (searchCount >= budget) {
+        log.warn('plan.budget-exhausted', '单曲搜索预算用尽', {
+          title: query.title,
+          budget,
+        })
+        break
+      }
+      // 搜索关键词策略：「歌名 + 歌手」提高召回精度；纯歌名并行预取，组合无精确命中时直接可用
+      const keywords = attempt.artist
+        ? [`${attempt.title} ${attempt.artist}`, attempt.title]
+        : [attempt.title]
+      const planned = keywords.slice(0, budget - searchCount)
+      const results = await Promise.all(planned.map((kw) => searchKeyword(kw)))
 
+      let anySucceeded = false
+      for (let k = 0; k < planned.length && settled === null; k++) {
+        const candidates = results[k]
+        if (candidates === null) continue
+        anySucceeded = true
         const disposition = classifyCandidates(attempt, candidates)
         if (disposition.kind === 'exact') {
           const song = candidates.find((c) => c.id === disposition.songId)
@@ -163,14 +204,10 @@ export async function planSync(
             songId: disposition.songId,
             matchedSong: song ? { title: song.title, artist: song.artist, album: song.album } : undefined,
           }
-          if (i === 0 && firstGenre === undefined) {
-            firstGenre = song?.genre
-          }
+          if (genre === undefined) genre = song?.genre
         } else if (disposition.kind === 'title-only') {
           settled = { type: 'choice', attempt, candidates: disposition.candidates }
-          if (i === 0 && firstGenre === undefined) {
-            firstGenre = disposition.candidates[0]?.genre
-          }
+          if (genre === undefined) genre = disposition.candidates[0]?.genre
         } else {
           const best = findBestMatch(attempt, candidates, { threshold })
           if (best && best.matched) {
@@ -183,33 +220,21 @@ export async function planSync(
                 album: best.candidate.album,
               },
             }
-            if (i === 0 && firstGenre === undefined) {
-              firstGenre = best.candidate.genre
-            }
+            if (genre === undefined) genre = best.candidate.genre
           }
-        }
-
-        // 组合关键词无精确命中：降级纯歌名再搜一次
-        if (settled === null && k < keywords.length - 1) {
-          log.debug('plan.keyword-fallback', '组合关键词无精确命中，降级纯歌名搜索', {
-            title: attempt.title,
-            artist: attempt.artist,
-            keyword,
-          })
         }
       }
 
-      if (settled !== null || searchFailed || searchCount >= budget) break
+      // 全部关键词搜索失败：网络/风控错误时换候选再发请求无意义
+      if (settled !== null || !anySucceeded || searchCount >= budget) break
       // no-match：尝试下一个备选候选
     }
 
-    let step: SyncItemResult
     if (settled === null) {
-      let fail: SyncFailedItem
       if (lastError !== null) {
         // 限流/可重试判定由平台适配器完成（SearchError 标记），主流程不做平台文案匹配
         const isRateLimited = lastError instanceof SearchError && lastError.rateLimited
-        fail = {
+        const fail: SyncFailedItem = {
           query,
           reason: isRateLimited ? 'rate-limited' : 'search-failed',
           message: errorMessage(lastError),
@@ -220,24 +245,31 @@ export async function planSync(
           reason: fail.reason,
           message: fail.message,
         })
-      } else {
-        fail = {
-          query,
-          reason: 'no-match',
-          message: `未找到匹配歌曲：${query.title}${query.artist ? ` - ${query.artist}` : ''}`,
+        return {
+          item: { index: i, query, status: 'failed', reason: fail.reason, message: fail.message },
+          failed: fail,
+          genre,
         }
-        log.info('plan.item-no-match', '未找到匹配歌曲', {
-          title: query.title,
-          artist: query.artist,
-        })
       }
-      failed.push(fail)
-      step = { index: i, query, status: 'failed', reason: fail.reason, message: fail.message }
-    } else if (settled.type === 'matched') {
-      matched.push({ query, songId: settled.songId })
+      const fail: SyncFailedItem = {
+        query,
+        reason: 'no-match',
+        message: `未找到匹配歌曲：${query.title}${query.artist ? ` - ${query.artist}` : ''}`,
+      }
+      log.info('plan.item-no-match', '未找到匹配歌曲', {
+        title: query.title,
+        artist: query.artist,
+      })
+      return {
+        item: { index: i, query, status: 'failed', reason: 'no-match', message: fail.message },
+        failed: fail,
+        genre,
+      }
+    }
+    if (settled.type === 'matched') {
       // 自动匹配结果写入缓存（下次可命中）
       target.saveMapping?.(query, settled.songId)
-      step = {
+      const item: SyncItemResult = {
         index: i,
         query,
         status: 'matched',
@@ -249,22 +281,57 @@ export async function planSync(
         artist: query.artist,
         songId: settled.songId,
       })
-    } else {
-      choices.push({ query: settled.attempt, candidates: settled.candidates })
-      step = { index: i, query: settled.attempt, status: 'choice' }
-      log.info('plan.item-choice', '同歌不同作者，进入手动选择', {
-        title: query.title,
-        artist: query.artist,
-        candidates: settled.candidates.length,
-      })
+      return { item, matched: { query, songId: settled.songId }, genre }
     }
-    items.push(step)
-    options.onStep?.(step)
+    const item: SyncItemResult = { index: i, query: settled.attempt, status: 'choice' }
+    log.info('plan.item-choice', '同歌不同作者，进入手动选择', {
+      title: query.title,
+      artist: query.artist,
+      candidates: settled.candidates.length,
+    })
+    return { item, choice: { query: settled.attempt, candidates: settled.candidates }, genre }
+  }
 
-    options.onProgress?.((i + 1) / queries.length, 'matching')
-    // 每首歌处理完触发检查点：主进程定期持久化，中断后可从此处附近恢复
-    options.onCheckpoint?.({ stage: 'matching' })
-    if (i < queries.length - 1) await sleep(searchIntervalMs)
+  let nextIndex = 0
+  let flushIdx = 0
+
+  /** 按输入顺序收敛输出：并发完成的结果先入槽位，flush 只输出连续就绪前缀（保证顺序语义） */
+  function flush(): void {
+    while (flushIdx < queries.length && slots[flushIdx] !== null) {
+      const outcome = slots[flushIdx] as SongOutcome
+      if (flushIdx === 0 && firstGenre === undefined) firstGenre = outcome.genre
+      items.push(outcome.item)
+      if (outcome.matched) matched.push(outcome.matched)
+      if (outcome.choice) choices.push(outcome.choice)
+      if (outcome.failed) failed.push(outcome.failed)
+      options.onStep?.(outcome.item)
+      options.onProgress?.((flushIdx + 1) / queries.length, 'matching')
+      // 每首歌处理完触发检查点：主进程定期持久化，中断后可从此处附近恢复
+      options.onCheckpoint?.({ stage: 'matching' })
+      flushIdx++
+    }
+  }
+
+  async function worker(): Promise<void> {
+    while (true) {
+      if (options.signal?.aborted) return
+      const i = nextIndex++
+      if (i >= queries.length) return
+      const outcome = await processSong(i, queries[i])
+      if (outcome === null) return
+      slots[i] = outcome
+      flush()
+    }
+  }
+
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, queries.length) }, () => worker()),
+  )
+  flush()
+
+  if (options.signal?.aborted) {
+    log.info('plan.aborted', '匹配计划被用户停止', { done: items.length, total: queries.length })
+    throw new SyncAbortedError({ items, failed, total: queries.length, matched: matched.length })
   }
 
   log.info('plan.complete', '匹配计划完成', {

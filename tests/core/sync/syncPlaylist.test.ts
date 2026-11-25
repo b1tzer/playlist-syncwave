@@ -461,10 +461,11 @@ describe('planSync — 备选候选搜索验证（T6.4 闭环）', () => {
     expect(plan.choices[0].candidates.map((c) => c.id)).toEqual(['2', '3'])
   })
 
-  it('组合关键词（歌名+歌手）精确命中 → 只搜索一次，不触发降级', async () => {
+  it('组合关键词与纯歌名并行搜索：组合精确命中时采用组合结果', async () => {
     const target = makeTarget({})
     target.searchSongs = vi.fn(async (keyword: string) => {
       if (keyword === 'Hidden Place Björk') return [song('1', 'Hidden Place', 'Björk')]
+      if (keyword === 'Hidden Place') return [song('9', 'Hidden Place', '其他人')]
       throw new Error(`不应搜索：${keyword}`)
     })
     const plan = await planSync(
@@ -480,8 +481,10 @@ describe('planSync — 备选候选搜索验证（T6.4 闭环）', () => {
     )
     expect(plan.matched).toHaveLength(1)
     expect(plan.matched[0].songId).toBe('1')
-    expect(target.searchSongs).toHaveBeenCalledTimes(1)
-    expect(target.searchSongs).toHaveBeenCalledWith('Hidden Place Björk', 10)
+    // 并行预取：组合与纯歌名各发一次；组合命中后不再尝试备选候选
+    expect(target.searchSongs).toHaveBeenCalledTimes(2)
+    expect(target.searchSongs).toHaveBeenNthCalledWith(1, 'Hidden Place Björk', 10)
+    expect(target.searchSongs).toHaveBeenNthCalledWith(2, 'Hidden Place', 10)
   })
 
   it('组合关键词无命中 → 降级纯歌名搜索并命中，不触发备选候选', async () => {
@@ -528,7 +531,7 @@ describe('planSync — 备选候选搜索验证（T6.4 闭环）', () => {
     expect(plan.failed[0].reason).toBe('no-match')
   })
 
-  it('风控（rate-limited）→ 不尝试备选，直接失败', async () => {
+  it('风控（rate-limited）→ 主候选两个并行关键词均失败，不尝试备选，直接失败', async () => {
     const target = makeTarget({})
     target.searchSongs = vi.fn(async () => {
       throw new SearchError('操作频繁', false, true)
@@ -546,7 +549,8 @@ describe('planSync — 备选候选搜索验证（T6.4 闭环）', () => {
     )
     expect(plan.failed).toHaveLength(1)
     expect(plan.failed[0].reason).toBe('rate-limited')
-    expect(target.searchSongs).toHaveBeenCalledTimes(1)
+    // 并行预取下组合+纯歌名两个在途请求均失败，但不再搜备选候选
+    expect(target.searchSongs).toHaveBeenCalledTimes(2)
   })
 
   it('搜索预算 maxSearchesPerSong：超预算停止搜索', async () => {
@@ -638,6 +642,55 @@ describe('planSync — 映射缓存（SQLite 命中免搜索）', () => {
   })
 })
 
+describe('planSync — 受控并发池与任务内关键词缓存（性能优化）', () => {
+  it('并发搜索池：多首歌搜索在途重叠（并发数大于 1）', async () => {
+    const target = makeTarget({})
+    let inFlight = 0
+    let peak = 0
+    target.searchSongs = vi.fn(async (keyword: string) => {
+      inFlight++
+      peak = Math.max(peak, inFlight)
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      inFlight--
+      const m = keyword.match(/^歌(\d+)$/)
+      return m ? [song(m[1], keyword, '某人')] : []
+    })
+    const queries = [1, 2, 3, 4, 5].map((i) => ({ title: `歌${i}` }))
+    const plan = await planSync(queries, target, { searchIntervalMs: 0, searchConcurrency: 3 })
+    expect(plan.matched).toHaveLength(5)
+    expect(peak).toBeGreaterThan(1)
+  })
+
+  it('任务内关键词缓存：重复歌曲共享搜索结果，不重复请求', async () => {
+    const target = makeTarget({
+      '晴天 周杰伦': [song('1', '晴天', '周杰伦')],
+      晴天: [song('1', '晴天', '周杰伦')],
+    })
+    const queries = [
+      { title: '晴天', artist: '周杰伦' },
+      { title: '晴天', artist: '周杰伦' },
+    ]
+    // 串行并发保证第二首在第一首处理完后开始，缓存命中确定
+    const plan = await planSync(queries, target, { searchIntervalMs: 0, searchConcurrency: 1 })
+    expect(plan.matched).toHaveLength(2)
+    // 组合与纯歌名各搜索一次；第二首两个关键词均命中缓存
+    expect(target.searchSongs).toHaveBeenCalledTimes(2)
+  })
+
+  it('searchConcurrency 无效值（0/负数）→ 回退为 1，仍可完成匹配', async () => {
+    const target = makeTarget({
+      晴天: [song('1', '晴天', '周杰伦')],
+      稻香: [song('2', '稻香', '周杰伦')],
+    })
+    const plan = await planSync(
+      [{ title: '晴天' }, { title: '稻香' }],
+      target,
+      { searchIntervalMs: 0, searchConcurrency: 0 },
+    )
+    expect(plan.matched).toHaveLength(2)
+  })
+})
+
 describe('同步引擎 — 介入控制与任务明细（T9）', () => {
   it('report.items 覆盖全部歌曲：matched/choice/failed 均有明细', async () => {
     const target = makeTarget({
@@ -697,32 +750,41 @@ describe('同步引擎 — 介入控制与任务明细（T9）', () => {
     expect(report.items[1]).toMatchObject({ index: 1, status: 'matched' })
   })
 
-  it('signal 中止 → planSync 抛 SyncAbortedError，partial 保留已处理明细', async () => {
+  it('signal 中止 → planSync 抛 SyncAbortedError，在途结果保留、后续歌不再发起搜索', async () => {
     const target = makeTarget({
       晴天: [song('1', '晴天', '周杰伦')],
       稻香: [song('2', '稻香', '周杰伦')],
+      阳光: [song('3', '阳光', '周杰伦')],
     })
     const ctrl = new AbortController()
     target.searchSongs = vi.fn(async (keyword: string) => {
-      // 第一首歌搜索完成后请求停止：第二首开始前的检查点应抛错
-      if (keyword === '晴天') ctrl.abort()
-      return keyword === '晴天'
-        ? [song('1', '晴天', '周杰伦')]
-        : [song('2', '稻香', '周杰伦')]
+      // 第一首歌搜索发起后请求停止（微任务时点）：第二首已并发在途，第三首不再发起
+      if (keyword === '晴天') {
+        await Promise.resolve()
+        ctrl.abort()
+      }
+      const byKeyword: Record<string, PlatformSong> = {
+        晴天: song('1', '晴天', '周杰伦'),
+        稻香: song('2', '稻香', '周杰伦'),
+      }
+      return byKeyword[keyword] ? [byKeyword[keyword]] : []
     })
     let caught: SyncAbortedError | null = null
     try {
-      await planSync([{ title: '晴天' }, { title: '稻香' }], target, {
+      await planSync([{ title: '晴天' }, { title: '稻香' }, { title: '阳光' }], target, {
         searchIntervalMs: 0,
+        searchConcurrency: 2,
         signal: ctrl.signal,
       })
     } catch (e) {
       caught = e as SyncAbortedError
     }
     expect(caught).toBeInstanceOf(SyncAbortedError)
-    expect(caught?.partial.total).toBe(2)
-    expect(caught?.partial.items.map((i) => i.status)).toEqual(['matched'])
+    expect(caught?.partial.total).toBe(3)
+    expect(caught?.partial.items.map((i) => i.status)).toEqual(['matched', 'matched'])
     expect(caught?.partial.failed).toEqual([])
+    // 第三首未发起搜索（abort 后 worker 不再取新歌）
+    expect(target.searchSongs).toHaveBeenCalledTimes(2)
   })
 
   it('executeSync 批次之间中止 → 抛 SyncAbortedError，已写入批次保留', async () => {
