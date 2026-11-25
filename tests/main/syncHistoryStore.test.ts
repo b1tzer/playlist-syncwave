@@ -50,6 +50,20 @@ describe('syncHistoryStore — SQLite 持久化', () => {
     expect(tasks[1].id).toBe('a')
   })
 
+  it('按精确时间戳倒序：createdAtMs 决定顺序，缺失时间戳的旧任务排后', () => {
+    store.upsertTask(makeTask({ id: 'a', createdAt: '2026-11-24T10:00:00.000Z', createdAtMs: 1000 }))
+    store.upsertTask(makeTask({ id: 'b', createdAt: '2026-11-24T11:00:00.000Z', createdAtMs: 2000 }))
+    // 无 createdAtMs 的历史任务：created_at 更晚但时间戳缺省 0，应排最后
+    store.upsertTask(makeTask({ id: 'old', createdAt: '2026-11-24T12:00:00.000Z' }))
+    const tasks = store.listTasks()
+    expect(tasks.map((t) => t.id)).toEqual(['b', 'a', 'old'])
+  })
+
+  it('createdAtMs 往返无损', () => {
+    store.upsertTask(makeTask({ id: 't', createdAtMs: 1764043200000 }))
+    expect(store.listTasks()[0].createdAtMs).toBe(1764043200000)
+  })
+
   it('同 id 再次写入为更新而非重复插入', () => {
     store.upsertTask(makeTask({ id: 'x', status: 'running', progress: 0.3 }))
     store.upsertTask(makeTask({ id: 'x', status: 'done', progress: 1, added: 8 }))

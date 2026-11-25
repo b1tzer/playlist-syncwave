@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import type { PlatformMeta, PlatformSong } from '@core/models/platform'
 import { createRendererLogger } from '../logging/rendererLogger'
 import type { SyncItemResult, SyncTaskRecord, SyncTaskStatus } from '@core/models/sync'
@@ -25,10 +25,9 @@ interface SyncCenterProps {
   /** 待用户手动选择的歌曲数（>0 时显示「去确认」入口） */
   pendingChoicesCount: number
   onGoConfirm: () => void
-  /** 可手动介入（停止/跳过）的任务 id：执行中且不在等待确认阶段 */
+  /** 可手动介入（停止）的任务 id：执行中且不在等待确认阶段 */
   intervenableIds: string[]
   onStopTask: (id: string) => void
-  onSkipTask: (id: string) => void
 }
 
 /** 任务状态元数据：图标 / 颜色 / 文案键 一处定义 */
@@ -73,59 +72,36 @@ function toSong(item: SyncItemResult): PlatformSong {
   }
 }
 
-/** 任务介入按钮组（跳过/停止），卡片头部与详情区共用 */
-function InterveneButtons({
-  onStop,
-  onSkip,
-  size = 'sm',
-}: {
-  onStop: () => void
-  onSkip: () => void
-  size?: 'sm' | 'md'
-}) {
+/** 任务停止按钮（卡片头部与详情区共用） */
+function StopTaskButton({ onStop, size = 'sm' }: { onStop: () => void; size?: 'sm' | 'md' }) {
   const { t } = useI18n()
   const md = size === 'md'
   const buttonCls = md
     ? 'flex items-center gap-1.5 rounded-lg border px-3 py-1.5 font-label-md text-label-md transition-colors'
     : 'flex items-center gap-1 rounded-md border px-2 py-1 font-label-sm text-label-sm transition-colors'
-  const iconCls = 'text-sm'
   return (
-    <>
-      <button
-        onClick={(e) => {
-          e.stopPropagation()
-          onSkip()
-        }}
-        className={`${buttonCls} border-secondary text-secondary hover:bg-secondary/10`}
-      >
-        <span className={`material-symbols-outlined ${iconCls}`}>skip_next</span>
-        {t('syncCenter.skipCurrent')}
-      </button>
-      <button
-        onClick={(e) => {
-          e.stopPropagation()
-          onStop()
-        }}
-        className={`${buttonCls} border-error text-error hover:bg-error/10`}
-      >
-        <span className={`material-symbols-outlined ${iconCls}`}>stop</span>
-        {t('syncCenter.stopTask')}
-      </button>
-    </>
+    <button
+      onClick={(e) => {
+        e.stopPropagation()
+        onStop()
+      }}
+      className={`${buttonCls} border-error text-error hover:bg-error/10`}
+    >
+      <span className="material-symbols-outlined text-sm">stop</span>
+      {t('syncCenter.stopTask')}
+    </button>
   )
 }
 
-/** 行内展开的详情清单：分组展示成功/待选择/失败，运行中任务可介入 */
+/** 行内展开的详情清单：分组展示成功/待选择/失败，运行中任务可停止 */
 function TaskDetailSection({
   task,
   intervenable,
   onStop,
-  onSkip,
 }: {
   task: SyncTaskRecord
   intervenable: boolean
   onStop: () => void
-  onSkip: () => void
 }) {
   const { t } = useI18n()
   const matched = task.detail.filter((i) => i.status === 'matched')
@@ -227,7 +203,7 @@ function TaskDetailSection({
                 {t('syncCenter.stuckHint')}
               </p>
               <div className="mt-2 flex items-center gap-2">
-                <InterveneButtons size="md" onStop={onStop} onSkip={onSkip} />
+                <StopTaskButton size="md" onStop={onStop} />
               </div>
             </div>
           )}
@@ -247,13 +223,27 @@ export default function SyncCenter({
   onGoConfirm,
   intervenableIds,
   onStopTask,
-  onSkipTask,
 }: SyncCenterProps) {
   const { t } = useI18n()
   const [expandedId, setExpandedId] = useState<string | null>(null)
   // 滚动分页：只渲染已加载部分，哨兵触发时追加下一页
   const [visibleCount, setVisibleCount] = useState(TASK_PAGE_SIZE)
-  const visibleTasks = tasks.slice(0, visibleCount)
+  /** 任务列表排序：默认最新优先（按创建时间），可切换为最早优先 */
+  const [sortOrder, setSortOrder] = useState<'newest' | 'oldest'>('newest')
+  const sortedTasks = useMemo(() => {
+    const sorted = [...tasks]
+    sorted.sort((a, b) => {
+      const am = a.createdAtMs ?? 0
+      const bm = b.createdAtMs ?? 0
+      if (am !== bm) return sortOrder === 'newest' ? bm - am : am - bm
+      // 精确时间戳缺失的历史任务：以可读时间字符串兜底
+      return sortOrder === 'newest'
+        ? b.createdAt.localeCompare(a.createdAt)
+        : a.createdAt.localeCompare(b.createdAt)
+    })
+    return sorted
+  }, [tasks, sortOrder])
+  const visibleTasks = sortedTasks.slice(0, visibleCount)
   const running = tasks.filter((task) => task.status === 'running').length
   const done = tasks.filter((task) => task.status === 'done').length
   const failed = tasks.filter((task) => task.status === 'failed').length
@@ -328,6 +318,22 @@ export default function SyncCenter({
           </button>
         )}
         <span className="ml-auto flex items-center gap-2 font-label-mono text-label-mono text-outline">
+          {tasks.length > 0 && (
+            <button
+              onClick={() => {
+                const next = sortOrder === 'newest' ? 'oldest' : 'newest'
+                log.info('sync.sort-toggle', '切换任务排序', { order: next })
+                setSortOrder(next)
+              }}
+              title={t('syncCenter.sortHint')}
+              className="flex items-center gap-1 rounded-md px-2 py-0.5 transition-colors hover:bg-surface-container-high hover:text-on-surface"
+            >
+              <span className="material-symbols-outlined text-sm">
+                {sortOrder === 'newest' ? 'south' : 'north'}
+              </span>
+              {sortOrder === 'newest' ? t('syncCenter.sortNewest') : t('syncCenter.sortOldest')}
+            </button>
+          )}
           <span className="material-symbols-outlined text-sm">database</span>
           {tasks.length > 0 && (
             <button
@@ -404,12 +410,7 @@ export default function SyncCenter({
                   </span>
                 </div>
                 <div className="flex items-center gap-2">
-                  {intervenable && (
-                    <InterveneButtons
-                      onStop={() => onStopTask(task.id)}
-                      onSkip={() => onSkipTask(task.id)}
-                    />
-                  )}
+                  {intervenable && <StopTaskButton onStop={() => onStopTask(task.id)} />}
                   <span className="font-label-mono text-label-mono text-outline">
                     {task.createdAt}
                   </span>
@@ -477,17 +478,16 @@ export default function SyncCenter({
                     task={task}
                     intervenable={intervenable}
                     onStop={() => onStopTask(task.id)}
-                    onSkip={() => onSkipTask(task.id)}
                   />
                 </div>
               )}
             </div>
           )
         })}
-        {tasks.length > visibleCount && (
+        {sortedTasks.length > visibleCount && (
           <LoadMoreSentinel
             onVisible={() =>
-              setVisibleCount((c) => Math.min(tasks.length, c + TASK_PAGE_SIZE))
+              setVisibleCount((c) => Math.min(sortedTasks.length, c + TASK_PAGE_SIZE))
             }
           />
         )}

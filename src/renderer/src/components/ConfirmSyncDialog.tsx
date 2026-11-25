@@ -35,9 +35,16 @@ interface ConfirmSyncDialogProps {
   session: PendingConfirmSession
   /** 每首的选择结果：choiceIndex -> 候选歌曲 id */
   selections: Record<number, string>
+  /** 用户显式跳过的 choice：choiceIndex -> true */
+  skips: Record<number, true>
   onSelect: (index: number, songId: string) => void
+  /** 跳过当前这首（不写入任何版本） */
+  onSkip: (index: number) => void
   onConfirm: () => void
+  /** 放弃整个会话（任务归为中断） */
   onCancel: () => void
+  /** 稍后处理：仅收起弹窗，会话保留 */
+  onDismiss: () => void
   /** 确认写入完成后关闭弹窗 */
   onDone: () => void
   confirming: boolean
@@ -149,9 +156,12 @@ function CandidateCard({
 export default function ConfirmSyncDialog({
   session,
   selections,
+  skips,
   onSelect,
+  onSkip,
   onConfirm,
   onCancel,
+  onDismiss,
   onDone,
   confirming,
   confirmError,
@@ -159,12 +169,17 @@ export default function ConfirmSyncDialog({
 }: ConfirmSyncDialogProps) {
   const { t } = useI18n()
   const [current, setCurrent] = useState(0)
+  /** 「放弃选择」二次确认：首次点击进入待确认态 */
+  const [abandonConfirm, setAbandonConfirm] = useState(false)
 
   const { choices } = session
   const total = choices.length
   const choice = choices[Math.min(current, total - 1)]
-  const selectedCount = Object.keys(selections).length
-  const allSelected = selectedCount >= total
+  const skippedThis = skips[current] === true
+  // 每首歌都已选定或已跳过时，才允许确认创建歌单
+  const allDecided = choices.every(
+    (_, i) => selections[i] !== undefined || skips[i] === true,
+  )
 
   // 目标歌曲模板（固定参数，供高亮比对与展示）
   const target: TargetTrackTemplate = { title: choice.query.title, artist: choice.query.artist }
@@ -179,9 +194,25 @@ export default function ConfirmSyncDialog({
     if (current < total - 1) setCurrent((c) => Math.min(c + 1, total - 1))
   }
 
+  /** 跳过当前这首：明确放弃该歌，不写入任何版本 */
+  const handleSkip = () => {
+    log.info('confirm.skip', '跳过当前歌曲', { title: choice.query.title, index: current })
+    onSkip(current)
+    if (current < total - 1) setCurrent((c) => Math.min(c + 1, total - 1))
+  }
+
   const handlePrevious = () => {
     log.debug('confirm.previous', '回看上一首', { index: current })
     setCurrent((c) => Math.max(0, c - 1))
+  }
+
+  const handleAbandon = () => {
+    if (abandonConfirm) {
+      setAbandonConfirm(false)
+      onCancel()
+    } else {
+      setAbandonConfirm(true)
+    }
   }
 
   return (
@@ -224,12 +255,20 @@ export default function ConfirmSyncDialog({
                 <span className="material-symbols-outlined text-tertiary">playlist_add_check</span>
                 <p className="font-body-md text-body-md font-medium">{t('confirmDialog.title')}</p>
               </div>
-              <div className="flex items-center gap-2 font-label-sm text-label-sm text-on-surface-variant">
-                <span>
+              <div className="flex items-center gap-3">
+                <span className="font-label-sm text-label-sm text-on-surface-variant">
                   {t('confirmDialog.step', { current: current + 1, total })}
                 </span>
-                <span className="mx-1 h-3 w-px bg-outline-variant" />
-                <span>{t('confirmDialog.selected', { selected: selectedCount, total })}</span>
+                {/* 稍后处理：仅收起弹窗，会话保留，可随时从同步中心重新打开 */}
+                <button
+                  onClick={onDismiss}
+                  disabled={confirming}
+                  title={t('confirmDialog.dismiss')}
+                  className="flex items-center gap-1 rounded-md border border-outline-variant px-2 py-1 font-label-sm text-label-sm text-on-surface-variant transition-colors hover:bg-surface-container-highest hover:text-on-surface disabled:opacity-40"
+                >
+                  <span className="material-symbols-outlined text-sm">schedule</span>
+                  {t('confirmDialog.dismiss')}
+                </button>
               </div>
             </div>
 
@@ -244,6 +283,13 @@ export default function ConfirmSyncDialog({
                   </p>
                 )}
               </div>
+
+              {skippedThis && (
+                <p className="mt-3 flex items-center gap-1.5 rounded-lg border border-secondary/40 bg-secondary/10 px-3 py-2 font-label-sm text-label-sm text-secondary">
+                  <span className="material-symbols-outlined text-sm">skip_next</span>
+                  {t('confirmDialog.skippedNote')}
+                </p>
+              )}
 
               <p className="mt-4 font-label-sm text-label-sm text-on-surface-variant">
                 {t('confirmDialog.pickHint')}
@@ -262,6 +308,21 @@ export default function ConfirmSyncDialog({
                   </li>
                 ))}
               </ul>
+
+              {/* 跳过选项：让用户明确知道跳过的是哪一首；已跳过时可点击候选重新选择 */}
+              <button
+                onClick={handleSkip}
+                disabled={confirming || skippedThis}
+                title={skippedThis ? t('confirmDialog.skippedNote') : t('confirmDialog.skipHint')}
+                className={`mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed px-3 py-2 font-label-md text-label-md transition-colors ${
+                  skippedThis
+                    ? 'border-secondary/50 bg-secondary/10 text-secondary'
+                    : 'border-outline-variant text-on-surface-variant hover:border-secondary hover:text-secondary'
+                } disabled:opacity-60`}
+              >
+                <span className="material-symbols-outlined text-sm">skip_next</span>
+                {skippedThis ? t('confirmDialog.skippedNote') : t('confirmDialog.skipThis')}
+              </button>
             </div>
 
             {/* 底部操作：上一首 / 取消 / 确认 */}
@@ -275,16 +336,22 @@ export default function ConfirmSyncDialog({
                 {t('confirmDialog.previous')}
               </button>
               <button
-                onClick={onCancel}
+                onClick={handleAbandon}
                 disabled={confirming}
-                className="flex items-center gap-1 rounded-lg border border-outline-variant px-3 py-2 font-label-md text-label-md text-on-surface-variant transition-colors hover:bg-surface-container-highest hover:text-on-surface disabled:opacity-40"
+                className={`flex items-center gap-1 rounded-lg border px-3 py-2 font-label-md text-label-md transition-colors disabled:opacity-40 ${
+                  abandonConfirm
+                    ? 'border-error bg-error/10 text-error hover:bg-error/15'
+                    : 'border-outline-variant text-on-surface-variant hover:bg-surface-container-highest hover:text-on-surface'
+                }`}
               >
-                <span className="material-symbols-outlined text-sm">close</span>
-                {t('textCreator.cancelPending')}
+                <span className="material-symbols-outlined text-sm">
+                  {abandonConfirm ? 'warning' : 'close'}
+                </span>
+                {abandonConfirm ? t('confirmDialog.abandonConfirm') : t('confirmDialog.abandon')}
               </button>
               <button
                 onClick={onConfirm}
-                disabled={confirming || !allSelected}
+                disabled={confirming || !allDecided}
                 className="ml-auto flex items-center gap-1.5 rounded-lg bg-primary px-4 py-2 font-label-md text-label-md font-medium text-on-primary transition-colors hover:bg-primary/85 disabled:opacity-40"
               >
                 <span className="material-symbols-outlined text-sm">

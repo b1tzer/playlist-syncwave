@@ -87,7 +87,9 @@ export default function SongList({
               </span>
             )}
             {hasDuration && (
-              <span className="shrink-0 font-label-mono text-label-mono text-outline">
+              // 固定宽度 + 右对齐：时长文本长度不一（-- / 3:45 / 12:34），
+              // 不固定会导致列宽参差、后续操作按钮起点逐行偏移
+              <span className="w-12 shrink-0 text-right font-label-mono text-label-mono text-outline">
                 {formatDuration(s.durationMs)}
               </span>
             )}

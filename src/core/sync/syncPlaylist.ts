@@ -277,26 +277,40 @@ export async function executeSync(
   for (let i = 0; i < plan.choices.length; i++) {
     const choice = plan.choices[i]
     const selection = selections.find((s) => s.choiceIndex === i)
-    const candidate = selection
-      ? choice.candidates.find((c) => c.id === selection.songId)
-      : undefined
+    // 显式跳过：用户明确放弃该首，不再参与候选匹配
+    const skipped = selection?.skipped === true
+    const candidate =
+      !skipped && selection ? choice.candidates.find((c) => c.id === selection.songId) : undefined
     const item = items.find((it) => it.status === 'choice' && it.query === choice.query)
     if (!candidate) {
-      const fail: SyncFailedItem = {
-        query: choice.query,
-        reason: 'unresolved',
-        message: `同歌不同作者，未选择版本：${choice.query.title}${choice.query.artist ? ` - ${choice.query.artist}` : ''}`,
-      }
+      const fail: SyncFailedItem = skipped
+        ? {
+            query: choice.query,
+            reason: 'skipped',
+            message: `已跳过：${choice.query.title}${choice.query.artist ? ` - ${choice.query.artist}` : ''}`,
+          }
+        : {
+            query: choice.query,
+            reason: 'unresolved',
+            message: `同歌不同作者，未选择版本：${choice.query.title}${choice.query.artist ? ` - ${choice.query.artist}` : ''}`,
+          }
       failed.push(fail)
       if (item) {
-        item.status = 'failed'
+        item.status = skipped ? 'skipped' : 'failed'
         item.reason = fail.reason
         item.message = fail.message
       }
-      log.warn('execute.choice-unresolved', '同歌不同作者，未选择版本', {
-        title: choice.query.title,
-        artist: choice.query.artist,
-      })
+      if (skipped) {
+        log.info('execute.choice-skipped', '同歌不同作者，用户选择跳过', {
+          title: choice.query.title,
+          artist: choice.query.artist,
+        })
+      } else {
+        log.warn('execute.choice-unresolved', '同歌不同作者，未选择版本', {
+          title: choice.query.title,
+          artist: choice.query.artist,
+        })
+      }
       continue
     }
     if (item) {

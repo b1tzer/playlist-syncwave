@@ -366,6 +366,34 @@ describe('syncPlaylist — 金标准两阶段（T6.4）', () => {
     expect(final.failed).toHaveLength(1)
     expect(final.failed[0].reason).toBe('unresolved')
   })
+
+  it('executeSync：显式跳过的 choice 计为 skipped 失败，明细同步标记', async () => {
+    const target = makeTarget({
+      晴天: [song('1', '晴天', '周杰伦')],
+      勇气: [song('2', '勇气', '棉子'), song('3', '勇气', '金志文')],
+    })
+    const plan = await planSync(
+      [{ title: '晴天', artist: '周杰伦' }, { title: '勇气', artist: '梁静茹' }],
+      target,
+      { searchIntervalMs: 0 },
+    )
+    const final = await executeSync(
+      plan,
+      [{ choiceIndex: 0, songId: '', skipped: true }],
+      'x',
+      target,
+      { searchIntervalMs: 0 },
+    )
+    expect(final.status).toBe('done')
+    expect(final.added).toBe(1)
+    expect(final.failed).toHaveLength(1)
+    expect(final.failed[0].reason).toBe('skipped')
+    expect(final.failed[0].message).toContain('勇气')
+    const choiceItem = final.items.find((it) => it.query.title === '勇气')
+    expect(choiceItem).toMatchObject({ status: 'skipped', reason: 'skipped' })
+    // 跳过的歌曲不写入歌单
+    expect(target.addSongs).toHaveBeenCalledWith('pl-x', ['1'])
+  })
 })
 
 describe('planSync — 备选候选搜索验证（T6.4 闭环）', () => {

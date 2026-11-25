@@ -1066,6 +1066,25 @@ ipcMain.handle('mappings:stats', () =>
   ipcLog.time('mappings.stats', async () => mappingStats(), undefined, 'debug'),
 )
 
+/**
+ * 查询当前待确认的同步会话：渲染进程刷新/重新加载后据此恢复确认窗口。
+ * 单窗口应用同一时刻至多一个待确认会话，返回数组以便后续扩展。
+ */
+ipcMain.handle('platform:pending-confirm', () =>
+  ipcLog.time(
+    'platform.pending-confirm',
+    async () =>
+      Array.from(pendingSyncs.entries()).map(([taskId, p]) => ({
+        taskId,
+        platform: p.platform,
+        playlistName: p.playlistName,
+        choices: p.plan.choices,
+      })),
+    undefined,
+    'debug',
+  ),
+)
+
 ipcMain.handle('platform:cancel-sync', (_event, taskId: string) =>
   ipcLog.time(
     'platform.cancel-sync',
@@ -1093,8 +1112,9 @@ ipcMain.handle(
           taskId,
           selections: selections.length,
         })
-        // 用户人工选择写入映射缓存（后续同步直接命中，无需再选）
+        // 用户人工选择写入映射缓存（后续同步直接命中，无需再选）；显式跳过的不写入
         for (const selection of selections) {
+          if (selection.skipped) continue
           const choice = pending.plan.choices[selection.choiceIndex]
           if (choice) {
             saveConfirmedMapping(platform, choice, selection.songId)

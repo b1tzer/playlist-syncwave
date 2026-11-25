@@ -38,6 +38,22 @@ describe('runMigrations — 版本化迁移', () => {
     expect(row.version).toBeGreaterThanOrEqual(1)
   })
 
+  it('旧库补齐 created_at_ms 列（v3），存量行默认为 0', () => {
+    runMigrations(db)
+    const cols = (db.pragma('table_info(sync_tasks)') as Array<{ name: string }>).map((c) => c.name)
+    expect(cols).toContain('created_at_ms')
+    // 迁移前插入的存量行：时间戳无法恢复，保持默认 0
+    db.prepare(
+      `INSERT INTO sync_tasks
+       (id, name, target_platform, source, status, total, added, failed, created_at, created_at_ms, progress, failed_detail, detail)
+       VALUES ('old', '旧任务', 'netease', 'text-import', 'done', 1, 1, 0, '2026-11-01', 0, 1, '[]', '[]')`,
+    ).run()
+    const row = db.prepare('SELECT created_at_ms FROM sync_tasks WHERE id = ?').get('old') as {
+      created_at_ms: number
+    }
+    expect(row.created_at_ms).toBe(0)
+  })
+
   it('幂等：重复执行不报错且版本不重复', () => {
     runMigrations(db)
     const first = db.prepare('SELECT COUNT(*) AS c FROM schema_migrations').get() as { c: number }

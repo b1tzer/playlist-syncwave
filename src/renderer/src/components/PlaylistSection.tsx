@@ -481,6 +481,10 @@ export default function PlaylistSection({
     }
     // 右键后该行是否单选：未选中将单选；已选中时保持当前选择规模
     const single = !alreadySelected || selectedIds.size === 1 ? playlist : null
+    // 同步范围在菜单构建时固化：右键未选中行时该行即将变为唯一选中，但 setSelectedIds
+    // 是异步的，点击菜单项时闭包里的 selectedIds 仍是旧值（空集），同步会静默落空。
+    // 必须把范围直接闭包进 onSelect，不能等到 handleSyncTo 里再读 state。
+    const syncSelection = alreadySelected ? new Set(selectedIds) : new Set([playlist.id])
 
     const entries: ContextMenuEntry[] = []
     const pushDivider = () => {
@@ -513,7 +517,7 @@ export default function PlaylistSection({
             iconSize="text-sm"
           />
         ),
-        onSelect: () => void handleSyncTo(p.id),
+        onSelect: () => void handleSyncTo(p.id, syncSelection),
       })
     }
     if (syncTargets.length > 0 && (single?.appUrl ?? single?.webUrl)) pushDivider()
@@ -776,10 +780,18 @@ export default function PlaylistSection({
 
   // --- 跨平台歌单同步 ---
 
-  /** 把所选歌单的歌曲同步到目标平台（拉歌 → 建任务 → 进度/选择/结果，进度收敛由 useSyncRunner 完成） */
-  const handleSyncTo = async (targetPlatform: string) => {
-    const selected = playlists.filter((p) => selectedIds.has(p.id))
-    if (selected.length === 0 || gathering || syncRunning || pendingConfirm !== null) return
+  /**
+   * 把所选歌单的歌曲同步到目标平台（拉歌 → 建任务 → 进度/选择/结果，进度收敛由 useSyncRunner 完成）。
+   * syncIds 由右键菜单构建时固化传入：点击菜单项时 state 里的 selectedIds 可能与右键时刻不一致
+   * （右键未选中行会异步变为唯一选中），读 state 会把同步范围算成空集。
+   */
+  const handleSyncTo = async (targetPlatform: string, syncIds: Set<string>) => {
+    const selected = playlists.filter((p) => syncIds.has(p.id))
+    if (selected.length === 0) {
+      notify('error', t('playlist.syncNoSelection'))
+      return
+    }
+    if (gathering || syncRunning || pendingConfirm !== null) return
     const targetMeta = platforms.find((p) => p.id === targetPlatform)
     if (!targetMeta || accounts[targetPlatform] === null) {
       notify(

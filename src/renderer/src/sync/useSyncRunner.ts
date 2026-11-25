@@ -64,6 +64,8 @@ export function useSyncRunner() {
         added: 0,
         failed: 0,
         createdAt,
+        // 精确时间戳：同步中心按时间排序的依据（createdAt 仅含时刻，跨天无法比较）
+        createdAtMs: Date.now(),
         progress: 0,
         failedDetail: [],
         detail: [],

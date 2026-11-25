@@ -61,6 +61,8 @@ export interface SyncSelection {
   /** plan.choices 的下标 */
   choiceIndex: number
   songId: string
+  /** 用户显式跳过该首（不写入任何版本）：songId 为空，执行时记为 skipped 失败项 */
+  skipped?: boolean
 }
 
 /** 同步计划：搜索+金标准判定后的产物（未建单） */
@@ -170,6 +172,8 @@ export interface SyncTaskRecord {
   added: number
   failed: number
   createdAt: string
+  /** 精确创建时间戳（毫秒）：同步中心排序依据；历史任务可能缺失（0） */
+  createdAtMs?: number
   /** 0-1，运行中更新 */
   progress: number
   failedDetail: string[]

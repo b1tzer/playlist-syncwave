@@ -174,6 +174,68 @@ describe('KugouAdapter — 映射契约', () => {
     ])
   })
 
+  it('歌单列表映射：带 encode_gcid 时优先用官方分享页 songlist 链接（自建/收藏通用）', async () => {
+    const api = makeApi({
+      user_playlist: async () => ({
+        status: 200,
+        body: {
+          data: {
+            info: [
+              {
+                listid: 5,
+                name: '自建歌单',
+                count: 3,
+                type: 0,
+                specialid: 0,
+                encode_gcid: 'gcid_3zco8lfbz7z0f8',
+              },
+              {
+                listid: 6,
+                name: '收藏歌单',
+                count: 8,
+                type: 1,
+                from_listid: 12345,
+                gcid: 'gcid_abcdefgh1234',
+                list_create_userid: 666646761,
+              },
+            ],
+          },
+        },
+        cookie: [],
+      }),
+    })
+    const list = await new KugouAdapter(api, DEVICE).getUserPlaylists('c', '1')
+    // 自建歌单：创建者 uid 用登录用户兜底
+    expect(list[0].webUrl).toBe(
+      'https://www.kugou.com/songlist/gcid_3zco8lfbz7z0f8/' +
+        '?src_cid=3zco8lfbz7z0f8&uid=1&chl=link&iszlist=1',
+    )
+    // 收藏歌单：创建者 uid 取条目 list_create_userid
+    expect(list[1].webUrl).toBe(
+      'https://www.kugou.com/songlist/gcid_abcdefgh1234/' +
+        '?src_cid=abcdefgh1234&uid=666646761&chl=link&iszlist=1',
+    )
+  })
+
+  it('歌单列表映射：gcid 为旧格式 collection_3_xxx 时不拼 songlist 链接', async () => {
+    const api = makeApi({
+      user_playlist: async () => ({
+        status: 200,
+        body: {
+          data: {
+            info: [
+              { listid: 5, name: 'x', count: 1, type: 0, encode_gcid: 'collection_3_1_4_0' },
+            ],
+          },
+        },
+        cookie: [],
+      }),
+    })
+    const list = await new KugouAdapter(api, DEVICE).getUserPlaylists('c', '1')
+    // 旧格式 gcid 不可用：自建歌单回退到客户端分享落地页，绝不能拼出 songlist/collection_3_xxx
+    expect(list[0].webUrl).not.toContain('songlist')
+  })
+
   it('歌单列表映射：自建歌单无 specialid，用官方分享页链接补 webUrl', async () => {
     const api = makeApi({
       user_playlist: async () => ({

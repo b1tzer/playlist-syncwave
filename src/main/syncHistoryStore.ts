@@ -11,6 +11,7 @@ interface TaskRow {
   added: number
   failed: number
   created_at: string
+  created_at_ms: number
   progress: number
   failed_detail: string
   detail: string
@@ -20,9 +21,9 @@ const INTERRUPTED_DETAIL = ['任务中断：应用在同步完成前退出']
 
 const UPSERT_SQL = `
 INSERT INTO sync_tasks
-  (id, name, target_platform, source, status, total, added, failed, created_at, progress, failed_detail, detail)
+  (id, name, target_platform, source, status, total, added, failed, created_at, created_at_ms, progress, failed_detail, detail)
 VALUES
-  (@id, @name, @targetPlatform, @source, @status, @total, @added, @failed, @createdAt, @progress, @failedDetail, @detail)
+  (@id, @name, @targetPlatform, @source, @status, @total, @added, @failed, @createdAt, @createdAtMs, @progress, @failedDetail, @detail)
 ON CONFLICT(id) DO UPDATE SET
   name = excluded.name,
   target_platform = excluded.target_platform,
@@ -32,6 +33,7 @@ ON CONFLICT(id) DO UPDATE SET
   added = excluded.added,
   failed = excluded.failed,
   created_at = excluded.created_at,
+  created_at_ms = excluded.created_at_ms,
   progress = excluded.progress,
   failed_detail = excluded.failed_detail,
   detail = excluded.detail
@@ -69,6 +71,7 @@ function rowToTask(row: TaskRow): SyncTaskRecord {
     added: row.added,
     failed: row.failed,
     createdAt: row.created_at,
+    createdAtMs: row.created_at_ms,
     progress: row.progress,
     failedDetail: parseStringArray(row.failed_detail),
     detail: parseDetail(row.detail),
@@ -87,6 +90,7 @@ CREATE TABLE IF NOT EXISTS sync_tasks (
   added INTEGER NOT NULL,
   failed INTEGER NOT NULL,
   created_at TEXT NOT NULL,
+  created_at_ms INTEGER NOT NULL DEFAULT 0,
   progress REAL NOT NULL,
   failed_detail TEXT NOT NULL,
   detail TEXT NOT NULL DEFAULT '[]'
@@ -106,16 +110,20 @@ CREATE TABLE IF NOT EXISTS sync_tasks (
         added: task.added,
         failed: task.failed,
         createdAt: task.createdAt,
+        createdAtMs: task.createdAtMs ?? 0,
         progress: task.progress,
         failedDetail: JSON.stringify(task.failedDetail),
         detail: JSON.stringify(task.detail),
       })
     },
 
-    /** 按创建时间倒序返回全部任务 */
+    /**
+     * 按创建时间倒序返回全部任务：
+     * 精确时间戳优先（新任务），缺失的旧数据（0）以 created_at 兜底排后。
+     */
     listTasks(): SyncTaskRecord[] {
       const rows = db
-        .prepare('SELECT * FROM sync_tasks ORDER BY created_at DESC')
+        .prepare('SELECT * FROM sync_tasks ORDER BY created_at_ms DESC, created_at DESC')
         .all() as unknown as TaskRow[]
       return rows.map(rowToTask)
     },

@@ -40,6 +40,14 @@ const MIGRATIONS: Migration[] = [
       db.exec('DROP TABLE IF EXISTS playlist_cache')
     },
   },
+  {
+    version: 3,
+    name: 'sync_tasks.created_at_ms 列补齐：精确时间戳用于同步中心排序',
+    up: (db) => {
+      // 存量行时间戳无法从仅含时刻的 created_at 恢复，补 0；查询侧以 created_at 兜底
+      addColumnIfMissing(db, 'sync_tasks', 'created_at_ms', 'created_at_ms INTEGER NOT NULL DEFAULT 0')
+    },
+  },
 ]
 
 /** 应用所有未执行的迁移（按版本序，每个迁移独立事务并记录版本） */

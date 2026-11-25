@@ -8,7 +8,7 @@ import type {
   QrLoginTicket,
 } from '@core/models/platform'
 import type { MatchQuery } from '@core/models/match'
-import type { SyncItemResult, SyncReport, SyncSelection, SyncTaskRecord } from '@core/models/sync'
+import type { SyncChoice, SyncItemResult, SyncReport, SyncSelection, SyncTaskRecord } from '@core/models/sync'
 import type { LocalPlaylist, LocalPlaylistSong } from '@core/models/localPlaylist'
 import type { LogEntry } from '@core/logging'
 
@@ -31,6 +31,14 @@ export type UpdateStatus =
 export interface SyncStep {
   taskId: string
   item: SyncItemResult
+}
+
+/** 主进程待确认同步会话概要（渲染进程刷新后恢复确认窗口） */
+export interface PendingConfirmInfo {
+  taskId: string
+  platform: string
+  playlistName: string
+  choices: SyncChoice[]
 }
 
 /** 歌单数据拉取结果：缓存优先 + 刷新策略（throttled 表示手动刷新被限流拦截） */
@@ -174,6 +182,9 @@ const api = {
       ipcRenderer.invoke('platform:confirm-sync', platform, taskId, selections),
     cancelSync: (taskId: string): Promise<void> =>
       ipcRenderer.invoke('platform:cancel-sync', taskId),
+    /** 查询主进程当前待确认的同步会话（刷新后恢复确认窗口用） */
+    listPendingConfirms: (): Promise<PendingConfirmInfo[]> =>
+      ipcRenderer.invoke('platform:pending-confirm'),
     /** 停止运行中的同步任务（已完成部分保留） */
     stopSync: (taskId: string): Promise<void> =>
       ipcRenderer.invoke('platform:stop-sync', taskId),

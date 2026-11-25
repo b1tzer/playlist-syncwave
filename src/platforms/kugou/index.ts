@@ -170,6 +170,31 @@ function hashCover(hash: string): string | undefined {
 }
 
 /**
+ * 构造官方分享页 songlist/{gcid} 链接（自建/收藏歌单通用，PC 浏览器可打开）。
+ * 页面依赖四个查询参数缺一不可（实测）：src_cid 为 gcid 去 gcid_ 前缀、
+ * uid 为歌单创建者、chl=link、iszlist=1。
+ * 自建歌单创建者即登录用户（userId 兜底）；收藏歌单取条目里的创建者字段。
+ * 任一项缺失时返回 undefined，由调用方回退旧链接。
+ */
+function buildSonglistShareUrl(
+  gcid: string | undefined,
+  item: JsonObject,
+  userId: string,
+): string | undefined {
+  if (!gcid?.startsWith('gcid_')) return undefined
+  const creatorUid = pickString(item.list_create_userid, item.create_userid) ?? userId
+  if (!creatorUid) return undefined
+  const srcCid = gcid.slice('gcid_'.length)
+  const params = new URLSearchParams({
+    src_cid: srcCid,
+    uid: creatorUid,
+    chl: 'link',
+    iszlist: '1',
+  })
+  return `https://www.kugou.com/songlist/${gcid}/?${params.toString()}`
+}
+
+/**
  * 构造自建歌单的官方分享页链接（浏览器可打开）。
  * 参数取自 kugoumusicapi 的 playlist_share_official 客户端分享构造逻辑：
  * 自建歌单 specialid 用哨兵值 -2147483648、cType=0，真实标识为 global_specialid=歌单 listid；
@@ -455,9 +480,15 @@ export class KugouAdapter extends BasePlatformAdapter {
 
   private mapPlaylist(item: JsonObject, userId: string): PlatformPlaylist {
     const id = pickString(item.listid, item.id) ?? ''
-    // 收藏歌单的原 specialid 可用于拼接网页链接；自建歌单没有对应网页，
-    // 用官方客户端分享落地页补链（activity 分享页，浏览器可打开）。
+    // 收藏歌单的原 specialid 可用于拼接旧版网页链接；自建歌单 specialid 为 0，没有对应网页
     const specialId = pickString(item.from_listid, item.list_create_listid)
+    // 新版分享标识：encode_gcid/gcid 字段，值形如 gcid_3zco8lfbz7z0f8（自建与收藏歌单都有）。
+    // 官方分享页 https://www.kugou.com/songlist/{gcid}/ 在 PC 可正常展示（实测 m.kugou.com 链接重定向到此），
+    // 但页面依赖四个查询参数缺一不可（实测逐个删减均渲染空白）：src_cid（gcid 去前缀）、
+    // uid（歌单创建者）、chl=link、iszlist=1；拼不齐时回退旧链接。
+    // 注意旧字段 list_create_gid/global_collection_id 是 collection_3_xxx 格式，不能用于 songlist URL。
+    const gcid = pickString(item.encode_gcid, item.gcid)
+    const shareUrl = buildSonglistShareUrl(gcid, item, userId)
     return {
       id,
       name: pickString(item.name) ?? '未命名歌单',
@@ -465,9 +496,11 @@ export class KugouAdapter extends BasePlatformAdapter {
       // 封面 URL 带 {size} 占位符（如 c1.kgimg.com/stdmusic/{size}/...），必须替换才能直接加载
       coverUrl: normalizeCover(pickString(item.pic, item.imgurl, item.cover), '300'),
       // appUrl 不填：酷狗 PC 客户端无公开 URL scheme 文档，无法可靠唤起客户端，webUrl 已覆盖浏览器打开
-      webUrl: specialId
-        ? `https://www.kugou.com/yy/special/single/${specialId}.html`
-        : buildOwnPlaylistShareUrl(userId, id),
+      webUrl:
+        shareUrl ??
+        (specialId
+          ? `https://www.kugou.com/yy/special/single/${specialId}.html`
+          : buildOwnPlaylistShareUrl(userId, id)),
     }
   }
 

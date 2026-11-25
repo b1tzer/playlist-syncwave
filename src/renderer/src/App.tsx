@@ -26,6 +26,10 @@ export default function App() {
   // 待确认同步会话提升到 App 层：分步确认弹窗挂载于此，切换视图不丢失
   const [pendingConfirm, setPendingConfirm] = useState<PendingConfirmSession | null>(null)
   const [confirmSelections, setConfirmSelections] = useState<Record<number, string>>({})
+  /** 用户显式跳过（不写入任何版本）的 choice：choiceIndex -> true */
+  const [confirmSkips, setConfirmSkips] = useState<Record<number, true>>({})
+  /** 「稍后处理」仅收起弹窗，会话保留在 pendingConfirm，可再次打开 */
+  const [confirmDismissed, setConfirmDismissed] = useState(false)
   const [confirming, setConfirming] = useState(false)
   const [confirmError, setConfirmError] = useState('')
   const [confirmResult, setConfirmResult] = useState<SyncReport | null>(null)
@@ -87,9 +91,46 @@ export default function App() {
     // 恢复同步历史
     window.electronAPI.syncHistory
       .list()
-      .then((history) => {
+      .then(async (history) => {
         log.info('app.sync-history-restored', '恢复同步历史', { count: history.length })
         setTasks(history)
+        // 刷新/重载后主进程可能仍挂有待确认会话：据此恢复确认窗口，避免选择流程丢失
+        try {
+          const pendingList = await window.electronAPI.platforms.listPendingConfirms()
+          if (cancelled || pendingList.length === 0) return
+          const info = pendingList[0]
+          const saved = history.find((x) => x.id === info.taskId)
+          const task: SyncTaskRecord =
+            saved ?? {
+              id: info.taskId,
+              name: info.playlistName,
+              targetPlatform: info.platform,
+              source: '',
+              status: 'running',
+              total: info.choices.length,
+              added: 0,
+              failed: 0,
+              createdAt: '',
+              createdAtMs: 0,
+              progress: 1,
+              failedDetail: [],
+              detail: [],
+            }
+          log.info('app.pending-confirm-restored', '恢复待确认同步会话', {
+            taskId: info.taskId,
+            choices: info.choices.length,
+          })
+          setPendingConfirm({
+            syncTaskId: info.taskId,
+            task,
+            target: info.platform,
+            choices: info.choices,
+          })
+        } catch (e) {
+          log.warn('app.pending-confirm-restore-failed', '查询待确认会话失败', {
+            message: e instanceof Error ? e.message : String(e),
+          })
+        }
       })
       .catch((e) => {
         log.error('app.sync-history-restore-failed', '恢复同步历史失败', e)
@@ -181,24 +222,41 @@ export default function App() {
   const handlePendingConfirmChange = (session: PendingConfirmSession | null) => {
     setPendingConfirm(session)
     setConfirmSelections({})
+    setConfirmSkips({})
     setConfirmResult(null)
     setConfirmError('')
+    setConfirmDismissed(false)
   }
 
   const resetConfirmSession = () => {
     setPendingConfirm(null)
     setConfirmSelections({})
+    setConfirmSkips({})
     setConfirmResult(null)
     setConfirmError('')
+    setConfirmDismissed(false)
+  }
+
+  /** 弹窗「稍后处理」：仅收起确认窗口，会话保留，可从同步中心重新打开 */
+  const handleDismissConfirm = () => {
+    log.info('sync.dismiss-pending', '稍后处理待确认同步', {
+      taskId: pendingConfirm?.syncTaskId,
+    })
+    setConfirmDismissed(true)
   }
 
   /** 弹窗确认：全部选择完成后调用主进程完成同步 */
   const handleConfirmSync = async () => {
     if (!pendingConfirm || confirming) return
     const { syncTaskId, target, choices } = pendingConfirm
+    // 每首歌要么选定一个版本、要么显式跳过；未决的 choice 阻止确认
     const sel = choices
-      .map((_, i) => ({ choiceIndex: i, songId: confirmSelections[i] }))
-      .filter((s) => typeof s.songId === 'string')
+      .map((_, i) => {
+        if (confirmSkips[i]) return { choiceIndex: i, songId: '', skipped: true }
+        const songId = confirmSelections[i]
+        return typeof songId === 'string' ? { choiceIndex: i, songId } : null
+      })
+      .filter((s): s is { choiceIndex: number; songId: string; skipped?: boolean } => s !== null)
     if (sel.length < choices.length) return
 
     log.info('sync.confirm', '确认手动选择并继续同步', {
@@ -312,18 +370,6 @@ export default function App() {
     }
   }
 
-  /** 同步中心：请求跳过当前歌曲，从下一首继续 */
-  const handleSkipTask = async (id: string) => {
-    log.info('sync.skip-task', '跳过当前歌曲', { taskId: id })
-    try {
-      await window.electronAPI.platforms.skipSync(id)
-      notify('warning', t('toast.skipRequestedTitle'), t('toast.skipRequestedDetail'))
-    } catch (e) {
-      log.error('sync.skip-task-failed', '跳过请求失败', e, { taskId: id })
-      notify('error', t('toast.syncFailedTitle'), e instanceof Error ? e.message : t('sync.failedGeneric'))
-    }
-  }
-
   const handleSearch = (value: string) => {
     setSearch(value)
     if (value.trim() && view !== 'playlists') setView('playlists')
@@ -411,10 +457,13 @@ export default function App() {
                 onTaskRemove={handleTaskRemove}
                 onClearAll={handleClearAll}
                 pendingChoicesCount={pendingConfirm?.choices.length ?? 0}
-                onGoConfirm={() => setView('create')}
+                onGoConfirm={() => {
+                  log.info('sync.go-confirm', '重新打开待确认窗口')
+                  setConfirmDismissed(false)
+                  setView('create')
+                }}
                 intervenableIds={intervenableIds}
                 onStopTask={(id) => void handleStopTask(id)}
-                onSkipTask={(id) => void handleSkipTask(id)}
               />
             )}
             {view === 'accounts' && (
@@ -429,14 +478,35 @@ export default function App() {
         </main>
       </div>
 
-      {/* 分步确认弹窗：App 层挂载，切换视图不丢失 */}
-      {pendingConfirm && (
+      {/* 分步确认弹窗：App 层挂载，切换视图不丢失；「稍后处理」收起后仍可从同步中心重新打开 */}
+      {pendingConfirm && !confirmDismissed && (
         <ConfirmSyncDialog
           session={pendingConfirm}
           selections={confirmSelections}
-          onSelect={(index, songId) => setConfirmSelections((prev) => ({ ...prev, [index]: songId }))}
+          skips={confirmSkips}
+          onSelect={(index, songId) => {
+            setConfirmSelections((prev) => ({ ...prev, [index]: songId }))
+            // 重新选择候选即取消跳过
+            setConfirmSkips((prev) => {
+              if (!prev[index]) return prev
+              const next = { ...prev }
+              delete next[index]
+              return next
+            })
+          }}
+          onSkip={(index) => {
+            setConfirmSkips((prev) => ({ ...prev, [index]: true }))
+            // 跳过即清除已选候选
+            setConfirmSelections((prev) => {
+              if (!prev[index]) return prev
+              const next = { ...prev }
+              delete next[index]
+              return next
+            })
+          }}
           onConfirm={() => void handleConfirmSync()}
           onCancel={() => void handleCancelPending()}
+          onDismiss={handleDismissConfirm}
           onDone={resetConfirmSession}
           confirming={confirming}
           confirmError={confirmError}
