@@ -1,5 +1,5 @@
 # electron-builder 打包配置
-# 签名：macOS 无证书时自动跳过签名并给出警告（发布前设置 CSC_LINK/CSC_KEY_PASSWORD 环境变量即可）
+# 本项目发布未签名安装包：不配置 CSC_LINK/CSC_KEY_PASSWORD，也不做公证；用户按 README 指引手动放行安装
 appId: com.syncwave.app
 productName: SyncWave
 

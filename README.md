@@ -60,18 +60,16 @@ npm run dist:linux  # Linux：AppImage
 
 ### 发布流程
 
-正式发布由 `git tag v<version>` 触发 `.github/workflows/release.yml`，流程为：校验 tag 与 `package.json` 版本一致及签名凭据齐全 → 三平台签名构建 → 生成 **draft release** → 人工复核安装包与更新元数据后转正式 → 自动同步到 Gitee 备用源。回滚不要重发同版本，必须发布更高版本。
+正式发布由 `git tag v<version>` 触发 `.github/workflows/release.yml`，流程为：校验 tag 与 `package.json` 版本一致 → 三平台**未签名**构建 → 生成 **draft release** → 人工复核安装包与更新元数据后转正式 → 同步到 Gitee 备用源。回滚不要重发同版本，必须发布更高版本。
 
-发布前在 GitHub 仓库 Settings → Secrets and variables → Actions 配置：
+本项目不购买代码签名/公证证书，构建不校验、不提示签名凭据。未签名包的安装方式：
 
-| Secret | 用途 |
-|---|---|
-| `CSC_LINK` / `CSC_KEY_PASSWORD` | macOS 开发者签名（`.p12` 的 base64 与密码） |
-| `APPLE_ID` / `APPLE_APP_SPECIFIC_PASSWORD` / `APPLE_TEAM_ID` | macOS 公证（notarization） |
-| `WIN_CSC_LINK` / `WIN_CSC_KEY_PASSWORD` | Windows 代码签名 |
-| `GITEE_TOKEN` | 正式发布后同步安装包到 Gitee 备用源（缺失则跳过同步） |
+- **macOS**：打开 dmg/zip 后若被 Gatekeeper 拦截，右键安装包 →「打开」，或在「系统设置 → 隐私与安全性」中允许
+- **Windows**：SmartScreen 提示时选择「更多信息」→「仍要运行」
 
-`workflow_dispatch` 仅用于构建预演：产出三平台 Artifacts，不发布、不校验签名凭据。本地临时打包可直接用上面的 `npm run dist*`，但不会上传更新元数据。
+`GITEE_TOKEN` 为可选配置（GitHub 仓库 Settings → Secrets and variables → Actions），用于正式发布后同步安装包到 Gitee 备用源；未配置则跳过同步。
+
+`workflow_dispatch` 仅用于构建预演：产出三平台 Artifacts，不发布。本地临时打包可直接用上面的 `npm run dist*`，但不会上传更新元数据。
 
 更新源主源为 GitHub Releases（`electron-builder.yml` 的 `publish` 配置），国内备用源在 `src/main/updater.ts` 的 `FALLBACK_FEEDS`（Gitee raw）。版本变更记录见 `CHANGELOG.md`。
 

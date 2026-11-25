@@ -44,7 +44,7 @@
 - `docs/platform-api-fields.md` 是上游接口契约：字段表须标注来源（✅ 实测抓取 / 📐 SDK·NCM·适配器源码），未实测不得冒充实测。
 - 版本号表、测试数等易腐化数字，改完顺手核对一次。当前基线：四平台、十张 SQLite 表（含 `schema_migrations`）、迁移基线 v6、缓存 schema v5、383 项测试、TypeScript 6.0.3 / Vite 8 / Vitest 5 / Electron 45。
 - 发布前自动化门禁：`npm run typecheck && npm run lint && npm run test && npm run build` 全绿；人工验收清单见 `planning.md` 第 5 节（2026-11-25 已完成）。
-- 发布相关变更（版本、流程、签名/更新源）同步更新 `CHANGELOG.md`，并在 `README.md`「发布流程」与 `planning.md` 第 8 节保持一致。
+- 发布相关变更（版本、流程、更新源）同步更新 `CHANGELOG.md`，并在 `README.md`「发布流程」与 `planning.md` 第 8 节保持一致。
 
 ## 代码风格
 - TypeScript strict，禁止 `any`（用 `unknown` + 类型守卫）。
@@ -57,7 +57,7 @@
 - 当前行为：网易云扫码登录可用；搜索限速 + 指数退避重试；主进程吞掉 EPIPE；npm 11 安装脚本需 `npm install-scripts approve <pkg>` 放行。异常提示统一走右上角 toast（`renderer/src/utils/notifyError.ts`），代码性报错过滤为通用标题；主进程歌单拉取（列表/歌曲）带 30s 超时；慢加载超 3s 文案切为「网络较慢，正在获取中…」并保持转圈。
 - 同步匹配：受控并发池（`searchConcurrency` 默认 3）+ 双关键词并行预取 + 任务内关键词缓存（normalize key，含在途去重）+ 全局相邻搜索最小间隔（`searchIntervalMs`，预约式限速器）+ rateLimited 全局冷却 4s + 搜索超时 15s（建单/加歌 60s）；同歌不同作者走 choice-needed 两阶段确认；运行中任务可停止/跳过当前歌，逐首明细持久化。
 - 歌单添加歌曲搜索：`page` 参数贯通 IPC/适配器，单页 20 条 + 哨兵提前 200px 预取，`SongSearchResults` 两处复用；歌单卡片歌曲数增删后就地同步。同步中心任务卡片展示「来源 → 目标平台」及品牌 logo、状态徽标置于时间前、状态多选筛选（空集合＝全部）；歌曲列表带「# / 歌名 / 歌手 / 专辑 / 时长」固定表头。
-- 发布流程：`git tag v<version>` 触发 `.github/workflows/release.yml`（校验版本与签名凭据 → 三平台签名构建 → draft release → 人工转正式 → Gitee 备用源同步）；回滚必须发更高版本。详见 `README.md`「发布流程」与 `planning.md` 第 8 节。
+- 发布流程：`git tag v<version>` 触发 `.github/workflows/release.yml`（校验版本 → 三平台未签名构建 → draft release → 人工转正式 → Gitee 备用源同步）；不购买签名/公证证书，构建不校验也不提示签名凭据；回滚必须发更高版本。详见 `README.md`「发布流程」与 `planning.md` 第 8 节。
 - Apple Music 账号展示：官方 API 无用户资料接口，登录态 `userId` 为 storefront 地区码；网页登录 cookie 到手即落最小凭证（`developerToken` 为空、首次请求自动补齐）并广播 `pending: true` 临时登录态，界面立即显示已登录；凭证校验、页面昵称、账户页 Apple ID 邮箱在隐藏窗口后台串行补全，完成后 `accounts:changed` 广播刷新为正式账号（UI 显示「账号: 邮箱」，否则「UID: 地区码」）。邮箱属敏感 PII，日志不记录，仅加密凭证文件保存。
 - 工具链版本（与 package.json 一致）：TypeScript 6.0.3（TS7 与 typescript-eslint 冲突）、Vite 8、Vitest 5、Electron 45。
 - 平台集成：网易云用 `NeteaseCloudMusicApi`（CJS + createRequire）；QQ音乐用 `@yakult-green-tea/qq-music-api` 的 **Node 模式**（主进程加载包根模块启动内置 Koa 服务，含 MQTT，监听动态空闲端口；主进程 handler 转发到 127.0.0.1:端口），serverless 模式不支持 qqmusic 通道（需 MQTT），勿回退。酷狗用 `kugoumusicapi`（github 依赖）的**库模式**（createRequire 直调扁平函数，不启动 HTTP 服务），token 与设备指纹绑定，指纹持久化到 `userData/kugou-device.json`。Apple Music 走**社区路径**（网页前端 developer token `iss=AMPWebPlay` + 登录 cookie 的 media-user-token），读接口走官方主机 `api.music.apple.com`，写接口必须走 `amp-api.music.apple.com`（删除在官方主机固定 401）。网页登录的 `profileSelector` 从账号菜单 DOM 抓展示用昵称（✅ Playwright 登录态实测，非账号 ID），`accountProbe` 再跳账户设置页读 iframe 里的 Apple ID 邮箱，两者抓不到都照常登录。

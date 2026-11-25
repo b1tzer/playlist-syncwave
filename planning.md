@@ -126,7 +126,7 @@ tests/             # Vitest 单元测试（core/main/platforms/renderer）
 | 更新源 | GitHub Releases 主源 + Gitee raw 备用 | `electron-builder.yml:26-32`、`src/main/updater.ts:14-29` |
 | 测试数 | 383 | `npm run test` 输出 |
 
-**构建与签名**：本地未执行 `electron-builder` 打包与签名；tag 推送后由发布工作流在 CI 完成三平台签名构建、更新元数据生成与 draft release（见第 8 节，尚未执行）。
+**构建**：本地未执行 `electron-builder` 打包；tag 推送后由发布工作流在 CI 完成三平台未签名构建、更新元数据生成与 draft release（见第 8 节，尚未执行）。
 
 ---
 
@@ -173,7 +173,7 @@ tests/             # Vitest 单元测试（core/main/platforms/renderer）
 - [x] 快捷键 `Cmd/Ctrl+1..5`、`Cmd/Ctrl+N`、`Cmd/Ctrl+,`；开发包刷新与 DevTools 可用，正式包不可用
 - [x] 单实例、窗口状态记忆、开机启动、系统通知、崩溃恢复、自动更新（GitHub 主源 + Gitee 备用）
 - [x] macOS dmg/zip 与 Windows nsis 安装包产出、安装与首次启动
-- [x] 签名证书（`CSC_LINK` / `CSC_KEY_PASSWORD`）配置；`GH_TOKEN` 发布演练
+- [x] 未签名安装包在 macOS（右键打开）与 Windows（仍要运行）的放行路径可完成安装与首次启动
 
 ---
 
@@ -190,6 +190,7 @@ tests/             # Vitest 单元测试（core/main/platforms/renderer）
 | ADR-007 | 缓存手动刷新限流用令牌桶替代固定间隔 | 已采用（3 个令牌 / 10s 补充） |
 | ADR-008 | 自动更新 GitHub Releases 主源 + Gitee 备用源 | 已采用 |
 | ADR-009 | 发布由 `v*` tag 触发，先产出 draft release 人工复核再转正式 | 已采用；回滚必须发更高版本 |
+| ADR-010 | 不购买代码签名/公证证书，发布未签名包，用户按平台指引放行 | 已决定；工作流不校验也不提示签名凭据 |
 
 ---
 
@@ -202,17 +203,18 @@ tests/             # Vitest 单元测试（core/main/platforms/renderer）
 | AI 生成代码引入安全漏洞 | ESLint + typecheck 作为提交门禁；凭证/输入校验集中处理并人工审查 |
 | 文档与代码腐烂 | `CLAUDE.md` 文档同步清单逐项核对；易腐化数字（平台数/表数/常量/测试数/工具链版本）改完即核对 |
 | 测试自证 | 验收用例由人（或独立测试 agent）先写，实现 agent 不得修改测试文件 |
-| 发布配置缺失 | 签名/公证凭据由发布工作流 `verify` 任务在 tag 推送时强校验；`GITEE_TOKEN` 缺失则跳过备用源同步并告警 |
+| 未签名包安装门槛 | macOS 右键打开、Windows「仍要运行」；在 `README.md` 与发布说明中给出指引，不购买签名/公证证书 |
 | 坏版本无法降级 | 只发 draft 供人工复核后再转正式；回滚必须发更高版本（electron-updater 不降级） |
 
 ---
 
 ## 8. 发布流程（当前）
 
-- **触发**：`git tag v<version>` 推送后触发 `.github/workflows/release.yml`；`workflow_dispatch` 仅做构建预演（不发布、不校验签名凭据）
-- **校验**：tag 必须与 `package.json` 的 `version` 一致；macOS 签名/公证（CSC_LINK、CSC_KEY_PASSWORD、APPLE_ID、APPLE_APP_SPECIFIC_PASSWORD、APPLE_TEAM_ID）与 Windows 签名（WIN_CSC_LINK、WIN_CSC_KEY_PASSWORD）凭据齐全才继续
-- **构建**：mac（dmg/zip）、win（nsis）、linux（AppImage）三平台独立 job，均执行 lint/typecheck/test/build 后 `electron-builder --<target> --publish never`，上传安装包与 `latest*.yml` 到 Artifacts
+- **触发**：`git tag v<version>` 推送后触发 `.github/workflows/release.yml`；`workflow_dispatch` 仅做构建预演（不发布）
+- **校验**：tag 必须与 `package.json` 的 `version` 一致；不校验签名凭据（本项目不购买签名/公证证书，构建不提示）
+- **构建**：mac（dmg/zip）、win（nsis）、linux（AppImage）三平台独立 job，均执行 lint/typecheck/test/build 后 `electron-builder --<target> --publish never`（`CSC_IDENTITY_AUTO_DISCOVERY: 'false'`），上传安装包与 `latest*.yml` 到 Artifacts
 - **draft release**：汇总 Artifacts、校验 `latest.yml`/`latest-mac.yml`/`latest-linux.yml` 三份更新元数据齐全，创建 GitHub draft release；人工复核安装包与元数据后转正式
-- **备用源同步**：正式 release 的 `published` 事件触发 Gitee 同步，把资产推到 `release` 分支供 `updater.ts` 的 `FALLBACK_FEEDS` 使用；`GITEE_TOKEN` 缺失则跳过并告警
+- **备用源同步**：正式 release 的 `published` 事件触发 Gitee 同步，把资产推到 `release` 分支供 `updater.ts` 的 `FALLBACK_FEEDS` 使用；`GITEE_TOKEN` 未配置则跳过
+- **用户安装**：未签名包在 macOS 需右键打开，在 Windows 需选择「仍要运行」（见 `README.md`「发布流程」）
 - **版本记录**：`CHANGELOG.md` 随版本更新；回滚只发更高版本，不重发同版本
 - **工具链边界**：当前 electron-builder 26.18.0 不强制更新清单签名；升级到 27 时发布构建需 `electron-builder create-update-key` 生成的 Ed25519 key（`ELECTRON_BUILDER_UPDATE_SIGN_KEY`），不在发布窗口升级

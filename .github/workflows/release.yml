@@ -1,5 +1,6 @@
-# 发布流程：tag(v*) 触发 → 校验 → 三平台签名构建 → draft release → 人工转正式 → Gitee 备用源同步
-# workflow_dispatch 仅用于构建预演（不发布、不校验签名 secrets）
+# 发布流程：tag(v*) 触发 → 校验 tag 版本 → 三平台未签名构建 → draft release → 人工转正式 → Gitee 备用源同步
+# 本项目不购买代码签名/公证证书，构建不校验也不提示签名凭据；用户按平台提示手动放行安装
+# workflow_dispatch 仅用于构建预演（不发布）
 # 回滚只能发更高版本，不要重发同版本覆盖
 name: release
 
@@ -16,7 +17,7 @@ permissions:
 
 jobs:
   verify:
-    name: verify · tag 与发布凭据
+    name: verify · tag 版本
     if: github.event_name != 'release'
     runs-on: ubuntu-latest
     steps:
@@ -33,32 +34,6 @@ jobs:
             exit 1
           fi
           echo "发布版本: ${version}"
-
-      - name: 校验签名与公证 secrets
-        if: github.event_name == 'push'
-        env:
-          CSC_LINK: ${{ secrets.CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
-          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
-        run: |
-          set -euo pipefail
-          missing=0
-          for name in CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID WIN_CSC_LINK WIN_CSC_KEY_PASSWORD; do
-            if [ -z "${!name}" ]; then
-              echo "::error::缺少发布 secret: ${name}（见 README「发布流程」）"
-              missing=1
-            fi
-          done
-          if [ "$missing" -ne 0 ]; then exit 1; fi
-          echo "签名与公证凭据齐全"
-
-      - name: 预演模式
-        if: github.event_name == 'workflow_dispatch'
-        run: echo "构建预演：只产出 Artifacts，不发布、不校验签名 secrets"
 
   build:
     name: build · ${{ matrix.target }}
@@ -92,13 +67,7 @@ jobs:
       - name: package
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CSC_LINK: ${{ secrets.CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
-          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
         run: npx electron-builder --${{ matrix.target }} --publish never
 
       - uses: actions/upload-artifact@v4
@@ -155,9 +124,9 @@ jobs:
         with:
           node-version: 22
 
-      - name: 跳过未配置 token
+      - name: 未配置 token 则跳过
         if: env.GITEE_TOKEN == ''
-        run: echo "::warning::GITEE_TOKEN 未配置，跳过 Gitee 备用源同步"
+        run: echo "GITEE_TOKEN 未配置，跳过 Gitee 备用源同步"
 
       - name: 下载正式发布资产
         if: env.GITEE_TOKEN != ''
