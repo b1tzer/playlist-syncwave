@@ -3,12 +3,12 @@
 > 本文档记录 SyncWave 所接入的**上游平台接口**（QQ音乐本地服务、网易云 API 网关、酷狗库模式 API、Apple Music Web API）的请求/响应样例，
 > 供字段提取、模型映射与风格（genre）类需求参考。
 >
-> **样例真实性说明**（数据截至 2026-11-24）：
+> **样例来源标注**：
 >
 > | 标注 | 含义 |
 > |---|---|
-> | ✅ 实测抓取 | 通过临时启动 QQ 音乐本地服务（`@yakult-green-tea/qq-music-api`）或直连网易云公开接口抓取的真实响应，字段与值均为真实数据 |
-> | 📐 SDK/NCM 源码 | 未做真实写操作/需登录未抓到的接口，字段与层级取自 SDK、NeteaseCloudMusicApi 模块源码或适配器代码，值为示意 |
+> | ✅ 实测抓取 | 通过临时启动 QQ 音乐本地服务（`@yakult-green-tea/qq-music-api`）、直连网易云公开接口或 Playwright 登录态抓取的真实响应/DOM，字段与值均为真实数据 |
+> | 📐 SDK/NCM/适配器源码 | 写操作与需登录接口无可直接引用的真实响应样例，字段与层级取自 SDK、NeteaseCloudMusicApi 模块源码或适配器代码，值为示意 |
 >
 > **完整性约定**：
 >
@@ -1385,27 +1385,20 @@
 | QQ音乐 / 网易云 | `interval`(秒) / `dt`(毫秒) | `PlatformSong.durationMs` |
 | 酷狗 | `timelen`（毫秒；微秒脏值需换算，>24h 置空） / `duration`(秒) | `PlatformSong.durationMs` |
 | Apple Music | `attributes.durationInMillis` | `PlatformSong.durationMs` |
-| QQ音乐 | `genre`（搜索条目恒为 0 → 实际恒 undefined；**不再调用** `/song/genre`） | `PlatformSong.genre` |
+| QQ音乐 | `genre`（搜索条目恒为 0 → 实际恒 undefined；不调用 `/song/genre`） | `PlatformSong.genre` |
 | Apple Music | `attributes.genreNames[0]` | `PlatformSong.genre` |
 | （网易云 / 酷狗） | （上游不提供 genre 字段） | `PlatformSong.genre`（恒 undefined） |
 | Apple Music | 页面账号菜单 `[data-testid="account-menu-trigger"] .user__name`（✅ 实测抓取：Playwright 登录态 DOM，非 API；抓不到时回退固定文案） | `PlatformAccount.nickname` |
 | Apple Music | `/v1/me/storefront` `data[0].id`（地区码，非账号 ID） | `PlatformAccount.userId` |
 | Apple Music | 账户页 iframe `[data-test="settings-content-apple-id"]` 文本中的邮箱（✅ 实测抓取：Playwright 登录态 DOM，非 API；抓不到时 UI 回退 UID） | `PlatformAccount.account` |
 
-## 6. 实测结论与待确认
+## 6. 字段结论与文档边界
 
-实测结论：
-
-1. QQ音乐 `/search` 的 `item_song` 条目**携带 `genre` 字段但恒为 `0`**（晴天/青花瓷/双截棍均实测为 0），不可用于风格判断；适配器直接映射 `item.genre`（结果恒 undefined），`/song/genre` 接口未接入。
+1. QQ音乐 `/search` 的 `item_song` 条目**携带 `genre` 字段但恒为 `0`**（晴天/青花瓷/双截棍均实测为 0），不可用于风格判断；适配器直接映射 `item.genre`（结果恒 undefined），`/song/genre` 不接入。
 2. QQ音乐搜索条目 `album` 对象**无 `picUrl`**，仅有 `pmid`，封面必须拼图床 URL。
 3. 网易云搜索与歌单详情条目均**无 `genre` 字段**（适配器虽解析 `item.genre`，上游不返回故恒为 undefined）；酷狗同样无 genre 字段；四平台中仅 Apple Music 提供 `genreNames`。
 4. 需登录接口未登录时，QQ音乐 SDK 返回 `{ code: 401, kind, errorKey, message, retryable }` 格式（`/user/*` 部分路由只返回 `{ code: 401, message }`）。
 5. 酷狗（库模式）：歌单条目 `type` 实测 0=自建/系统收藏夹、1=收藏他人歌单，`is_mine` 恒为 0；搜索条目标题带 `<em>` 高亮标签需剥离；云歌单条目 `timelen` 存在微秒级脏值；写接口字段要求（fileid 删歌、`名称|hash|album_id|mixsongid` 加歌、rename 带 total_ver）均来自官方库实践。
 6. Apple Music：读接口官方主机可用；写接口（含删除）必须走 `amp-api.music.apple.com`（删除在官方主机固定 401）；官方 API 无「移除歌曲」端点；资料库歌单列表无歌曲数；catalog search limit 上限 25。
 
-待确认（需登录态抓包）：
-
-1. QQ音乐 `/user/playlist`、`/user/playlist-detail` 登录后的完整条目字段（上游原样透传，本文档仅列 SDK 读取的字段）。
-2. 各写入接口（QQ音乐 create/rename/delete/tracks、网易云 create/tracks/update/remove、酷狗 add/del/update/create、Apple Music create/tracks/patch/delete）的真实响应值。
-3. 酷狗库模式各接口的完整响应体（本文档仅列适配器实际读取的字段，上游可能携带更多字段）。
-4. 网易云 `trackIds[]` 元素中 `sc`/`f`/`sr`/`dpr`/`tr`/`lr` 字段的含义（未公开文档）。
+**文档边界**：字段表覆盖适配器实际读取与映射的字段，上游响应可能携带更多未使用字段；写入类接口未收录真实响应样例（日志只记录调用元信息，不含完整出入参）。网易云 `trackIds[]` 元素中 `sc`/`f`/`sr`/`dpr`/`tr`/`lr` 为上游未公开文档的内部字段，适配器不读取。

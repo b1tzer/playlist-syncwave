@@ -5,7 +5,7 @@
 ## 功能特性
 
 - **快速建歌单**：粘贴文本 / 导入文件（m3u、csv、txt）/ 平台分享链接，自动探测格式并解析「歌名 - 歌手」批量创建歌单，全程无需手动选择格式
-- **跨平台同步**：从网易云音乐、QQ 音乐拉取歌单，经「标题 + 歌手」归一化精确匹配后写入目标平台；匹配阶段受控并发加速（并发搜索池 + 双关键词并行预取 + 关键词缓存 + 全局限速与限流冷却）；同歌不同作者时进入候选确认，由用户裁决
+- **跨平台同步**：从网易云音乐、QQ 音乐、酷狗音乐、Apple Music 拉取歌单，经「标题 + 歌手」归一化精确匹配后写入目标平台；匹配阶段受控并发加速（并发搜索池 + 双关键词并行预取 + 关键词缓存 + 全局限速与限流冷却）；同歌不同作者时进入候选确认，由用户裁决
 - **歌单管理**：创建、重命名、删除歌单，增删歌曲（平台搜索添加支持滚动分页与已添加标记）；歌曲列表带 # / 歌名 / 歌手 / 专辑 / 时长固定表头；本地歌单库与导入导出（m3u / csv）
 - **同步中心**：同步任务历史（按状态多选筛选，默认全部）、增量同步、跨平台歌曲映射缓存（人工确认优先）
 - **账号安全**：扫码登录，凭证经系统钥匙串（safeStorage）加密仅主进程读写，日志全量脱敏
@@ -47,6 +47,8 @@ npm run typecheck  # TypeScript 全量类型检查
 npm run lint       # ESLint
 ```
 
+发布前依次执行 `npm run typecheck && npm run lint && npm run test && npm run build`，全部通过后再打包；人工验收清单见 `planning.md` 第 5 节。当前基线：383 项测试全部通过。
+
 ### 打包
 
 ```bash
@@ -56,7 +58,7 @@ npm run dist:win    # Windows：nsis
 npm run dist:linux  # Linux：AppImage
 ```
 
-发布前需配置签名证书（`CSC_LINK` / `CSC_KEY_PASSWORD`）与更新源地址（`SYNCWAVE_UPDATE_URL`），详见 `electron-builder.yml`。
+发布前需配置签名证书（`CSC_LINK` / `CSC_KEY_PASSWORD`）与 GitHub 发布令牌（`GH_TOKEN`，执行 `npx electron-builder --publish always`）。更新源主源为 GitHub Releases（`electron-builder.yml` 的 `publish` 配置），国内备用源硬编码在 `src/main/updater.ts` 的 `FALLBACK_FEEDS`（Gitee raw）。
 
 ## 技术栈
 
