@@ -2,6 +2,7 @@ import type { PlatformPlaylist, PlatformSong } from '@core/models/platform'
 import type { PlaylistCacheStore } from './playlistCacheStore'
 import {
   MANUAL_REFRESH_MIN_INTERVAL_MS,
+  PLAYLIST_CACHE_SCHEMA_VERSION,
   PLAYLIST_LIST_TTL_MS,
   PLAYLIST_SONGS_TTL_MS,
 } from '@core/cachePolicy'
@@ -77,11 +78,11 @@ export function createPlaylistCacheService(store: PlaylistCacheStore, now: () =>
         ttlMs: PLAYLIST_LIST_TTL_MS,
         minIntervalMs: MANUAL_REFRESH_MIN_INTERVAL_MS,
         getCache: () => {
-          const cached = store.listPlaylists(platform)
+          const cached = store.listPlaylists(platform, PLAYLIST_CACHE_SCHEMA_VERSION)
           return cached ? { data: cached.list, updatedAt: cached.updatedAt } : null
         },
         fetch: fetchFn,
-        save: (list) => store.savePlaylists(platform, list, now()),
+        save: (list) => store.savePlaylists(platform, list, now(), PLAYLIST_CACHE_SCHEMA_VERSION),
       })
     },
 
@@ -97,11 +98,12 @@ export function createPlaylistCacheService(store: PlaylistCacheStore, now: () =>
         ttlMs: PLAYLIST_SONGS_TTL_MS,
         minIntervalMs: MANUAL_REFRESH_MIN_INTERVAL_MS,
         getCache: () => {
-          const cached = store.listSongs(platform, playlistId)
+          const cached = store.listSongs(platform, playlistId, PLAYLIST_CACHE_SCHEMA_VERSION)
           return cached ? { data: cached.songs, updatedAt: cached.updatedAt } : null
         },
         fetch: fetchFn,
-        save: (songs) => store.saveSongs(platform, playlistId, songs, now()),
+        save: (songs) =>
+          store.saveSongs(platform, playlistId, songs, now(), PLAYLIST_CACHE_SCHEMA_VERSION),
       })
     },
   }

@@ -25,6 +25,10 @@ interface SongRow {
 /** 歌单列表与歌单歌曲的本地缓存存储（SQLite，整单替换写入） */
 export function createPlaylistCacheStore(db: SqliteDb) {
   db.exec(`
+CREATE TABLE IF NOT EXISTS playlist_cache_schema (
+  scope TEXT NOT NULL PRIMARY KEY,
+  version INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS playlist_cache (
   platform TEXT NOT NULL,
   id TEXT NOT NULL,
@@ -56,9 +60,28 @@ CREATE TABLE IF NOT EXISTS playlist_song_meta (
 );
 `)
 
+  /** 缓存 schema 版本是否匹配；不匹配视为无缓存（旧数据失效重新拉取） */
+  function schemaMatches(scope: string, version: number): boolean {
+    const row = db
+      .prepare('SELECT version FROM playlist_cache_schema WHERE scope = ?')
+      .get(scope) as { version: number } | undefined
+    return row !== undefined && row.version === version
+  }
+
+  function setSchemaVersion(scope: string, version: number): void {
+    db.prepare(
+      `INSERT INTO playlist_cache_schema (scope, version) VALUES (?, ?)
+       ON CONFLICT(scope) DO UPDATE SET version = excluded.version`,
+    ).run(scope, version)
+  }
+
   return {
-    /** 平台歌单列表缓存；无缓存返回 null（updatedAt 取该平台最新写入时间） */
-    listPlaylists(platform: string): { list: PlatformPlaylist[]; updatedAt: number } | null {
+    /** 平台歌单列表缓存；无缓存或 schema 版本不匹配返回 null（updatedAt 取该平台最新写入时间） */
+    listPlaylists(
+      platform: string,
+      schemaVersion?: number,
+    ): { list: PlatformPlaylist[]; updatedAt: number } | null {
+      if (schemaVersion !== undefined && !schemaMatches('playlists', schemaVersion)) return null
       const rows = db
         .prepare('SELECT * FROM playlist_cache WHERE platform = ? ORDER BY rowid')
         .all(platform) as unknown as PlaylistRow[]
@@ -78,7 +101,8 @@ CREATE TABLE IF NOT EXISTS playlist_song_meta (
     },
 
     /** 整份替换某平台的歌单列表缓存 */
-    savePlaylists(platform: string, list: PlatformPlaylist[], now: number): void {
+    savePlaylists(platform: string, list: PlatformPlaylist[], now: number, schemaVersion?: number): void {
+      if (schemaVersion !== undefined) setSchemaVersion('playlists', schemaVersion)
       db.prepare('DELETE FROM playlist_cache WHERE platform = ?').run(platform)
       const insert = db.prepare(
         `INSERT INTO playlist_cache
@@ -113,11 +137,13 @@ CREATE TABLE IF NOT EXISTS playlist_song_meta (
       )
     },
 
-    /** 歌单歌曲缓存；无缓存返回 null */
+    /** 歌单歌曲缓存；无缓存或 schema 版本不匹配返回 null */
     listSongs(
       platform: string,
       playlistId: string,
+      schemaVersion?: number,
     ): { songs: PlatformSong[]; updatedAt: number } | null {
+      if (schemaVersion !== undefined && !schemaMatches('songs', schemaVersion)) return null
       const rows = db
         .prepare(
           'SELECT * FROM playlist_song_cache WHERE platform = ? AND playlist_id = ? ORDER BY rowid',
@@ -142,7 +168,14 @@ CREATE TABLE IF NOT EXISTS playlist_song_meta (
     },
 
     /** 整单替换歌单歌曲缓存（先删后插，保持平台顺序） */
-    saveSongs(platform: string, playlistId: string, songs: PlatformSong[], now: number): void {
+    saveSongs(
+      platform: string,
+      playlistId: string,
+      songs: PlatformSong[],
+      now: number,
+      schemaVersion?: number,
+    ): void {
+      if (schemaVersion !== undefined) setSchemaVersion('songs', schemaVersion)
       db.prepare('DELETE FROM playlist_song_cache WHERE platform = ? AND playlist_id = ?').run(
         platform,
         playlistId,

@@ -8,6 +8,7 @@ import {
   type IpcMainInvokeEvent,
 } from 'electron'
 import { join, basename } from 'node:path'
+import { setDefaultResultOrder } from 'node:dns'
 import { readFileSync, writeFileSync, statSync } from 'node:fs'
 import { platformModules } from '../platforms'
 import { registerPlatform, getPlatform, resolveAdapter, listPlatforms } from './platformRegistry'
@@ -53,6 +54,10 @@ import { notifySyncResult, notifySyncStopped } from './notifications'
 import { createPlaylistCacheService } from './playlistCacheService'
 import { getDatabase } from './appDatabase'
 import type { SyncTaskRecord, SyncChoice } from '@core/models/sync'
+
+// 部分网络环境 IPv6 无路由（连接报 EHOSTUNREACH，IPv6 立即失败不会触发
+// 双栈回退），强制 DNS 解析优先返回 IPv4，避免平台接口请求优先尝试 IPv6 失败。
+setDefaultResultOrder('ipv4first')
 
 // Electron 从终端启动后管道可能已关闭（如启动命令退出），
 // 此时任何 console 写入都会抛 EPIPE 导致应用崩溃。吞掉即可。

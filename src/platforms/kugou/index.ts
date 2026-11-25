@@ -11,7 +11,7 @@ import {
   type LoginStatusRaw,
   type QrCheckRaw,
 } from '../base'
-import { asArray, asObject, pickString, type JsonObject } from '../json'
+import { artistNames, asArray, asObject, pickString, type JsonObject } from '../json'
 
 /** 酷狗 API 库模式的扁平函数签名（kugoumusicapi main.js 导出） */
 export type KugouApiFn = (params?: Record<string, unknown>) => Promise<KugouResponse>
@@ -157,10 +157,26 @@ function stripHighlightTags(text: string): string {
   return text.replace(/<[^>]+>/g, '')
 }
 
-/** 酷狗封面 URL 常带 {size} 占位符，替换为 480 尺寸 */
-function normalizeCover(url: string | undefined): string | undefined {
+/** 酷狗封面 URL 常带 {size} 占位符，替换为指定尺寸并强制 https */
+function normalizeCover(url: string | undefined, size = '240'): string | undefined {
   if (!url) return undefined
-  return url.replace('{size}', '480')
+  return url.replace('{size}', size).replace(/^http:/, 'https:')
+}
+
+/** 官方歌曲图床：云歌单条目不带封面字段时按 hash 拼接（实测可用） */
+function hashCover(hash: string): string | undefined {
+  if (!hash) return undefined
+  return `https://imge.kugou.com/stdmusic/240/${hash}.jpg`
+}
+
+/** 「歌手 - 标题.mp3」→ { artist, title }：剥扩展名，按第一个 ' - ' 分割 */
+function splitKgFilename(filename: string): { artist: string; title: string } {
+  const bare = filename.replace(/\.(mp3|flac|m4a|ogg|ape|wav)$/i, '')
+  const idx = bare.indexOf(' - ')
+  if (idx > 0) {
+    return { artist: bare.slice(0, idx).trim(), title: bare.slice(idx + 3).trim() }
+  }
+  return { artist: '', title: bare.trim() }
 }
 
 /**
@@ -377,26 +393,36 @@ export class KugouAdapter extends BasePlatformAdapter {
       const total = typeof data.total === 'number' ? data.total : undefined
       if (info.length < pageSize || (total !== undefined && raw.length >= total)) break
     }
+    if (raw.length > 0) {
+      this.log.debug('playlist.list', '歌单条目原始字段采样', { sample: raw[0] })
+    }
     for (const item of raw) {
-      const listId = pickString(item.listid, item.list_id)
+      const listId = pickString(item.listid, item.id)
       if (!listId) continue
       this.playlistIndex.set(listId, {
         listId,
-        type: Number(item.list_type ?? 0),
+        // type：0=自建 / 1=收藏（实测字段为 type，非 list_type）
+        type: Number(item.type ?? 0),
+        // 条目无 total_ver 字段，写操作按官方实践传 0
         totalVer: Number(item.total_ver ?? 0),
-        globalCollectionId: pickString(item.global_collection_id),
+        // 收藏歌单的公开 id：必须用它与公开歌单接口拉歌曲
+        globalCollectionId: pickString(item.list_create_gid, item.global_collection_id),
       })
     }
     return raw
   }
 
   private mapPlaylist(item: JsonObject): PlatformPlaylist {
-    const id = pickString(item.listid, item.list_id) ?? ''
+    const id = pickString(item.listid, item.id) ?? ''
+    // 收藏歌单的原 specialid 可用于拼接网页链接；自建歌单没有对应网页
+    const specialId = pickString(item.from_listid, item.list_create_listid)
     return {
       id,
-      name: pickString(item.name, item.title) ?? '未命名歌单',
-      songCount: Number(item.song_count ?? item.count ?? 0),
-      coverUrl: pickString(item.pic, item.pic_url, item.img_url),
+      name: pickString(item.name) ?? '未命名歌单',
+      songCount: Number(item.count ?? item.source_count ?? 0),
+      // 封面 URL 带 {size} 占位符（如 c1.kgimg.com/stdmusic/{size}/...），必须替换才能直接加载
+      coverUrl: normalizeCover(pickString(item.pic, item.imgurl, item.cover), '300'),
+      webUrl: specialId ? `https://www.kugou.com/yy/special/single/${specialId}.html` : undefined,
     }
   }
 
@@ -418,10 +444,17 @@ export class KugouAdapter extends BasePlatformAdapter {
     playlistId: string,
   ): Promise<PlatformSong[]> {
     const meta = await this.resolvePlaylistMeta(credential, playlistId)
-    let items = await this.fetchTrackAllNew(credential, playlistId, meta.type)
-    if (items.length === 0 && meta.globalCollectionId) {
-      // 云歌单接口覆盖不到时回退公开歌单接口
+    let items: JsonObject[]
+    if (meta.type === 1 && meta.globalCollectionId) {
+      // 收藏歌单：按 list_create_gid/global_collection_id 走公开歌单接口（listid 拉不到）
       items = await this.fetchTrackAll(credential, meta.globalCollectionId)
+    } else {
+      // 自建歌单：云歌单接口按 listid
+      items = await this.fetchTrackAllNew(credential, playlistId, meta.type)
+      if (items.length === 0 && meta.globalCollectionId) {
+        // 云歌单接口覆盖不到时回退公开歌单接口
+        items = await this.fetchTrackAll(credential, meta.globalCollectionId)
+      }
     }
     return items.map((item) => this.mapPlaylistSong(item))
   }
@@ -447,6 +480,9 @@ export class KugouAdapter extends BasePlatformAdapter {
       raw.push(...info)
       const total = typeof data.total === 'number' ? data.total : undefined
       if (info.length < pageSize || (total !== undefined && raw.length >= total)) break
+    }
+    if (raw.length > 0) {
+      this.log.debug('playlist.songs', '歌曲条目原始字段采样', { sample: raw[0] })
     }
     return raw
   }
@@ -476,21 +512,22 @@ export class KugouAdapter extends BasePlatformAdapter {
   /** 歌单内歌曲条目 → 领域模型，同时缓存加歌/删歌元数据 */
   private mapPlaylistSong(item: JsonObject): PlatformSong {
     const hash = (pickString(item.hash, item.file_hash, item.song_hash) ?? '').toLowerCase()
-    const filename = pickString(item.filename) ?? ''
-    // filename 兜底为「歌名 - 歌手」，用最后一个 - 分割，兼容歌名本身含 -
-    const dash = filename.lastIndexOf('-')
-    const title =
-      pickString(item.name, item.songname, item.title) ??
-      (dash > 0 ? filename.slice(0, dash).trim() : filename)
+    // 云歌单条目无独立歌名/歌手：name 为「歌手 - 标题.mp3」格式，singerinfo 为歌手数组
+    const parsed = splitKgFilename(pickString(item.name, item.filename) ?? '')
+    const singerInfo = artistNames(asArray(item.singerinfo ?? item.singer_info))
+    const title = pickString(item.title, item.songname) ?? parsed.title
     const artist =
-      pickString(item.singer, item.singername, item.author) ??
-      (dash > 0 ? filename.slice(dash + 1).trim() : '')
+      singerInfo ||
+      parsed.artist ||
+      pickString(item.singer, item.singername, item.author) ||
+      ''
+    const trans = asObject(item.trans_param)
     if (hash) {
       this.songMeta.set(hash, {
         name: title || '未知歌曲',
         albumId: typeof item.album_id === 'number' ? item.album_id : Number(item.album_id ?? 0),
         mixSongId: typeof item.mixsongid === 'number' ? item.mixsongid : Number(item.mixsongid ?? 0),
-        fileId: pickString(item.fileid, item.file_id, item.id),
+        fileId: pickString(item.fileid, item.file_id),
       })
     }
     return {
@@ -498,8 +535,15 @@ export class KugouAdapter extends BasePlatformAdapter {
       title: title || '未知歌曲',
       artist,
       album: pickString(item.album_name, item.albumname),
-      coverUrl: normalizeCover(pickString(item.img, item.pic, item.image)),
-      durationMs: typeof item.duration === 'number' ? item.duration * 1000 : undefined,
+      coverUrl:
+        normalizeCover(pickString(item.cover, trans.union_cover, item.img, item.pic)) ??
+        hashCover(hash),
+      durationMs:
+        typeof item.timelen === 'number'
+          ? item.timelen
+          : typeof item.duration === 'number'
+            ? item.duration * 1000
+            : undefined,
     }
   }
 
@@ -549,7 +593,8 @@ export class KugouAdapter extends BasePlatformAdapter {
       title,
       artist: pickString(item.SingerName, item.singername, item.singer) ?? '',
       album: pickString(item.AlbumName, item.albumname),
-      coverUrl: normalizeCover(pickString(item.Image, item.img, item.pic)),
+      coverUrl:
+        normalizeCover(pickString(item.Image, item.img, item.pic)) ?? hashCover(hash),
       durationMs: typeof item.Duration === 'number' ? item.Duration * 1000 : undefined,
     }
   }

@@ -140,7 +140,7 @@ describe('KugouAdapter — 映射契约', () => {
     ).rejects.toThrow('设备不匹配')
   })
 
-  it('歌单列表映射：id/name/songCount/coverUrl', async () => {
+  it('歌单列表映射：id/name/songCount/coverUrl/webUrl', async () => {
     const api = makeApi({
       user_playlist: async () => ({
         status: 200,
@@ -150,11 +150,11 @@ describe('KugouAdapter — 映射契约', () => {
               {
                 listid: 5,
                 name: '我的歌单',
-                song_count: 42,
-                pic: 'https://img.example/a.jpg',
-                list_type: 0,
-                total_ver: 7,
-                global_collection_id: 'collection_3_1_4_0',
+                count: 42,
+                pic: 'http://c1.kgimg.com/stdmusic/{size}/20190626/a.jpg',
+                type: 1,
+                from_listid: 12345,
+                list_create_gid: 'collection_3_1_4_0',
               },
             ],
           },
@@ -168,18 +168,19 @@ describe('KugouAdapter — 映射契约', () => {
         id: '5',
         name: '我的歌单',
         songCount: 42,
-        coverUrl: 'https://img.example/a.jpg',
+        coverUrl: 'https://c1.kgimg.com/stdmusic/300/20190626/a.jpg',
+        webUrl: 'https://www.kugou.com/yy/special/single/12345.html',
       },
     ])
   })
 
-  it('歌单歌曲映射：hash 小写 id、时长毫秒、fileid 缓存', async () => {
+  it('歌单歌曲映射：文件名解析、timelen 毫秒、封面占位、fileid 缓存', async () => {
     const del = vi.fn(async () => ({ status: 200, body: {}, cookie: [] }))
     const api = makeApi({
       user_playlist: async () => ({
         status: 200,
         body: {
-          data: { info: [{ listid: 5, name: 'x', song_count: 1, list_type: 0, total_ver: 0 }] },
+          data: { info: [{ listid: 5, name: 'x', count: 1, type: 0 }] },
         },
         cookie: [],
       }),
@@ -190,13 +191,12 @@ describe('KugouAdapter — 映射契约', () => {
             info: [
               {
                 hash: 'ABC123',
-                name: '晴天',
-                singer: '周杰伦',
-                album_name: '叶惠美',
+                name: '周杰伦 - 晴天.mp3',
                 album_id: 77,
                 mixsongid: 88,
                 fileid: 1001,
-                duration: 269,
+                timelen: 269000,
+                cover: 'https://img.example/{size}/a.jpg',
               },
             ],
           },
@@ -212,8 +212,8 @@ describe('KugouAdapter — 映射契约', () => {
         id: 'abc123',
         title: '晴天',
         artist: '周杰伦',
-        album: '叶惠美',
-        coverUrl: undefined,
+        album: undefined,
+        coverUrl: 'https://img.example/240/a.jpg',
         durationMs: 269000,
       },
     ])
@@ -224,36 +224,66 @@ describe('KugouAdapter — 映射契约', () => {
     )
   })
 
-  it('歌单歌曲：云歌单接口空时回退公开歌单接口', async () => {
-    const fallback = vi.fn(async () => ({
-      status: 200,
-      body: { data: { info: [{ hash: 'DEF456', filename: '后来 - 刘若英', duration: 240 }] } },
-      cookie: [],
-    }))
+  it('歌单歌曲：singerinfo 数组优先，封面缺失回退官方图床', async () => {
     const api = makeApi({
       user_playlist: async () => ({
+        status: 200,
+        body: { data: { info: [{ listid: 5, name: 'x', count: 1, type: 0 }] } },
+        cookie: [],
+      }),
+      playlist_track_all_new: async () => ({
         status: 200,
         body: {
           data: {
             info: [
               {
-                listid: 5,
-                name: 'x',
-                song_count: 1,
-                list_type: 1,
-                total_ver: 0,
-                global_collection_id: 'collection_3_1_4_0',
+                hash: 'ABC123',
+                name: '周杰伦 - 晴天.mp3',
+                singerinfo: [{ name: '周杰伦' }, { name: '费玉清' }],
+                fileid: 1001,
+                timelen: 269000,
               },
             ],
           },
         },
         cookie: [],
       }),
-      playlist_track_all_new: async () => ({ status: 200, body: { data: { info: [] } }, cookie: [] }),
+    })
+    const songs = await new KugouAdapter(api, DEVICE).getPlaylistSongs('c', '5')
+    expect(songs[0]).toMatchObject({
+      id: 'abc123',
+      title: '晴天',
+      artist: '周杰伦 / 费玉清',
+      coverUrl: 'https://imge.kugou.com/stdmusic/240/abc123.jpg',
+      durationMs: 269000,
+    })
+  })
+
+  it('歌单歌曲：收藏歌单直接走公开歌单接口，不调云歌单接口', async () => {
+    const fallback = vi.fn(async () => ({
+      status: 200,
+      body: { data: { info: [{ hash: 'DEF456', name: '刘若英 - 后来.mp3', timelen: 240000 }] } },
+      cookie: [],
+    }))
+    const newApi = vi.fn(async () => ({ status: 200, body: { data: { info: [] } }, cookie: [] }))
+    const api = makeApi({
+      user_playlist: async () => ({
+        status: 200,
+        body: {
+          data: {
+            info: [
+              { listid: 5, name: 'x', count: 1, type: 1, list_create_gid: 'collection_3_1_4_0' },
+            ],
+          },
+        },
+        cookie: [],
+      }),
+      playlist_track_all_new: newApi,
       playlist_track_all: fallback,
     })
     const adapter = new KugouAdapter(api, DEVICE)
     const songs = await adapter.getPlaylistSongs('c', '5')
+    expect(newApi).not.toHaveBeenCalled()
     expect(fallback).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'collection_3_1_4_0' }),
     )
@@ -293,7 +323,7 @@ describe('KugouAdapter — 映射契约', () => {
         title: '晴天',
         artist: '周杰伦',
         album: '叶惠美',
-        coverUrl: 'https://img.example/480/a.jpg',
+        coverUrl: 'https://img.example/240/a.jpg',
         durationMs: 269000,
       },
     ])
@@ -363,7 +393,7 @@ describe('KugouAdapter — 映射契约', () => {
         status: 200,
         body: {
           data: {
-            info: [{ listid: 5, name: '我的歌单', song_count: 1, list_type: 0, total_ver: 7 }],
+            info: [{ listid: 5, name: '我的歌单', count: 1, type: 0, total_ver: 7 }],
           },
         },
         cookie: [],
