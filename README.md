@@ -47,7 +47,7 @@ npm run typecheck  # TypeScript 全量类型检查
 npm run lint       # ESLint
 ```
 
-发布前依次执行 `npm run typecheck && npm run lint && npm run test && npm run build`，全部通过后再打包；人工验收清单见 `planning.md` 第 5 节。当前基线：383 项测试全部通过。
+发布前依次执行 `npm run typecheck && npm run lint && npm run test && npm run build`，全部通过后再打包；人工验收已于 2026-11-25 完成（清单见 `planning.md` 第 5 节）。当前基线：383 项测试全部通过。
 
 ### 打包
 
@@ -58,7 +58,22 @@ npm run dist:win    # Windows：nsis
 npm run dist:linux  # Linux：AppImage
 ```
 
-发布前需配置签名证书（`CSC_LINK` / `CSC_KEY_PASSWORD`）与 GitHub 发布令牌（`GH_TOKEN`，执行 `npx electron-builder --publish always`）。更新源主源为 GitHub Releases（`electron-builder.yml` 的 `publish` 配置），国内备用源硬编码在 `src/main/updater.ts` 的 `FALLBACK_FEEDS`（Gitee raw）。
+### 发布流程
+
+正式发布由 `git tag v<version>` 触发 `.github/workflows/release.yml`，流程为：校验 tag 与 `package.json` 版本一致及签名凭据齐全 → 三平台签名构建 → 生成 **draft release** → 人工复核安装包与更新元数据后转正式 → 自动同步到 Gitee 备用源。回滚不要重发同版本，必须发布更高版本。
+
+发布前在 GitHub 仓库 Settings → Secrets and variables → Actions 配置：
+
+| Secret | 用途 |
+|---|---|
+| `CSC_LINK` / `CSC_KEY_PASSWORD` | macOS 开发者签名（`.p12` 的 base64 与密码） |
+| `APPLE_ID` / `APPLE_APP_SPECIFIC_PASSWORD` / `APPLE_TEAM_ID` | macOS 公证（notarization） |
+| `WIN_CSC_LINK` / `WIN_CSC_KEY_PASSWORD` | Windows 代码签名 |
+| `GITEE_TOKEN` | 正式发布后同步安装包到 Gitee 备用源（缺失则跳过同步） |
+
+`workflow_dispatch` 仅用于构建预演：产出三平台 Artifacts，不发布、不校验签名凭据。本地临时打包可直接用上面的 `npm run dist*`，但不会上传更新元数据。
+
+更新源主源为 GitHub Releases（`electron-builder.yml` 的 `publish` 配置），国内备用源在 `src/main/updater.ts` 的 `FALLBACK_FEEDS`（Gitee raw）。版本变更记录见 `CHANGELOG.md`。
 
 ## 技术栈
 
