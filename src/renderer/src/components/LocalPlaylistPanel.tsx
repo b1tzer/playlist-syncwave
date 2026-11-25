@@ -160,6 +160,28 @@ export default function LocalPlaylistPanel({
     if (await submitRename(renamingId)) setRenamingId(null)
   }
 
+  /** 行内编辑失焦：有效新名字则提交，空名/未改名则退出编辑态 */
+  const handleInlineBlur = () => {
+    if (!renamingId) return
+    const target = playlists.find((p) => p.id === renamingId)
+    const name = renameDraft.trim()
+    if (!name || (target && name === target.name)) {
+      setRenamingId(null)
+      return
+    }
+    void handleInlineRename()
+  }
+
+  /** 头部编辑失焦：有效新名字则提交，空名/未改名则退出编辑态 */
+  const handleHeaderBlur = () => {
+    const name = renameDraft.trim()
+    if (!name || !activePlaylist || name === activePlaylist.name) {
+      setRenaming(false)
+      return
+    }
+    void handleRename()
+  }
+
   const handleDelete = async () => {
     if (!activeId) return
     try {
@@ -353,7 +375,7 @@ export default function LocalPlaylistPanel({
             {playlists.map((p) => (
               <li key={p.id}>
                 {renamingId === p.id ? (
-                  <div className="flex items-center gap-1.5 rounded-md border border-primary bg-surface px-2.5 py-1.5">
+                  <div className="flex items-center gap-1.5 rounded-md bg-primary/10 px-2.5 py-1.5">
                     <span className="material-symbols-outlined text-base">queue_music</span>
                     <input
                       ref={inlineRenameInputRef}
@@ -364,24 +386,10 @@ export default function LocalPlaylistPanel({
                         if (e.key === 'Enter') void handleInlineRename()
                         if (e.key === 'Escape') setRenamingId(null)
                       }}
+                      onBlur={handleInlineBlur}
                       placeholder={t('localPlaylist.namePlaceholder')}
-                      className="min-w-0 flex-1 rounded-md border border-outline-variant bg-surface px-2 py-1 font-label-md text-label-md text-on-surface outline-none placeholder:text-outline focus:border-primary"
+                      className="min-w-0 flex-1 border-0 border-b border-primary bg-transparent px-0 py-0.5 font-label-md text-label-md text-on-surface outline-none placeholder:text-outline"
                     />
-                    <button
-                      onClick={() => void handleInlineRename()}
-                      disabled={!renameDraft.trim()}
-                      title={t('localPlaylist.rename')}
-                      className="flex items-center rounded-md p-1 text-primary transition-colors hover:bg-primary/10 disabled:opacity-50"
-                    >
-                      <span className="material-symbols-outlined text-sm">check</span>
-                    </button>
-                    <button
-                      onClick={() => setRenamingId(null)}
-                      title={t('localPlaylist.cancel')}
-                      className="flex items-center rounded-md p-1 text-on-surface-variant transition-colors hover:bg-surface-container-highest disabled:opacity-50"
-                    >
-                      <span className="material-symbols-outlined text-sm">close</span>
-                    </button>
                   </div>
                 ) : (
                   <button
@@ -443,7 +451,8 @@ export default function LocalPlaylistPanel({
                     if (e.key === 'Enter') void handleRename()
                     if (e.key === 'Escape') setRenaming(false)
                   }}
-                  className="min-w-0 flex-1 rounded-md border border-outline-variant bg-surface px-2 py-1 font-body-md text-body-md text-on-surface outline-none focus:border-primary"
+                  onBlur={handleHeaderBlur}
+                  className="min-w-0 flex-1 border-0 border-b border-primary bg-transparent px-0 py-0.5 font-headline-lg text-headline-lg font-semibold text-on-surface outline-none"
                 />
               ) : (
                 <h2 className="min-w-0 flex-1 truncate font-headline-lg text-headline-lg font-semibold">

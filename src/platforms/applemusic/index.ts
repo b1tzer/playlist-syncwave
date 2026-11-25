@@ -197,10 +197,9 @@ export class AppleMusicAdapter extends BasePlatformAdapter {
       if (res.status === 429) {
         throw new SearchError('Apple Music：请求过于频繁，请稍后再试', false, true)
       }
-      throw new Error(
-        pickString(firstError.title, firstError.detail) ??
-          `Apple Music：请求失败 (${res.status})`,
-      )
+      // 错误消息带状态码：doSearch 据此正确分类可重试性（4xx 不重试、5xx 重试）
+      const detail = pickString(firstError.title, firstError.detail) ?? '请求失败'
+      throw new Error(`${detail} (${res.status})`)
     }
     return parsed
   }
@@ -389,12 +388,14 @@ export class AppleMusicAdapter extends BasePlatformAdapter {
   ): Promise<PlatformSong[]> {
     // 实测：整串带 " - " 搜索会大量命中 Live 版，拆成空格分隔显著改善
     const term = keyword.replace(/\s*-\s*/g, ' ').trim()
+    // 官方 catalog search 接口 limit 上限 25，超限返回 400 Invalid Parameter Value
+    const capped = Math.max(1, Math.min(limit, 25))
     const storefront = await this.ensureStorefront(credential)
     try {
       const res = await this.call(
         'GET',
         API_HOST,
-        `/v1/catalog/${encodeURIComponent(storefront)}/search?term=${encodeURIComponent(term)}&types=songs&limit=${limit}`,
+        `/v1/catalog/${encodeURIComponent(storefront)}/search?term=${encodeURIComponent(term)}&types=songs&limit=${capped}`,
         credential,
       )
       const results = asObject(res.results)

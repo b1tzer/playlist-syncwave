@@ -193,6 +193,34 @@ describe('AppleMusicAdapter — 社区路径 HTTP 映射', () => {
     expect(calls[0].url.pathname).toBe('/v1/me/storefront')
   })
 
+  it('搜索：limit 超过 API 上限 25 时钳制到 25', async () => {
+    const { handler, calls } = makeHandler((_method, url) => {
+      if (url.pathname === '/v1/me/storefront') return json(STOREFRONT)
+      if (url.pathname === '/v1/catalog/cn/search') {
+        return json({ results: { songs: { data: [TRACK] } } })
+      }
+      throw new Error(`unexpected request: ${url.href}`)
+    })
+    const adapter = new AppleMusicAdapter(handler, {})
+    await adapter.searchSongs(cred(), 'hello', 30)
+    const searchCall = calls.find((c) => c.url.pathname === '/v1/catalog/cn/search')
+    expect(searchCall?.url.searchParams.get('limit')).toBe('25')
+  })
+
+  it('搜索：400 错误带状态码后缀，归类为不可重试', async () => {
+    const { handler } = makeHandler((_method, url) => {
+      if (url.pathname === '/v1/me/storefront') return json(STOREFRONT)
+      return json({ errors: [{ title: 'Invalid Parameter Value' }] }, 400)
+    })
+    const adapter = new AppleMusicAdapter(handler, {})
+    await adapter.searchSongs(cred(), 'hello', 25).catch((e: unknown) => {
+      expect(e).toBeInstanceOf(SearchError)
+      expect((e as SearchError).retryable).toBe(false)
+      expect((e as SearchError).rateLimited).toBe(false)
+      expect((e as SearchError).message).toContain('(400)')
+    })
+  })
+
   it('搜索：429 限流归类为不可重试的限流错误', async () => {
     const { handler } = makeHandler((_method, url) => {
       if (url.pathname === '/v1/me/storefront') return json(STOREFRONT)

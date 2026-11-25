@@ -169,7 +169,6 @@ export default function PlaylistSection({
   const { run, running: syncRunning, progress: syncProgress } = useSyncRunner()
 
   // --- 歌单管理操作状态 ---
-  const [renaming, setRenaming] = useState(false)
   const [renameDraft, setRenameDraft] = useState('')
   /** 行内重命名：正在列表中原地编辑的歌单 id（右键重命名 / 双击行触发） */
   const [renamingId, setRenamingId] = useState<string | null>(null)
@@ -180,14 +179,25 @@ export default function PlaylistSection({
   useEffect(() => {
     if (renamingId) inlineRenameInputRef.current?.focus()
   }, [renamingId])
-  const [confirmDelete, setConfirmDelete] = useState(false)
+  /** 删除确认弹层目标歌单 */
+  const [deleteTarget, setDeleteTarget] = useState<PlatformPlaylist | null>(null)
+
+  // 删除确认弹层：Escape 关闭
+  useEffect(() => {
+    if (!deleteTarget) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setDeleteTarget(null)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [deleteTarget])
   const [managing, setManaging] = useState(false)
   const [removingIds, setRemovingIds] = useState<Set<string>>(new Set())
   const [searchInput, setSearchInput] = useState('')
   const [searching, setSearching] = useState(false)
+  const [searchError, setSearchError] = useState('')
   const [searchResults, setSearchResults] = useState<PlatformSong[] | null>(null)
   const [addingIds, setAddingIds] = useState<Set<string>>(new Set())
-  const [exportPicker, setExportPicker] = useState(false)
 
   const loggedIn = active !== '' && active !== 'local' && accounts[active] !== null
   const keyword = searchQuery.trim().toLowerCase()
@@ -201,7 +211,6 @@ export default function PlaylistSection({
   const canAddSongs = operationAllowed(activeMeta, 'addSongs')
   const canRemoveSong = operationAllowed(activeMeta, 'removeSongs')
   const removeSongReason = operationReason(activeMeta, 'removeSongs')
-  const activePlaylist = playlists.find((p) => p.id === activeId)
 
   const visiblePlaylists = keyword
     ? playlists.filter((p) => p.name.toLowerCase().includes(keyword))
@@ -319,6 +328,7 @@ export default function PlaylistSection({
     setActiveId(null)
     setSelectedIds(new Set())
     setMenu(null)
+    setRenamingId(null)
     autoOpenedRef.current = {}
     void fetchPlaylists()
   }, [fetchPlaylists])
@@ -376,11 +386,10 @@ export default function PlaylistSection({
       setLoading(true)
       setError('')
       // 切换歌单时重置管理操作状态
-      setRenaming(false)
       setRenamingId(null)
-      setConfirmDelete(false)
       setSearchResults(null)
       setSearchInput('')
+      setSearchError('')
       try {
         const res = await window.electronAPI.platforms.playlistSongsPage(active, id, 0, SONG_PAGE_SIZE)
         log.info('playlist.songs.fetch', '拉取歌单歌曲第一页', {
@@ -523,6 +532,34 @@ export default function PlaylistSection({
         onSelect: () => void handleOpenUrl(single.webUrl as string),
       })
     }
+    if (single) {
+      pushDivider()
+      entries.push({
+        type: 'item',
+        id: 'export-m3u',
+        label: t('playlist.exportM3u'),
+        icon: 'download',
+        onSelect: () => void handleMenuExport(single, 'm3u'),
+      })
+      entries.push({
+        type: 'item',
+        id: 'export-csv',
+        label: t('playlist.exportCsv'),
+        icon: 'table',
+        onSelect: () => void handleMenuExport(single, 'csv'),
+      })
+    }
+    if (single && canDelete) {
+      pushDivider()
+      entries.push({
+        type: 'item',
+        id: 'delete',
+        label: t('playlist.delete'),
+        icon: 'delete',
+        danger: true,
+        onSelect: () => setDeleteTarget(single),
+      })
+    }
     // 清理尾部分隔线；无任何可操作项时不弹菜单
     while (entries.length > 0 && entries[entries.length - 1].type === 'divider') entries.pop()
     if (!entries.some((entry) => entry.type === 'item')) return
@@ -538,7 +575,6 @@ export default function PlaylistSection({
     })
     setRenameDraft(playlist.name)
     setRenamingId(playlist.id)
-    setRenaming(false)
   }
 
   const handleOpenUrl = async (url: string) => {
@@ -557,31 +593,31 @@ export default function PlaylistSection({
 
   // --- 歌单管理操作 ---
 
-  const startRename = () => {
-    if (!activePlaylist) return
-    setRenameDraft(activePlaylist.name)
-    setRenaming(true)
-    setConfirmDelete(false)
-  }
-
-  /** 导出当前平台歌单为 m3u/csv 文件 */
-  const handleExport = async (format: 'm3u' | 'csv') => {
-    if (!activePlaylist || songs.length === 0) return
-    setExportPicker(false)
-    const exportSongs = songs.map((s) => ({
-      title: s.title,
-      artist: s.artist || undefined,
-      album: s.album,
-      durationMs: s.durationMs,
-    }))
-    const content = format === 'm3u' ? toM3u(exportSongs) : toCsv(exportSongs)
+  /** 右键导出歌单为 m3u/csv 文件（按需拉取该歌单歌曲） */
+  const handleMenuExport = async (playlist: PlatformPlaylist, format: 'm3u' | 'csv') => {
+    log.info('playlist.export', '右键导出歌单', { platform: active, playlistId: playlist.id, format })
+    setManaging(true)
     try {
-      const saved = await window.electronAPI.saveTextFile(activePlaylist.name, content, format)
+      const res = await window.electronAPI.platforms.playlistSongs(active, playlist.id)
+      const exportSongs = res.data.map((s) => ({
+        title: s.title,
+        artist: s.artist || undefined,
+        album: s.album,
+        durationMs: s.durationMs,
+      }))
+      if (exportSongs.length === 0) {
+        notify('warning', t('playlist.emptySyncSource'))
+        return
+      }
+      const content = format === 'm3u' ? toM3u(exportSongs) : toCsv(exportSongs)
+      const saved = await window.electronAPI.saveTextFile(playlist.name, content, format)
       log.info('playlist.exported', '歌单已导出', { platform: active, format, saved })
       if (saved) notify('success', t('playlist.exported'), saved)
     } catch (e) {
       log.error('playlist.export-failed', '导出失败', e, { platform: active })
       notify('error', t('playlist.exportFailed'))
+    } finally {
+      setManaging(false)
     }
   }
 
@@ -607,31 +643,47 @@ export default function PlaylistSection({
     }
   }
 
-  const handleRename = async () => {
-    if (await submitRename(activeId)) setRenaming(false)
-  }
-
   /** 行内编辑提交：成功后退出该行编辑态 */
   const handleInlineRename = async () => {
     if (await submitRename(renamingId)) setRenamingId(null)
   }
 
-  const handleDelete = async () => {
-    if (!activeId) return
-    log.info('playlist.delete', '删除歌单', { platform: active, playlistId: activeId })
+  /** 行内编辑失焦：有效新名字则提交，空名/未改名则退出编辑态 */
+  const handleInlineBlur = () => {
+    if (!renamingId) return
+    const target = playlists.find((p) => p.id === renamingId)
+    const name = renameDraft.trim()
+    if (!name || (target && name === target.name)) {
+      setRenamingId(null)
+      return
+    }
+    void handleInlineRename()
+  }
+
+  /** 右键删除歌单：确认弹层通过后执行 */
+  const handleMenuDelete = async () => {
+    const playlist = deleteTarget
+    if (!playlist || !canDelete) return
+    log.info('playlist.delete', '删除歌单', { platform: active, playlistId: playlist.id })
     setManaging(true)
     setError('')
     try {
-      await window.electronAPI.platforms.deletePlaylist(active, activeId)
-      setPlaylists((prev) => prev.filter((p) => p.id !== activeId))
+      await window.electronAPI.platforms.deletePlaylist(active, playlist.id)
+      setPlaylists((prev) => prev.filter((p) => p.id !== playlist.id))
       setPlaylistTotal((total) => Math.max(0, total - 1))
-      setSongs([])
-      setSongTotal(0)
-      setActiveId(null)
-      setConfirmDelete(false)
-      setSearchResults(null)
+      // 删除的是当前打开的歌单时清空右侧歌曲区
+      if (activeId === playlist.id) {
+        setSongs([])
+        setSongTotal(0)
+        setActiveId(null)
+        setSearchResults(null)
+      }
+      setDeleteTarget(null)
     } catch (e) {
-      log.error('playlist.delete-failed', '删除歌单失败', e, { platform: active, playlistId: activeId })
+      log.error('playlist.delete-failed', '删除歌单失败', e, {
+        platform: active,
+        playlistId: playlist.id,
+      })
       setError(e instanceof Error ? e.message : t('playlist.fetchFailed'))
     } finally {
       setManaging(false)
@@ -673,13 +725,15 @@ export default function PlaylistSection({
     if (!kw) return
     log.info('playlist.search-songs', '搜索歌曲', { platform: active, keyword: kw })
     setSearching(true)
-    setError('')
+    setSearchError('')
     try {
       const results = await window.electronAPI.platforms.searchSongs(active, kw)
       setSearchResults(results)
     } catch (e) {
       log.error('playlist.search-failed', '搜索歌曲失败', e, { platform: active, keyword: kw })
-      setError(e instanceof Error ? e.message : t('playlist.fetchFailed'))
+      // 剥离 IPC 包装；平台给出的用户可读文案（中文）直接展示，其余用通用提示
+      const raw = ipcErrorMessage(e)
+      setSearchError(/[\u4e00-\u9fff]/.test(raw) ? raw : t('playlist.searchFailedHint'))
     } finally {
       setSearching(false)
     }
@@ -905,7 +959,7 @@ export default function PlaylistSection({
                     style={{ animationDelay: `${Math.min(i, 15) * 24}ms` }}
                   >
                     {renamingId === p.id ? (
-                      <div className="flex w-full items-center gap-1.5 rounded-lg border border-primary bg-surface px-2 py-1.5">
+                      <div className="flex w-full items-center gap-1.5 rounded-lg bg-primary-container/15 px-2 py-1.5 text-primary">
                         <PlaylistCover playlist={p} />
                         <input
                           ref={inlineRenameInputRef}
@@ -916,26 +970,11 @@ export default function PlaylistSection({
                             if (e.key === 'Enter') void handleInlineRename()
                             if (e.key === 'Escape') setRenamingId(null)
                           }}
+                          onBlur={handleInlineBlur}
                           placeholder={t('playlist.renamePlaceholder')}
                           disabled={managing}
-                          className="min-w-0 flex-1 rounded-md border border-outline-variant bg-surface px-2 py-1 font-body-md text-body-md text-on-surface outline-none focus:border-primary disabled:opacity-50"
+                          className="min-w-0 flex-1 border-0 border-b border-primary bg-transparent px-0 py-0.5 font-body-md text-body-md text-on-surface outline-none placeholder:text-outline disabled:opacity-50"
                         />
-                        <button
-                          onClick={() => void handleInlineRename()}
-                          disabled={managing || !renameDraft.trim()}
-                          title={t('playlist.save')}
-                          className="flex items-center rounded-md p-1 text-primary transition-colors hover:bg-surface-container-highest disabled:opacity-50"
-                        >
-                          <span className="material-symbols-outlined text-sm">check</span>
-                        </button>
-                        <button
-                          onClick={() => setRenamingId(null)}
-                          disabled={managing}
-                          title={t('playlist.cancel')}
-                          className="flex items-center rounded-md p-1 text-on-surface-variant transition-colors hover:bg-surface-container-highest disabled:opacity-50"
-                        >
-                          <span className="material-symbols-outlined text-sm">close</span>
-                        </button>
                       </div>
                     ) : (
                       <div
@@ -1024,109 +1063,6 @@ export default function PlaylistSection({
           </div>
 
           <div className="flex min-h-0 min-w-0 flex-1 flex-col rounded-lg border border-outline-variant bg-surface-container-low">
-            <div className="flex shrink-0 items-center justify-between gap-2 border-b border-outline-variant px-4 py-2">
-              <div className="flex min-w-0 items-center gap-2">
-                {activeId ? (
-                  renaming && activePlaylist ? (
-                    <div className="flex items-center gap-1.5">
-                      <input
-                        autoFocus
-                        value={renameDraft}
-                        onChange={(e) => setRenameDraft(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') void handleRename()
-                          if (e.key === 'Escape') setRenaming(false)
-                        }}
-                        placeholder={t('playlist.renamePlaceholder')}
-                        disabled={managing}
-                        className="w-48 rounded-md border border-outline-variant bg-surface px-2 py-1 font-label-sm text-label-sm text-on-surface outline-none focus:border-primary disabled:opacity-50"
-                      />
-                      <button
-                        onClick={() => void handleRename()}
-                        disabled={managing || !renameDraft.trim()}
-                        title={t('playlist.save')}
-                        className="flex items-center rounded-md p-1 text-primary transition-colors hover:bg-surface-container-highest disabled:opacity-50"
-                      >
-                        <span className="material-symbols-outlined text-sm">check</span>
-                      </button>
-                      <button
-                        onClick={() => setRenaming(false)}
-                        disabled={managing}
-                        title={t('playlist.cancel')}
-                        className="flex items-center rounded-md p-1 text-on-surface-variant transition-colors hover:bg-surface-container-highest disabled:opacity-50"
-                      >
-                        <span className="material-symbols-outlined text-sm">close</span>
-                      </button>
-                    </div>
-                  ) : (
-                    <>
-                      <MarqueeText
-                        text={activePlaylist?.name ?? ''}
-                        className="min-w-0 font-label-sm text-label-sm text-on-surface-variant"
-                      />
-                      {canRename && (
-                        <button
-                          onClick={startRename}
-                          title={t('playlist.rename')}
-                          className="flex items-center rounded-md p-1 text-on-surface-variant transition-colors hover:bg-surface-container-highest hover:text-primary"
-                        >
-                          <span className="material-symbols-outlined text-base">edit</span>
-                        </button>
-                      )}
-                    </>
-                  )
-                ) : (
-                  <span className="font-label-sm text-label-sm text-on-surface-variant">
-                    {t('playlist.selectHint')}
-                  </span>
-                )}
-              </div>
-              {activeId && (
-                <div className="relative flex shrink-0 items-center gap-2">
-                  <button
-                    onClick={() => setExportPicker((v) => !v)}
-                    disabled={songs.length === 0}
-                    title={t('playlist.export')}
-                    className="flex items-center rounded-md p-1 text-on-surface-variant transition-colors hover:bg-surface-container-highest hover:text-primary disabled:opacity-50"
-                  >
-                    <span className="material-symbols-outlined text-base">download</span>
-                  </button>
-                  {exportPicker && (
-                    <div className="absolute right-0 top-full z-20 mt-1 w-32 rounded-lg border border-outline-variant bg-surface-container-high p-1 shadow-lg">
-                      {(['m3u', 'csv'] as const).map((format) => (
-                        <button
-                          key={format}
-                          onClick={() => void handleExport(format)}
-                          className="flex w-full items-center justify-between rounded-md px-2.5 py-1.5 font-label-md text-label-md text-on-surface transition-colors hover:bg-surface-container-highest"
-                        >
-                          {format.toUpperCase()}
-                          <span className="material-symbols-outlined text-sm text-outline">download</span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-              {activeId && canDelete && (
-                <div className="flex shrink-0 items-center gap-2">
-                  <button
-                    onClick={() => (confirmDelete ? void handleDelete() : setConfirmDelete(true))}
-                    disabled={managing}
-                    title={t('playlist.delete')}
-                    className={`flex items-center gap-1 rounded-md px-2 py-1 font-label-sm text-label-sm transition-colors disabled:opacity-50 ${
-                      confirmDelete
-                        ? 'bg-error/10 text-error hover:bg-error/15'
-                        : 'text-on-surface-variant hover:bg-surface-container-highest hover:text-error'
-                    }`}
-                  >
-                    <span className="material-symbols-outlined text-sm">
-                      {confirmDelete ? 'warning' : 'delete'}
-                    </span>
-                    {confirmDelete ? t('playlist.deleteConfirm') : t('playlist.delete')}
-                  </button>
-                </div>
-              )}
-            </div>
             {error && (
               <p className="shrink-0 px-4 py-2 font-label-sm text-label-sm text-error">{error}</p>
             )}
@@ -1167,6 +1103,12 @@ export default function PlaylistSection({
                     {t('playlist.search')}
                   </button>
                 </div>
+                {searchError && (
+                  <p className="mt-1.5 flex items-center gap-1 font-label-sm text-label-sm text-error">
+                    <span className="material-symbols-outlined text-sm">error_outline</span>
+                    {searchError}
+                  </p>
+                )}
                 {searchResults && (
                   <div className="mt-2">
                     {searchResults.length === 0 ? (
@@ -1248,6 +1190,41 @@ export default function PlaylistSection({
           entries={menu.entries}
           onClose={() => setMenu(null)}
         />
+      )}
+
+      {deleteTarget && (
+        <div
+          className="dialog-backdrop-enter fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+          onClick={() => setDeleteTarget(null)}
+        >
+          <div
+            className="dialog-panel-enter flex w-80 flex-col gap-4 rounded-lg border border-outline-variant bg-surface-container p-5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start gap-2.5">
+              <span className="material-symbols-outlined text-base text-error">delete</span>
+              <p className="font-body-md text-body-md text-on-surface">
+                {t('playlist.deleteConfirmWithName', { name: deleteTarget.name })}
+              </p>
+            </div>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setDeleteTarget(null)}
+                disabled={managing}
+                className="rounded-lg border border-outline-variant px-3 py-1.5 font-label-md text-label-md text-on-surface-variant transition-colors hover:bg-surface-container-high hover:text-on-surface disabled:opacity-40"
+              >
+                {t('playlist.cancel')}
+              </button>
+              <button
+                onClick={() => void handleMenuDelete()}
+                disabled={managing}
+                className="rounded-lg bg-error px-3 py-1.5 font-label-md text-label-md font-medium text-on-error transition-colors hover:bg-error/85 disabled:opacity-40"
+              >
+                {t('playlist.delete')}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )
