@@ -882,7 +882,13 @@
 | `body.more` | boolean | 是否还有更多 |
 | `body.version` | string | 版本标识 |
 
-`body.playlist[]` 条目字段（与 2.4 歌单详情 `playlist` 对象字段同源，见 2.4 完整字段表；适配器只读取 `id`、`name`、`trackCount`/`track_count`、`specialType`、`coverImgUrl`）。
+`body.playlist[]` 条目字段（与 2.4 歌单详情 `playlist` 对象字段同源，见 2.4 完整字段表；适配器只读取 `id`、`name`、`trackCount`/`track_count`、`specialType`、`subscribed`、`coverImgUrl`）。
+
+| 字段 | 类型 | 含义 |
+|---|---|---|
+| `subscribed` | boolean | **true = 收藏的他人歌单**；false/缺失 = 自建歌单（📐 NCM 模块透传上游字段） |
+
+歌单列表过滤规则（与酷狗一致，仅显示自有歌单）：`specialType=5`（「我喜欢的音乐」收藏夹）与 `subscribed=true`（收藏的他人歌单）均不显示。
 
 #### `playlist_detail`（`GET /api/v6/playlist/detail?id=<pid>&n=<n>&s=<n>`，公开）
 

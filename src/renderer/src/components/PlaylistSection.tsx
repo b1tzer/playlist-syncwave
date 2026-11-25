@@ -40,6 +40,8 @@ const PLAYLIST_PAGE_SIZE = 200
 const SONG_PAGE_SIZE = 200
 /** 平台搜索单页大小：QQ 音乐单页上限 20，统一按 20 分页（各平台均支持） */
 const SEARCH_PAGE_SIZE = 20
+/** 拉取超过该时长未完成：待显示区域提示网络延迟（loading 结束自动复位） */
+const SLOW_FETCH_THRESHOLD_MS = 3_000
 
 interface PlaylistSectionProps {
   platforms: PlatformMeta[]
@@ -151,6 +153,8 @@ export default function PlaylistSection({
   // 滚动分页加载防重入（歌单/歌曲共用）
   const loadingMoreRef = useRef(false)
   const [refreshing, setRefreshing] = useState(false)
+  /** 拉取超过阈值仍未完成：待显示区域提示网络延迟（转圈动效常驻） */
+  const [slowLoading, setSlowLoading] = useState(false)
 
   // --- 缓存兜底 + 后台重新验证的行级更新 ---
   /** 后台重新验证后有变化的歌单行 id（行级高亮动画，结束后移除） */
@@ -586,6 +590,16 @@ export default function PlaylistSection({
     })
     return off ?? (() => {})
   }, [active, activeId])
+
+  // 拉取超过阈值仍未完成：待显示区域提示网络延迟并保持转圈动效，让用户明白还在获取中
+  useEffect(() => {
+    if (!loading) {
+      setSlowLoading(false)
+      return
+    }
+    const timer = setTimeout(() => setSlowLoading(true), SLOW_FETCH_THRESHOLD_MS)
+    return () => clearTimeout(timer)
+  }, [loading])
 
   // 歌单列表加载完成后自动打开详情：该平台首次访问打开第一个，曾打开过则恢复上次选择
   useEffect(() => {
@@ -1163,12 +1177,15 @@ export default function PlaylistSection({
                   </span>
                 )}
               </div>
+              {loading && playlists.length === 0 ? (
+                <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 font-label-md text-label-md text-outline">
+                  <span className="material-symbols-outlined animate-spin text-xl">
+                    progress_activity
+                  </span>
+                  {slowLoading ? t('playlist.slowFetch') : t('common.loading')}
+                </div>
+              ) : (
               <ul className="min-h-0 flex-1 select-none space-y-0.5 overflow-y-auto p-1.5">
-                {loading && playlists.length === 0 && (
-                  <li className="px-2 py-2 font-label-md text-label-md text-outline">
-                    {t('common.loading')}
-                  </li>
-                )}
                 {!loading && visiblePlaylists.length === 0 && (
                   <li className="px-2 py-2 font-label-md text-label-md text-outline">
                     {keyword ? t('playlist.noMatch') : t('playlist.empty')}
@@ -1272,6 +1289,7 @@ export default function PlaylistSection({
                   </li>
                 )}
               </ul>
+              )}
             </div>
 
             {(gathering || syncRunning) && (
@@ -1302,9 +1320,12 @@ export default function PlaylistSection({
 
           <div className="flex min-h-0 min-w-0 flex-1 flex-col rounded-lg border border-outline-variant bg-surface-container-low">
             {loading && (
-              <p className="shrink-0 px-4 py-2 font-label-md text-label-md text-outline">
-                {t('common.loading')}
-              </p>
+              <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 font-label-md text-label-md text-outline">
+                <span className="material-symbols-outlined animate-spin text-xl">
+                  progress_activity
+                </span>
+                {slowLoading ? t('playlist.slowFetch') : t('common.loading')}
+              </div>
             )}
             {!loading && activeId && canAddSongs && (
               <div

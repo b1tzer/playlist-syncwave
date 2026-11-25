@@ -6,8 +6,9 @@
  * 立即后台重新验证并用新格式数据覆盖。
  * v2→v3：酷狗映射修正后，早期版本按平台记录版本导致同平台旧歌单缓存残留。
  * v3→v4：酷狗歌单列表不再显示收藏的他人歌单（type=1 过滤），旧缓存含收藏歌单需重新验证。
+ * v4→v5：网易云歌单列表不再显示收藏的他人歌单（subscribed=true 过滤），旧缓存含收藏歌单需重新验证。
  */
-export const PLAYLIST_CACHE_SCHEMA_VERSION = 4
+export const PLAYLIST_CACHE_SCHEMA_VERSION = 5
 
 /**
  * 歌单列表重新验证间隔：TTL 内直接返回缓存不请求接口；

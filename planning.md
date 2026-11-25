@@ -482,6 +482,8 @@ tests/             # Vitest 单元测试（core/main/platforms/renderer）
 - **追加修复**：① 搜索修复后仍无结果的根因是 dev 进程主进程未随代码修改重启（主进程日志最后启动时间早于修改时间，IPC 返回空但无报错），重启后生效——非代码缺陷；② 添加/移除歌曲成功后左侧歌单卡片歌曲数未即时同步，`handleAddSong`/`handleRemoveSong` 增补 `setPlaylists` 就地 ±1（`songCount` 为 undefined 的平台不动，主进程已标记缓存失效后台重新验证兜底）。
 - **追加优化 — 登录态恢复提速（Ctrl+R 秒回）**：reload 后渲染层 `accounts` 内存丢失且初始化 `setAccounts` 等全部平台 `Promise.allSettled` 完成才一次设置，最慢平台（Apple Music 重抓 developer token 等）拖慢整体，期间全部显示未连接。修复：① 主进程新增 `main/loginStatusCache.ts` 登录态内存缓存——`platform:login-status` 命中缓存直接返回（渲染层 reload 主进程不重启，秒回），首次查询写入；扫码登录成功/登出/保活判定失效时清除，网页登录成功直接写入；② 渲染层初始化改为逐平台独立完成即 `setAccounts`，慢平台不阻塞快平台，失败平台保留 3s 重试。
 - **追加优化 — 异常提示统一右上角 toast（不给用户看代码）**：歌单详情区顶端错误条与搜索区内联错误条移除，所有异常统一走 `renderer/src/utils/notifyError.ts`——右上角 toast 展示，平台中文可读文案作为详情，技术性报错（状态码/网络错误/堆栈等）过滤为通用标题；覆盖歌单拉取/打开/重命名/删除/增删歌曲/搜索/同步确认/登录异常/导入导出等全部错误路径；同步失败内联错误（TextCreator）与确认对话框内联错误一并移除（toast 已提示）。主进程歌单拉取（列表/歌曲，含分页）补 30s 超时包装，平台接口永久挂起时转为「请求超时」错误走 toast，不再一直 loading。
+- **追加优化 — 慢加载网络延迟提示**：拉取（歌单列表/歌曲区）超过 3s 未完成，待显示区域文案从「加载中」切换为「网络较慢，正在获取中…」并保持转圈动效（`SLOW_FETCH_THRESHOLD_MS` 常量 + loading 监听 effect），加载结束自动复位；loading 改为对应区域垂直水平居中显示（原左上角一行文字）。
+- **追加修复 — 网易云显示收藏歌单**：`fetchPlaylists` 原仅过滤 `specialType=5`，收藏的他人歌单（`subscribed=true`）透出到列表。补过滤（`subscribed !== true`，缺失字段视为自有），与酷狗「仅显示自有歌单」规则一致；过滤规则变更 bump `PLAYLIST_CACHE_SCHEMA_VERSION` → 5 使旧缓存重新验证；新增过滤测试。
 
 ---
 

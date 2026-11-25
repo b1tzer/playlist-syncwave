@@ -117,8 +117,11 @@ export class NeteaseAdapter extends BasePlatformAdapter {
     }
     return raw
       .map((p) => asObject(p))
-      // 过滤收藏类特殊歌单：specialType=5 是「我喜欢的音乐」收藏夹
-      .filter((item) => Number(item.specialType ?? 0) === 0)
+      // 过滤收藏类特殊歌单：specialType=5 是「我喜欢的音乐」收藏夹；
+      // subscribed=true 为收藏的他人歌单，与自建/系统歌单规则一致（仅显示自有歌单）
+      .filter(
+        (item) => Number(item.specialType ?? 0) === 0 && item.subscribed !== true,
+      )
       .map((item) => {
         const id = String(item.id)
         return {

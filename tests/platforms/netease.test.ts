@@ -90,6 +90,23 @@ describe('NeteaseAdapter — 映射契约', () => {
     expect(list[0].id).toBe('1')
   })
 
+  it('歌单列表：过滤收藏的他人歌单（subscribed=true）', async () => {
+    const api = makeApi({
+      user_playlist: async () => ({
+        body: {
+          playlist: [
+            { id: 1, name: '我的歌单', trackCount: 10, subscribed: false },
+            { id: 2, name: '别人的歌单', trackCount: 99, subscribed: true },
+            // 老协议版本无 subscribed 字段：默认保留（视为自有）
+            { id: 3, name: '无字段歌单', trackCount: 1 },
+          ],
+        },
+      }),
+    })
+    const list = await new NeteaseAdapter(api).getUserPlaylists('c', '1')
+    expect(list.map((p) => p.id)).toEqual(['1', '3'])
+  })
+
   it('搜索风控（405）→ 抛可重试且带限流标记的 SearchError', async () => {
     const api = makeApi({
       cloudsearch: async () => {
