@@ -391,17 +391,19 @@ export class AppleMusicAdapter extends BasePlatformAdapter {
     credential: string,
     keyword: string,
     limit: number,
+    page = 1,
   ): Promise<PlatformSong[]> {
     // 实测：整串带 " - " 搜索会大量命中 Live 版，拆成空格分隔显著改善
     const term = keyword.replace(/\s*-\s*/g, ' ').trim()
     // 官方 catalog search 接口 limit 上限 25，超限返回 400 Invalid Parameter Value
     const capped = Math.max(1, Math.min(limit, 25))
+    const offset = (page - 1) * capped
     const storefront = await this.ensureStorefront(credential)
     try {
       const res = await this.call(
         'GET',
         API_HOST,
-        `/v1/catalog/${encodeURIComponent(storefront)}/search?term=${encodeURIComponent(term)}&types=songs&limit=${capped}`,
+        `/v1/catalog/${encodeURIComponent(storefront)}/search?term=${encodeURIComponent(term)}&types=songs&limit=${capped}&offset=${offset}`,
         credential,
       )
       const results = asObject(res.results)

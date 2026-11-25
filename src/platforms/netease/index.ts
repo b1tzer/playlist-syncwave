@@ -138,12 +138,23 @@ export class NeteaseAdapter extends BasePlatformAdapter {
     return asArray(tracks).map(mapTrack)
   }
 
-  protected async doSearch(cookie: string, keyword: string, limit: number): Promise<PlatformSong[]> {
+  protected async doSearch(
+    cookie: string,
+    keyword: string,
+    limit: number,
+    page = 1,
+  ): Promise<PlatformSong[]> {
     // 新版搜索接口（/api/cloudsearch/pc）：旧 search 接口（/api/search/get）易被风控
     let res: JsonObject
     try {
       res = asObject(
-        await this.api.cloudsearch!({ keywords: keyword, type: 1, limit, cookie }),
+        await this.api.cloudsearch!({
+          keywords: keyword,
+          type: 1,
+          limit,
+          offset: (page - 1) * limit,
+          cookie,
+        }),
       )
     } catch (e) {
       // NCM 风格错误：{ status, body: { code, message } }

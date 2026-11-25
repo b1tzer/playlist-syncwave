@@ -478,7 +478,56 @@ describe('KugouAdapter — 映射契约', () => {
     expect(songs[0]).toMatchObject({ id: 'def456', title: '后来', artist: '刘若英' })
   })
 
-  it('搜索映射：高亮标签清理、{size} 占位替换、结果缓存', async () => {
+  it('搜索映射：v2 接口 lists 为歌曲对象数组（flat），高亮清理、{size} 替换、结果缓存、分页透传', async () => {
+    const search = vi.fn(async () => ({
+      status: 200,
+      body: {
+        data: {
+          lists: [
+            {
+              FileHash: 'ABC123',
+              SongName: '<em>晴天</em>',
+              SingerName: '周杰伦',
+              AlbumName: '叶惠美',
+              AlbumID: 77,
+              MixSongID: 88,
+              Image: 'https://img.example/{size}/a.jpg',
+              Duration: 269,
+            },
+          ],
+        },
+      },
+      cookie: [],
+    }))
+    const api = makeApi({ search })
+    const adapter = new KugouAdapter(api, DEVICE)
+    const songs = await adapter.searchSongs('c', '晴天', 20, 2)
+    expect(songs).toEqual([
+      {
+        id: 'abc123',
+        title: '晴天',
+        artist: '周杰伦',
+        album: '叶惠美',
+        coverUrl: 'https://img.example/240/a.jpg',
+        durationMs: 269000,
+      },
+    ])
+    // 分页参数透传平台接口（page 从 1 起）
+    expect(search).toHaveBeenCalledWith(
+      expect.objectContaining({ keyword: '晴天', page: 2, pagesize: 20 }),
+    )
+    // 搜索结果缓存的元数据支撑加歌
+    const add = vi.fn(async () => ({ status: 200, body: {}, cookie: [] }))
+    const api2 = makeApi({ search: api.search, playlist_tracks_add: add })
+    const adapter2 = new KugouAdapter(api2, DEVICE)
+    await adapter2.searchSongs('c', '晴天')
+    await adapter2.addSongsToPlaylist('c', '99', ['abc123'])
+    expect(add).toHaveBeenCalledWith(
+      expect.objectContaining({ listid: '99', data: '晴天|abc123|77|88' }),
+    )
+  })
+
+  it('搜索映射：兼容嵌套数组协议版本（lists[0] 为歌曲数组）', async () => {
     const api = makeApi({
       search: async () => ({
         status: 200,
@@ -488,12 +537,9 @@ describe('KugouAdapter — 映射契约', () => {
               [
                 {
                   FileHash: 'ABC123',
-                  SongName: '<em>晴天</em>',
+                  SongName: '晴天',
                   SingerName: '周杰伦',
                   AlbumName: '叶惠美',
-                  AlbumID: 77,
-                  MixSongID: 88,
-                  Image: 'https://img.example/{size}/a.jpg',
                   Duration: 269,
                 },
               ],
@@ -506,24 +552,8 @@ describe('KugouAdapter — 映射契约', () => {
     const adapter = new KugouAdapter(api, DEVICE)
     const songs = await adapter.searchSongs('c', '晴天')
     expect(songs).toEqual([
-      {
-        id: 'abc123',
-        title: '晴天',
-        artist: '周杰伦',
-        album: '叶惠美',
-        coverUrl: 'https://img.example/240/a.jpg',
-        durationMs: 269000,
-      },
+      expect.objectContaining({ id: 'abc123', title: '晴天', artist: '周杰伦' }),
     ])
-    // 搜索结果缓存的元数据支撑加歌
-    const add = vi.fn(async () => ({ status: 200, body: {}, cookie: [] }))
-    const api2 = makeApi({ search: api.search, playlist_tracks_add: add })
-    const adapter2 = new KugouAdapter(api2, DEVICE)
-    await adapter2.searchSongs('c', '晴天')
-    await adapter2.addSongsToPlaylist('c', '99', ['abc123'])
-    expect(add).toHaveBeenCalledWith(
-      expect.objectContaining({ listid: '99', data: '晴天|abc123|77|88' }),
-    )
   })
 
   it('搜索错误分类：502 可重试、error_code=1002 限流', async () => {

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { createRendererLogger } from '../logging/rendererLogger'
 import { LOCALES, useI18n } from '../i18n'
 import ToggleSwitch from './ToggleSwitch'
-import { notify } from './toast'
+import { notifyError } from '../utils/notifyError'
 import { applyTheme, type Theme } from '../theme'
 import type { UpdateStatus } from '../../../preload/index'
 
@@ -51,7 +51,7 @@ export default function SettingsView() {
       log.info('settings.proxy-apply', '代理已应用', { url: proxyDraft.trim() })
     } catch (e) {
       log.error('settings.proxy-apply-failed', '应用代理失败', e)
-      notify('error', t('settings.proxyApplyFailed'), e instanceof Error ? e.message : '')
+      notifyError(e, t('settings.proxyApplyFailed'))
     }
   }
 

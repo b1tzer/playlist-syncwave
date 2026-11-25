@@ -34,8 +34,8 @@ export interface PlatformAdapter {
   /** 拉取歌单内的歌曲 */
   getPlaylistSongs(cookie: string, playlistId: string): Promise<PlatformSong[]>
 
-  /** 按关键词搜索歌曲（供匹配引擎使用） */
-  searchSongs(cookie: string, keyword: string, limit?: number): Promise<PlatformSong[]>
+  /** 按关键词搜索歌曲（供匹配引擎使用；page 从 1 起，供滚动分页） */
+  searchSongs(cookie: string, keyword: string, limit?: number, page?: number): Promise<PlatformSong[]>
 
   /** 创建歌单，返回新歌单 ID */
   createPlaylist(cookie: string, name: string): Promise<string>
@@ -202,13 +202,13 @@ export abstract class BasePlatformAdapter implements PlatformAdapter {
     })
   }
 
-  async searchSongs(credential: string, keyword: string, limit = 30): Promise<PlatformSong[]> {
+  async searchSongs(credential: string, keyword: string, limit = 30, page = 1): Promise<PlatformSong[]> {
     // 同步过程中逐首高频调用，完成日志降为 debug
     return this.log.time(
       'search.songs',
       async () => {
-        const songs = await this.doSearch(credential, keyword, limit)
-        this.log.debug('search.songs', '搜索结果', { keyword, count: songs.length })
+        const songs = await this.doSearch(credential, keyword, limit, page)
+        this.log.debug('search.songs', '搜索结果', { keyword, page, count: songs.length })
         return songs
       },
       undefined,
@@ -281,11 +281,12 @@ export abstract class BasePlatformAdapter implements PlatformAdapter {
   /** 拉取并映射歌单歌曲 */
   protected abstract fetchPlaylistSongs(credential: string, playlistId: string): Promise<PlatformSong[]>
 
-  /** 执行平台搜索并映射为领域模型（平台错误分类/可重试判定在此实现） */
+  /** 执行平台搜索并映射为领域模型（平台错误分类/可重试判定在此实现；page 从 1 起） */
   protected abstract doSearch(
     credential: string,
     keyword: string,
     limit: number,
+    page?: number,
   ): Promise<PlatformSong[]>
 
   // ==============================

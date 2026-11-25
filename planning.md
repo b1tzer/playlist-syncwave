@@ -456,7 +456,7 @@ tests/             # Vitest 单元测试（core/main/platforms/renderer）
 - **QQ音乐 genre 简化**：不再调用 `/song/genre` 接口，搜索条目直接映射 `item.genre`（上游恒为 0，genre 实际为空）。
 - **schema 迁移压缩**：发布前将早期演进迁移 v1~v6 压缩为单一基线迁移（version=6，幂等），B14 的「迁移 v1 接管」描述对应压缩前历史；正式发布后 MIGRATIONS 只追加（version ≥ 7）。
 - **React 版本**：工程实际采用 React 19（package.json），技术选型表已同步。
-- 现状：typecheck、lint、全量 371 项测试、build 通过（四个平台：网易云/QQ音乐/酷狗/Apple Music）。
+- 现状：typecheck、lint、全量 375 项测试、build 通过（四个平台：网易云/QQ音乐/酷狗/Apple Music）。
 
 ### 补记 — 同步匹配阶段并发化 ✅
 - **需求**：同步导入逐首串行搜索 + 每首固定间隔（默认 500ms），等待时间占大头（500 首匹配约 10 分钟），要求提高同步执行效率、加快创建速度。
@@ -469,6 +469,19 @@ tests/             # Vitest 单元测试（core/main/platforms/renderer）
   - 手动确认无二次搜索确认：`executeSync` 直接复用 `plan.choices[].candidates`（plan 完整缓存在 `pendingSyncs`），确认后仅建单 + 分批写入。
 - **验证**：新增 3 项测试（并发在途重叠、任务内关键词缓存、非法并发数回退为 1）；按并发语义更新 3 项既有断言（组合精确命中并行双发、风控双关键词失败不搜备选、中止在途保留后续不发起）。全量 374 项测试、typecheck、lint 通过。
 - **旧记录注记**：T4 修复记录「500ms/首」限速已演进为全局最小间隔；T9 中止检查点语义保持（flush 按序收敛）。
+
+### 补记 — 歌单添加歌曲搜索修复与分页增强 ✅
+- **问题**：① 酷狗歌单内搜索输入什么都显示无结果；② 搜索结果按钮文案恒为「已添加」（未添加即显示已添加）；③ 搜索结果面板不随焦点离开收起；④ 搜索无滚动分页、清单无序号、分页哨兵要拉到空白行才请求下一页、搜索结果清单与歌单歌曲清单未复用组件。
+- **修复**：
+  - ① 根因：酷狗 `v2/search/song` 真实响应 `data.lists` 为**歌曲对象数组（flat）**，旧解析按嵌套数组 `lists[0]` 取值恒为空。改为 flat 解析并兼容嵌套协议版本（`Array.isArray(lists[0])` 判断）；`tests/platforms/kugou.test.ts` 搜索 mock 同步更新为真实结构并新增嵌套兼容用例。
+  - ② 搜索结果按钮三态：未添加「添加」/ 添加中「添加中」（转圈）/ 已在歌单或刚添加成功「已添加」（禁用）；添加成功后结果行保留标记而非移除。
+  - ③ 搜索面板聚焦展开、点击面板外（blur 且 relatedTarget 不在容器内）收起，结果保留。
+  - ④ 搜索分页贯通：`PlatformAdapter.searchSongs`/`doSearch` 与 IPC `platform:search-songs`、preload 增加 `page`（默认 1）；四平台分页映射——酷狗 page/pagesize、QQ `/search` page（单页上限 20）、网易云 cloudsearch offset=(page-1)*limit、Apple catalog offset；渲染层统一单页 20 条，返回达上限视为还有下一页，`LoadMoreSentinel` 增加 rootMargin 提前 200px 预取（不等拉到空白行）；搜索结果清单带行号（复用 SongList 默认 showIndex）。
+  - 组件复用：抽离 `renderer/src/components/SongSearchResults.tsx`（SongList + 分页哨兵 + 三态按钮），歌单详情「添加歌曲」与本地歌单「从平台添加」两处共用；本地歌单搜索结果由自绘行改为 SongList。
+- **验证**：酷狗搜索 flat 结构 + 分页透传 + 嵌套兼容 3 处断言（1 项改写 + 1 项新增），网易云搜索断言补 offset 分页。全量 375 项测试、typecheck、lint 通过。待手工验收：酷狗歌单内搜索出结果、滚动提前加载下一页、按钮三态、点击歌单列表收起搜索面板。
+- **追加修复**：① 搜索修复后仍无结果的根因是 dev 进程主进程未随代码修改重启（主进程日志最后启动时间早于修改时间，IPC 返回空但无报错），重启后生效——非代码缺陷；② 添加/移除歌曲成功后左侧歌单卡片歌曲数未即时同步，`handleAddSong`/`handleRemoveSong` 增补 `setPlaylists` 就地 ±1（`songCount` 为 undefined 的平台不动，主进程已标记缓存失效后台重新验证兜底）。
+- **追加优化 — 登录态恢复提速（Ctrl+R 秒回）**：reload 后渲染层 `accounts` 内存丢失且初始化 `setAccounts` 等全部平台 `Promise.allSettled` 完成才一次设置，最慢平台（Apple Music 重抓 developer token 等）拖慢整体，期间全部显示未连接。修复：① 主进程新增 `main/loginStatusCache.ts` 登录态内存缓存——`platform:login-status` 命中缓存直接返回（渲染层 reload 主进程不重启，秒回），首次查询写入；扫码登录成功/登出/保活判定失效时清除，网页登录成功直接写入；② 渲染层初始化改为逐平台独立完成即 `setAccounts`，慢平台不阻塞快平台，失败平台保留 3s 重试。
+- **追加优化 — 异常提示统一右上角 toast（不给用户看代码）**：歌单详情区顶端错误条与搜索区内联错误条移除，所有异常统一走 `renderer/src/utils/notifyError.ts`——右上角 toast 展示，平台中文可读文案作为详情，技术性报错（状态码/网络错误/堆栈等）过滤为通用标题；覆盖歌单拉取/打开/重命名/删除/增删歌曲/搜索/同步确认/登录异常/导入导出等全部错误路径；同步失败内联错误（TextCreator）与确认对话框内联错误一并移除（toast 已提示）。主进程歌单拉取（列表/歌曲，含分页）补 30s 超时包装，平台接口永久挂起时转为「请求超时」错误走 toast，不再一直 loading。
 
 ---
 

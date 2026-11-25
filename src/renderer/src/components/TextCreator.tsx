@@ -11,6 +11,7 @@ import LineTag from './LineTag'
 import PlatformLogo from './PlatformLogo'
 import ProgressBar from './ProgressBar'
 import { notify } from './toast'
+import { notifyError } from '../utils/notifyError'
 import { operationAllowed } from '../utils/platformCapabilities'
 
 const log = createRendererLogger('renderer.text-creator')
@@ -69,7 +70,7 @@ export default function TextCreator({
   const [target, setTarget] = useState('')
   const [savingLocal, setSavingLocal] = useState(false)
 
-  const { run, running, progress, report, error: syncError, reset: resetResult } = useSyncRunner()
+  const { run, running, progress, report, reset: resetResult } = useSyncRunner()
 
   // 草稿持久化：任意变化即写回，刷新/重启后恢复
   useEffect(() => {
@@ -163,7 +164,7 @@ export default function TextCreator({
       setLines((prev) => [...prev, ...rows])
     } catch (e) {
       log.error('text-creator.import-file-failed', '导入文件失败', e)
-      notify('error', t('textCreator.importFailed'), e instanceof Error ? e.message : '')
+      notifyError(e, t('textCreator.importFailed'))
     }
   }
 
@@ -190,7 +191,7 @@ export default function TextCreator({
       notify('success', t('textCreator.savedLocal'), t('textCreator.savedLocalDetail', { name }))
     } catch (e) {
       log.error('text-creator.save-local-failed', '保存到本地歌单失败', e)
-      notify('error', t('textCreator.saveLocalFailed'), e instanceof Error ? e.message : '')
+      notifyError(e, t('textCreator.saveLocalFailed'))
     } finally {
       setSavingLocal(false)
     }
@@ -531,8 +532,6 @@ export default function TextCreator({
             />
           </div>
         )}
-
-        {syncError && <p className="mt-2 font-label-sm text-label-sm text-error">{syncError}</p>}
 
         {report && (
           <div className="mt-2 space-y-1 font-label-sm text-label-sm">

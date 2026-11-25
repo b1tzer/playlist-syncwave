@@ -134,11 +134,25 @@ describe('NeteaseAdapter — 映射契约', () => {
     ])
   })
 
-  it('搜索映射与 limit 透传', async () => {
+  it('搜索映射与 limit/offset 透传（offset 按页码换算）', async () => {
     const fn = vi.fn(async () => ({ body: { result: { songs: [] } } }))
-    const api = makeApi({ cloudsearch: fn })
-    await new NeteaseAdapter(api).searchSongs('c', '晴天', 10)
-    expect(fn).toHaveBeenCalledWith({ keywords: '晴天', type: 1, limit: 10, cookie: 'c' })
+    const adapter = new NeteaseAdapter(makeApi({ cloudsearch: fn }))
+    await adapter.searchSongs('c', '晴天', 10)
+    expect(fn).toHaveBeenCalledWith({
+      keywords: '晴天',
+      type: 1,
+      limit: 10,
+      offset: 0,
+      cookie: 'c',
+    })
+    await adapter.searchSongs('c', '晴天', 10, 3)
+    expect(fn).toHaveBeenLastCalledWith({
+      keywords: '晴天',
+      type: 1,
+      limit: 10,
+      offset: 20,
+      cookie: 'c',
+    })
   })
 
   it('搜索映射：提取专辑与封面 URL', async () => {

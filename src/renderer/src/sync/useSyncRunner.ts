@@ -10,6 +10,7 @@ import type {
 import { createRendererLogger } from '../logging/rendererLogger'
 import { useI18n } from '../i18n'
 import { notify } from '../components/toast'
+import { notifyError } from '../utils/notifyError'
 import { syncFailedText } from './helpers'
 
 const log = createRendererLogger('renderer.sync-runner')
@@ -216,7 +217,8 @@ export function useSyncRunner() {
         const msg = e instanceof Error ? e.message : t('sync.failedGeneric')
         log.error('runner.failed', '同步失败', e, { targetPlatform })
         setError(msg)
-        notify('error', t('toast.syncFailedTitle'), msg)
+        // 错误提示走右上角 toast，代码性报错过滤为通用文案
+        notifyError(e, t('toast.syncFailedTitle'))
         onTaskUpdate({
           ...baseTask,
           status: 'failed',

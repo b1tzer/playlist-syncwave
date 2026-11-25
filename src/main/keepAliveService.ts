@@ -2,6 +2,7 @@ import { BrowserWindow } from 'electron'
 import { getPlatform, listPlatforms, resolveAdapter } from './platformRegistry'
 import { logCenter } from './logging/logCenter'
 import { notifyAccountExpired } from './notifications'
+import { clearCachedLoginStatus } from './loginStatusCache'
 
 const log = logCenter.logger('keepalive')
 
@@ -37,6 +38,7 @@ export async function keepAlivePlatform(platform: string): Promise<void> {
   if (!result.alive) {
     log.warn('keepalive.expired', '凭证已失效，清除本地登录态', { platform })
     services.logout()
+    clearCachedLoginStatus(platform)
     broadcastAccountsChanged(platform)
     notifyAccountExpired(platform)
   }

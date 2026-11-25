@@ -1303,7 +1303,7 @@
 
 | 函数 | 上游接口 | 说明 |
 |---|---|---|
-| `search` | 歌曲搜索 | 入参 `keyword`/`page`/`pagesize`；响应 `data.lists[0]` 为条目数组。条目字段：`FileHash`/`filehash`/`hash`（标题可能带 `<em>` 高亮标签需剥离）、`SongName`/`songname`/`name`、`SingerName`（歌手）、`AlbumID`、`MixSongID`。搜索错误分类：`error_code=1002` 为高频风控限流（rate-limited），HTTP 5xx/网络错误可重试 |
+| `search` | 歌曲搜索（v2/search/song） | 入参 `keyword`/`page`/`pagesize`（适配器分页 page 从 1 起）；响应 `data.lists` **为歌曲对象数组（flat）**——📐 依据 kugoumusicapi `module/search.js`（v2/search/song 端点，x-router complexsearch.kugou.com）+ 公开实测响应（直接遍历 lists 元素取 `SongName`/`FileHash`）；兼容嵌套数组协议版本（lists[0] 为数组时取其内容）。条目字段：`FileHash`/`filehash`/`hash`（标题可能带 `<em>` 高亮标签需剥离）、`SongName`/`songname`/`name`、`SingerName`（歌手）、`AlbumID`、`MixSongID`。搜索错误分类：`error_code=1002` 为高频风控限流（rate-limited），HTTP 5xx/网络错误可重试 |
 
 ### 3.5 歌单（写，均需登录）
 

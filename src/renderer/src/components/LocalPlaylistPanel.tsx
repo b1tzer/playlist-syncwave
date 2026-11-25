@@ -10,8 +10,10 @@ import { useI18n } from '../i18n'
 import { useSyncRunner } from '../sync/useSyncRunner'
 import { songDupKey } from '../sync/helpers'
 import SongList from './SongList'
+import SongSearchResults from './SongSearchResults'
 import PlatformLogo from './PlatformLogo'
 import { notify } from './toast'
+import { notifyError } from '../utils/notifyError'
 import { operationAllowed } from '../utils/platformCapabilities'
 
 const log = createRendererLogger('renderer.local-playlist')
@@ -63,9 +65,21 @@ export default function LocalPlaylistPanel({
   // 添加歌曲：搜索已登录平台
   const [searchPlatform, setSearchPlatform] = useState('')
   const [searchInput, setSearchInput] = useState('')
+  /** 搜索面板展开（聚焦输入框展开，点击面板外收起） */
+  const [searchOpen, setSearchOpen] = useState(false)
   const [searching, setSearching] = useState(false)
   const [searchResults, setSearchResults] = useState<PlatformSong[] | null>(null)
+  /** 搜索结果是否还有下一页（返回条数达到单页上限即视为有） */
+  const [searchHasMore, setSearchHasMore] = useState(false)
+  const [searchLoadingMore, setSearchLoadingMore] = useState(false)
   const [addingIds, setAddingIds] = useState<Set<string>>(new Set())
+  /** 本次会话中已添加成功的搜索歌曲 */
+  const [addedSongIds, setAddedSongIds] = useState<Set<string>>(new Set())
+  const searchPageRef = useRef(1)
+  const searchLoadingMoreRef = useRef(false)
+
+  /** 平台搜索单页大小：QQ 音乐单页上限 20，统一按 20 分页（各平台均支持） */
+  const SEARCH_PAGE_SIZE = 20
 
   const activePlaylist = playlists.find((p) => p.id === activeId) ?? null
   const loggedPlatforms = platforms.filter((p) => accounts[p.id] !== null)
@@ -106,6 +120,12 @@ export default function LocalPlaylistPanel({
   const handleSelect = (id: string) => {
     setActiveId(id)
     setRenamingId(null)
+    // 切换歌单重置搜索会话
+    setSearchResults(null)
+    setSearchHasMore(false)
+    setSearchOpen(false)
+    setAddedSongIds(new Set())
+    searchPageRef.current = 1
     void loadSongs(id)
   }
 
@@ -128,7 +148,7 @@ export default function LocalPlaylistPanel({
       notify('success', t('localPlaylist.created'), t('localPlaylist.createdDetail', { name }))
     } catch (e) {
       log.error('local-playlist.create-failed', '创建本地歌单失败', e)
-      notify('error', t('localPlaylist.createFailed'), e instanceof Error ? e.message : '')
+      notifyError(e, t('localPlaylist.createFailed'))
     }
   }
 
@@ -210,24 +230,50 @@ export default function LocalPlaylistPanel({
     }
   }
 
-  const handleSearch = async () => {
+  const handleSearch = async (page = 1) => {
     const keyword = searchInput.trim()
     if (!keyword || !searchPlatform) return
-    setSearching(true)
-    setSearchResults(null)
+    const isFirstPage = page === 1
+    if (isFirstPage) {
+      setSearching(true)
+      setSearchResults(null)
+    } else {
+      setSearchLoadingMore(true)
+    }
     try {
-      const results = await window.electronAPI.platforms.searchSongs(searchPlatform, keyword, 30)
-      setSearchResults(results)
+      const results = await window.electronAPI.platforms.searchSongs(
+        searchPlatform,
+        keyword,
+        SEARCH_PAGE_SIZE,
+        page,
+      )
+      searchPageRef.current = page
+      setSearchResults((prev) => (isFirstPage ? results : [...(prev ?? []), ...results]))
+      // 返回达到单页上限即视为可能还有下一页（滚动到底继续加载，多余一次空请求无害）
+      setSearchHasMore(results.length === SEARCH_PAGE_SIZE)
+      setSearchOpen(true)
     } catch (e) {
       log.error('local-playlist.search-failed', '搜索平台歌曲失败', e, { platform: searchPlatform })
       notify('error', t('localPlaylist.searchFailed'))
     } finally {
       setSearching(false)
+      setSearchLoadingMore(false)
+    }
+  }
+
+  /** 滚动接近底部提前加载下一页搜索结果 */
+  const loadMoreSearch = async () => {
+    if (searchLoadingMoreRef.current || !searchHasMore) return
+    searchLoadingMoreRef.current = true
+    try {
+      await handleSearch(searchPageRef.current + 1)
+    } finally {
+      searchLoadingMoreRef.current = false
     }
   }
 
   const handleAddSong = async (song: PlatformSong) => {
-    if (!activeId || addingIds.has(song.id)) return
+    if (!activeId || addingIds.has(song.id) || addedSongIds.has(song.id)) return
     setAddingIds((prev) => new Set(prev).add(song.id))
     try {
       await window.electronAPI.localPlaylists.addSongs(activeId, [
@@ -238,7 +284,8 @@ export default function LocalPlaylistPanel({
           durationMs: song.durationMs,
         },
       ])
-      setSearchResults((prev) => prev?.filter((s) => s.id !== song.id) ?? null)
+      // 添加成功：结果行保留并标记「已添加」，不再从结果里移除
+      setAddedSongIds((prev) => new Set(prev).add(song.id))
       await loadSongs(activeId)
       await fetchPlaylists()
       log.info('local-playlist.song-added', '已添加歌曲到本地歌单', { id: activeId, songId: song.id })
@@ -566,74 +613,76 @@ export default function LocalPlaylistPanel({
             </div>
 
             {/* 添加歌曲搜索区 */}
-            <div className="flex shrink-0 items-center gap-2 border-b border-outline-variant px-3 py-2">
-              <div className="flex items-center gap-1">
-                {loggedPlatforms.map((p) => (
-                  <button
-                    key={p.id}
-                    onClick={() => {
-                      setSearchPlatform(p.id)
-                      setSearchResults(null)
-                      setSearchInput('')
-                    }}
-                    title={p.name}
-                    className={`rounded-md p-1 transition-colors ${
-                      searchPlatform === p.id ? 'bg-primary/15 text-primary' : 'text-outline hover:text-on-surface'
-                    }`}
-                  >
-                    <PlatformLogo platform={p.id} name={p.name} icon={p.icon} />
-                  </button>
-                ))}
-              </div>
-              <input
-                value={searchInput}
-                onChange={(e) => setSearchInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') void handleSearch()
-                }}
-                placeholder={t('localPlaylist.searchPlaceholder')}
-                disabled={!searchPlatform}
-                className="min-w-0 flex-1 rounded-md border border-outline-variant bg-surface px-2 py-1 font-body-md text-body-md text-on-surface outline-none placeholder:text-outline focus:border-primary disabled:opacity-50"
-              />
-              <button
-                onClick={() => void handleSearch()}
-                disabled={!searchPlatform || !searchInput.trim() || searching}
-                className="rounded-md border border-outline-variant px-2.5 py-1 font-label-md text-label-md text-on-surface transition-colors hover:bg-surface-container-high disabled:opacity-40"
-              >
-                {searching ? t('common.loading') : t('localPlaylist.search')}
-              </button>
-            </div>
-
-            {/* 搜索结果候选区 */}
-            {searchResults !== null && (
-              <div className="max-h-52 shrink-0 overflow-y-auto border-b border-outline-variant p-1.5">
-                {searchResults.length === 0 ? (
-                  <p className="px-2 py-2 font-label-md text-label-md text-outline">
-                    {t('localPlaylist.noResults')}
-                  </p>
-                ) : (
-                  searchResults.map((s) => (
-                    <div
-                      key={s.id}
-                      className="flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-surface-container-highest"
+            <div
+              className="flex shrink-0 flex-col border-b border-outline-variant px-3 py-2"
+              // 点击搜索面板外区域收起（relatedTarget 为焦点去向，仍在容器内则不收起）
+              onBlur={(e) => {
+                if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+                  setSearchOpen(false)
+                }
+              }}
+            >
+              <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1">
+                  {loggedPlatforms.map((p) => (
+                    <button
+                      key={p.id}
+                      onClick={() => {
+                        setSearchPlatform(p.id)
+                        setSearchResults(null)
+                        setSearchInput('')
+                        setSearchHasMore(false)
+                        setAddedSongIds(new Set())
+                        searchPageRef.current = 1
+                      }}
+                      title={p.name}
+                      className={`rounded-md p-1 transition-colors ${
+                        searchPlatform === p.id
+                          ? 'bg-primary/15 text-primary'
+                          : 'text-outline hover:text-on-surface'
+                      }`}
                     >
-                      <span className="min-w-0 flex-1 truncate font-label-md text-label-md text-on-surface">
-                        {s.title}
-                        <span className="text-on-surface-variant">{s.artist ? ` - ${s.artist}` : ''}</span>
-                      </span>
-                      <button
-                        onClick={() => void handleAddSong(s)}
-                        disabled={addingIds.has(s.id)}
-                        className="flex items-center gap-0.5 rounded-md bg-primary/15 px-2 py-1 font-label-sm text-label-sm text-primary transition-colors hover:bg-primary/25 disabled:opacity-50"
-                      >
-                        <span className="material-symbols-outlined text-sm">add</span>
-                        {t('localPlaylist.add')}
-                      </button>
-                    </div>
-                  ))
-                )}
+                      <PlatformLogo platform={p.id} name={p.name} icon={p.icon} />
+                    </button>
+                  ))}
+                </div>
+                <input
+                  value={searchInput}
+                  onChange={(e) => setSearchInput(e.target.value)}
+                  onFocus={() => setSearchOpen(true)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') void handleSearch()
+                  }}
+                  placeholder={t('localPlaylist.searchPlaceholder')}
+                  disabled={!searchPlatform}
+                  className="min-w-0 flex-1 rounded-md border border-outline-variant bg-surface px-2 py-1 font-body-md text-body-md text-on-surface outline-none placeholder:text-outline focus:border-primary disabled:opacity-50"
+                />
+                <button
+                  onClick={() => void handleSearch()}
+                  disabled={!searchPlatform || !searchInput.trim() || searching}
+                  className="rounded-md border border-outline-variant px-2.5 py-1 font-label-md text-label-md text-on-surface transition-colors hover:bg-surface-container-high disabled:opacity-40"
+                >
+                  {searching ? t('common.loading') : t('localPlaylist.search')}
+                </button>
               </div>
-            )}
+
+              {/* 搜索结果候选区：与歌单歌曲清单复用 SongList（行号/分页/三态添加按钮） */}
+              {searchOpen && searchResults !== null && (
+                <div className="mt-2">
+                  <SongSearchResults
+                    songs={searchResults}
+                    hasMore={searchHasMore}
+                    loadingMore={searchLoadingMore}
+                    addingIds={addingIds}
+                    addedIds={addedSongIds}
+                    onAdd={(s) => void handleAddSong(s)}
+                    onLoadMore={() => void loadMoreSearch()}
+                    emptyText={t('localPlaylist.noResults')}
+                    maxHeightClass="max-h-52"
+                  />
+                </div>
+              )}
+            </div>
 
             {/* 歌曲列表 */}
             <div className="min-h-0 flex-1 overflow-y-auto p-2">

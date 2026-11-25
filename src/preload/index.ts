@@ -201,8 +201,14 @@ const api = {
       ipcRenderer.on('playlist:songs-refreshed', listener)
       return () => ipcRenderer.removeListener('playlist:songs-refreshed', listener)
     },
-    searchSongs: (platform: string, keyword: string, limit?: number): Promise<PlatformSong[]> =>
-      ipcRenderer.invoke('platform:search-songs', platform, keyword, limit),
+    /** 平台歌曲搜索（limit 单页条数；page 从 1 起，滚动分页加载下一页） */
+    searchSongs: (
+      platform: string,
+      keyword: string,
+      limit?: number,
+      page?: number,
+    ): Promise<PlatformSong[]> =>
+      ipcRenderer.invoke('platform:search-songs', platform, keyword, limit, page),
     renamePlaylist: (platform: string, playlistId: string, name: string): Promise<void> =>
       ipcRenderer.invoke('platform:playlist-rename', platform, playlistId, name),
     deletePlaylist: (platform: string, playlistId: string): Promise<void> =>

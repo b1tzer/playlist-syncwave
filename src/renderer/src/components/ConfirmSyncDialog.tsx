@@ -46,7 +46,6 @@ interface ConfirmSyncDialogProps {
   /** 稍后处理：仅收起弹窗，会话保留 */
   onDismiss: () => void;
   confirming: boolean;
-  confirmError: string;
 }
 
 /** 文本与目标一致处（忽略大小写的子串）高亮 */
@@ -225,7 +224,6 @@ export default function ConfirmSyncDialog({
   onCancel,
   onDismiss,
   confirming,
-  confirmError,
 }: ConfirmSyncDialogProps) {
   const { t } = useI18n();
   const [current, setCurrent] = useState(0);
@@ -422,12 +420,6 @@ export default function ConfirmSyncDialog({
                 : t("textCreator.confirmAndCreate")}
             </button>
           </div>
-
-          {confirmError && (
-            <p className="border-t border-outline-variant px-5 py-2 font-label-sm text-label-sm text-error">
-              {confirmError}
-            </p>
-          )}
         </>
       </div>
     </div>

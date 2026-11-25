@@ -5,6 +5,7 @@ import { useI18n } from '../i18n'
 import type { TranslationKey } from '../i18n/translations'
 import PlatformLogo from './PlatformLogo'
 import { notify } from './toast'
+import { notifyError } from '../utils/notifyError'
 
 const log = createRendererLogger('renderer.login')
 
@@ -118,7 +119,8 @@ export default function LoginSection({ platforms, accounts, onAccountChange }: L
       }, 2000)
     } catch (e) {
       log.error('login.qr.create-failed', '获取二维码失败', e, { platform })
-      setError(e instanceof Error ? e.message : t('login.failed'))
+      // 异常提示走右上角 toast，代码性报错过滤为通用文案
+      notifyError(e, t('login.failed'))
       setQrFor(null)
     } finally {
       setLoading(false)
@@ -142,8 +144,7 @@ export default function LoginSection({ platforms, accounts, onAccountChange }: L
       }
     } catch (e) {
       log.error('login.web.failed', '网页登录失败', e, { platform })
-      const msg = e instanceof Error ? e.message : t('login.failed')
-      notify('error', t('login.failed'), msg)
+      notifyError(e, t('login.failed'))
     } finally {
       setLoading(false)
     }

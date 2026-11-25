@@ -659,17 +659,24 @@ export class KugouAdapter extends BasePlatformAdapter {
 
   // --- 搜索 ---
 
-  protected async doSearch(credential: string, keyword: string, limit: number): Promise<PlatformSong[]> {
+  protected async doSearch(
+    credential: string,
+    keyword: string,
+    limit: number,
+    page = 1,
+  ): Promise<PlatformSong[]> {
     try {
       const res = await this.call(this.api.search!, {
         keyword,
-        page: 1,
+        page,
         pagesize: limit,
         cookie: this.buildCookie(credential),
       })
       const data = asObject(res.data ?? res)
-      const lists = asArray(data.lists)
-      const list = lists.length > 0 ? asArray(lists[0]) : []
+      // v2/search/song 实测：data.lists 是歌曲对象数组（flat）；
+      // 部分协议版本为嵌套数组（lists[0] 是歌曲数组），两者兼容
+      const raw = asArray(data.lists)
+      const list = raw.length > 0 && Array.isArray(raw[0]) ? asArray(raw[0]) : raw
       return list.map((s) => this.mapSearchItem(asObject(s)))
     } catch (e) {
       // 平台错误分类：网络/服务错误可重试，error_code=1002 为高频风控限流

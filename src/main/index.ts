@@ -41,6 +41,11 @@ import {
 } from './syncPipeline'
 import { startKeepAliveScheduler, stopKeepAliveScheduler } from './keepAliveService'
 import {
+  clearCachedLoginStatus,
+  getCachedLoginStatus,
+  setCachedLoginStatus,
+} from './loginStatusCache'
+import {
   listLocalPlaylists,
   createLocalPlaylist,
   renameLocalPlaylist,
@@ -421,6 +426,7 @@ ipcMain.handle('platform:begin-web-login', (_event, platform: string) =>
         throw new Error('登录未生效，请重试')
       }
       services.saveCredential(credential)
+      setCachedLoginStatus(platform, account)
       ipcLog.info('platform.begin-web-login', '网页登录成功，凭证已保存', { platform })
       return account
     },
@@ -437,6 +443,8 @@ ipcMain.handle('platform:check-qr', (_event, platform: string, key: string) =>
       const result = await adapter.checkQrLogin(key)
       if (result.status === 'success' && result.cookie) {
         services.saveCredential(result.cookie)
+        // 凭证已更换：清缓存，渲染层下次 login-status 查询用新凭证并重新缓存
+        clearCachedLoginStatus(platform)
         ipcLog.info('platform.check-qr', '扫码登录成功，凭证已保存', { platform })
       }
       return result
@@ -454,8 +462,13 @@ ipcMain.handle('platform:login-status', (_event, platform: string) =>
       const services = getPlatform(platform)
       const credential = services.getCredential()
       if (!credential) return null
+      // 渲染层 reload（Ctrl+R）后主进程缓存直接命中，避免每平台全量网络查询拖慢界面
+      const cached = getCachedLoginStatus(platform)
+      if (cached !== undefined) return cached
       const adapter = await resolveAdapter(platform)
-      return adapter.getLoginStatus(credential)
+      const account = await adapter.getLoginStatus(credential)
+      setCachedLoginStatus(platform, account)
+      return account
     },
     { platform },
   ),
@@ -465,6 +478,7 @@ ipcMain.handle('platform:logout', (_event, platform: string) =>
   ipcLog.time(
     'platform.logout',
     async () => {
+      clearCachedLoginStatus(platform)
       getPlatform(platform).logout()
     },
     { platform },
@@ -487,12 +501,16 @@ ipcMain.handle('platform:user-playlists', (_event, platform: string, force?: boo
       const { credential, adapter } = await withPlaylistCredential(platform)
       const result = await playlistCache.playlists(
         platform,
-        // 登录态校验并入实际拉取路径：缓存命中时不产生平台请求
-        async () => {
-          const account = await adapter.getLoginStatus(credential)
-          if (!account) throw new Error('登录已过期，请重新扫码')
-          return adapter.getUserPlaylists(credential, account.userId)
-        },
+        // 登录态校验并入实际拉取路径：缓存命中时不产生平台请求；平台挂起时超时转错
+        () =>
+          withTimeout(
+            (async () => {
+              const account = await adapter.getLoginStatus(credential)
+              if (!account) throw new Error('登录已过期，请重新扫码')
+              return adapter.getUserPlaylists(credential, account.userId)
+            })(),
+            PLAYLIST_FETCH_TIMEOUT_MS,
+          ),
         {
           force: force === true,
           onRefreshed: (event) =>
@@ -522,7 +540,11 @@ ipcMain.handle(
         const result = await playlistCache.songs(
           platform,
           playlistId,
-          () => adapter.getPlaylistSongs(credential, playlistId),
+          () =>
+            withTimeout(
+              adapter.getPlaylistSongs(credential, playlistId),
+              PLAYLIST_FETCH_TIMEOUT_MS,
+            ),
           {
             force: force === true,
             onRefreshed: (event) =>
@@ -550,6 +572,16 @@ function slicePage<T>(data: T[], offset: number, limit: number) {
   return { items: data.slice(from, from + size), total: data.length }
 }
 
+/** 歌单数据拉取超时：平台接口永久挂起时转为错误，渲染层 toast 提示而非一直 loading */
+const PLAYLIST_FETCH_TIMEOUT_MS = 30_000
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error('请求超时，请稍后重试')), ms)
+  })
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer))
+}
+
 ipcMain.handle(
   'platform:playlist-songs-page',
   (
@@ -568,7 +600,11 @@ ipcMain.handle(
         const result = await playlistCache.songs(
           platform,
           playlistId,
-          () => adapter.getPlaylistSongs(credential, playlistId),
+          () =>
+            withTimeout(
+              adapter.getPlaylistSongs(credential, playlistId),
+              PLAYLIST_FETCH_TIMEOUT_MS,
+            ),
           {
             force: force === true,
             silent: silent === true,
@@ -612,11 +648,15 @@ ipcMain.handle(
         const { credential, adapter } = await withPlaylistCredential(platform)
         const result = await playlistCache.playlists(
           platform,
-          async () => {
-            const account = await adapter.getLoginStatus(credential)
-            if (!account) throw new Error('登录已过期，请重新扫码')
-            return adapter.getUserPlaylists(credential, account.userId)
-          },
+          () =>
+            withTimeout(
+              (async () => {
+                const account = await adapter.getLoginStatus(credential)
+                if (!account) throw new Error('登录已过期，请重新扫码')
+                return adapter.getUserPlaylists(credential, account.userId)
+              })(),
+              PLAYLIST_FETCH_TIMEOUT_MS,
+            ),
           {
             force: force === true,
             silent: silent === true,
@@ -643,17 +683,20 @@ ipcMain.handle(
     ),
 )
 
-ipcMain.handle('platform:search-songs', (_event, platform: string, keyword: string, limit?: number) =>
-  ipcLog.time(
-    'platform.search-songs',
-    async () => {
-      const { credential, adapter } = await withPlaylistCredential(platform)
-      // 限速与风控由平台适配器/同步引擎负责；这里仅约束单次数量
-      const capped = Math.min(Math.max(1, Math.floor(limit ?? 30)), 50)
-      return adapter.searchSongs(credential, keyword, capped)
-    },
-    { platform, keyword },
-  ),
+ipcMain.handle(
+  'platform:search-songs',
+  (_event, platform: string, keyword: string, limit?: number, page?: number) =>
+    ipcLog.time(
+      'platform.search-songs',
+      async () => {
+        const { credential, adapter } = await withPlaylistCredential(platform)
+        // 限速与风控由平台适配器/同步引擎负责；这里仅约束单次数量与页码
+        const capped = Math.min(Math.max(1, Math.floor(limit ?? 30)), 50)
+        const pageNum = Math.max(1, Math.floor(Number(page) || 1))
+        return adapter.searchSongs(credential, keyword, capped, pageNum)
+      },
+      { platform, keyword, page },
+    ),
 )
 
 ipcMain.handle(

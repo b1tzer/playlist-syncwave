@@ -10,6 +10,7 @@ import type { PendingConfirmSession, SyncTaskRecord } from '@core/models/sync'
 import SettingsView from './components/SettingsView'
 import ConfirmSyncDialog from './components/ConfirmSyncDialog'
 import { ToastHost, notify } from './components/toast'
+import { notifyError } from './utils/notifyError'
 import { createRendererLogger } from './logging/rendererLogger'
 import { useI18n } from './i18n'
 import { failedDetailLines, songDupKey } from './sync/helpers'
@@ -35,55 +36,49 @@ export default function App() {
   /** 「稍后处理」仅收起弹窗，会话保留在 pendingConfirm，可再次打开 */
   const [confirmDismissed, setConfirmDismissed] = useState(false)
   const [confirming, setConfirming] = useState(false)
-  const [confirmError, setConfirmError] = useState('')
 
   useEffect(() => {
     // StrictMode 下 effect 会先挂载再卸载重挂载：cancelled 防止已卸载轮次的异步回调继续更新状态
     let cancelled = false
-    let retryTimer: ReturnType<typeof setTimeout> | null = null
+    const retryTimers: ReturnType<typeof setTimeout>[] = []
 
     window.electronAPI.platforms
       .list()
-      .then(async (list) => {
+      .then((list) => {
         if (cancelled) return
         log.debug('app.init', '初始化平台账号状态', { platforms: list.map((p) => p.id) })
         setPlatforms(list)
-        // 逐平台独立容错：任一平台登录态查询失败（网络超时、平台 500 等）只影响自身，
-        // 不得拖垮其他平台（Promise.all 会因单个失败整体 reject，导致界面全部显示未登录）。
-        const settled = await Promise.allSettled(
-          list.map(async (p) => [p.id, await window.electronAPI.platforms.loginStatus(p.id)] as const),
-        )
-        if (cancelled) return
-        const entries = settled.map((r, i) => {
-          const platformId = list[i].id
-          if (r.status === 'fulfilled') return [platformId, r.value[1]] as const
-          log.warn('app.init-platform-failed', '平台登录态查询失败，暂显示未连接', {
-            platform: platformId,
-            message: r.reason instanceof Error ? r.reason.message : String(r.reason),
-          })
-          return [platformId, null] as const
-        })
-        setAccounts(Object.fromEntries(entries))
-
-        // 查询失败多为网络抖动：3 秒后对失败平台重试一次，网络恢复后自动纠正显示
-        const retryIds = list
-          .map((p, i) => (settled[i].status === 'rejected' ? p.id : null))
-          .filter((id): id is string => id !== null)
-        if (retryIds.length > 0) {
-          retryTimer = setTimeout(() => {
-            for (const platformId of retryIds) {
-              window.electronAPI.platforms
-                .loginStatus(platformId)
-                .then((account) => {
-                  if (!cancelled) setAccounts((prev) => ({ ...prev, [platformId]: account }))
-                })
-                .catch(() => {
-                  log.debug('app.init-platform-retry-failed', '重试仍失败，保持未连接显示', {
-                    platform: platformId,
-                  })
-                })
-            }
-          }, 3000)
+        // 逐平台独立更新：每个平台查询完成立即点亮，慢平台（网络重抓 token 等）
+        // 不阻塞已就绪平台的显示（Ctrl+R 后主进程有登录态缓存，通常整体秒回）
+        for (const p of list) {
+          window.electronAPI.platforms
+            .loginStatus(p.id)
+            .then((account) => {
+              if (!cancelled) setAccounts((prev) => ({ ...prev, [p.id]: account }))
+            })
+            .catch((e) => {
+              if (cancelled) return
+              log.warn('app.init-platform-failed', '平台登录态查询失败，暂显示未连接', {
+                platform: p.id,
+                message: e instanceof Error ? e.message : String(e),
+              })
+              setAccounts((prev) => ({ ...prev, [p.id]: null }))
+              // 查询失败多为网络抖动：3 秒后重试一次，网络恢复后自动纠正显示
+              retryTimers.push(
+                setTimeout(() => {
+                  window.electronAPI.platforms
+                    .loginStatus(p.id)
+                    .then((account) => {
+                      if (!cancelled) setAccounts((prev) => ({ ...prev, [p.id]: account }))
+                    })
+                    .catch(() => {
+                      log.debug('app.init-platform-retry-failed', '重试仍失败，保持未连接显示', {
+                        platform: p.id,
+                      })
+                    })
+                }, 3000),
+              )
+            })
         }
       })
       .catch((e) => {
@@ -142,7 +137,7 @@ export default function App() {
 
     return () => {
       cancelled = true
-      if (retryTimer) clearTimeout(retryTimer)
+      for (const timer of retryTimers) clearTimeout(timer)
     }
   }, [])
 
@@ -276,7 +271,6 @@ export default function App() {
     setPendingConfirm(session)
     setConfirmSelections({})
     setConfirmSkips({})
-    setConfirmError('')
     setConfirmDismissed(false)
   }
 
@@ -284,7 +278,6 @@ export default function App() {
     setPendingConfirm(null)
     setConfirmSelections({})
     setConfirmSkips({})
-    setConfirmError('')
     setConfirmDismissed(false)
   }
 
@@ -315,7 +308,6 @@ export default function App() {
       selections: sel.length,
     })
     setConfirming(true)
-    setConfirmError('')
     try {
       const rep = await window.electronAPI.platforms.confirmSync(target, syncTaskId, sel)
       log.info('sync.confirm-done', '确认同步完成', {
@@ -391,10 +383,9 @@ export default function App() {
       // 写入完成后直接关闭确认弹窗，结果以上方通知呈现
       resetConfirmSession()
     } catch (e) {
-      const msg = e instanceof Error ? e.message : t('sync.failedGeneric')
       log.error('sync.confirm-failed', '确认同步失败', e, { targetPlatform: target })
-      setConfirmError(msg)
-      notify('error', t('toast.syncFailedTitle'), msg)
+      // 错误提示走右上角 toast，代码性报错过滤为通用文案
+      notifyError(e, t('toast.syncFailedTitle'))
     } finally {
       setConfirming(false)
     }
@@ -427,7 +418,7 @@ export default function App() {
       await window.electronAPI.platforms.stopSync(id)
     } catch (e) {
       log.error('sync.stop-task-failed', '停止任务失败', e, { taskId: id })
-      notify('error', t('toast.syncFailedTitle'), e instanceof Error ? e.message : t('sync.failedGeneric'))
+      notifyError(e, t('toast.syncFailedTitle'))
     }
   }
 
@@ -570,7 +561,6 @@ export default function App() {
           onCancel={() => void handleCancelPending()}
           onDismiss={handleDismissConfirm}
           confirming={confirming}
-          confirmError={confirmError}
         />
       )}
 

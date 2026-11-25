@@ -21,6 +21,7 @@ import { useI18n } from '../i18n'
 import { useSyncRunner } from '../sync/useSyncRunner'
 import { songDupKey } from '../sync/helpers'
 import SongList from './SongList'
+import SongSearchResults from './SongSearchResults'
 import PlatformLogo from './PlatformLogo'
 import LocalPlaylistPanel from './LocalPlaylistPanel'
 import ProgressBar from './ProgressBar'
@@ -28,7 +29,7 @@ import LoadMoreSentinel from './LoadMoreSentinel'
 import ContextMenu, { type ContextMenuEntry } from './ContextMenu'
 import Tooltip from './Tooltip'
 import { notify } from './toast'
-import { ipcErrorMessage } from '../utils/ipcError'
+import { notifyError } from '../utils/notifyError'
 import { operationAllowed, operationReason } from '../utils/platformCapabilities'
 
 const log = createRendererLogger('renderer.playlist')
@@ -37,6 +38,8 @@ const log = createRendererLogger('renderer.playlist')
 const PLAYLIST_PAGE_SIZE = 200
 /** 歌曲列表滚动分页大小 */
 const SONG_PAGE_SIZE = 200
+/** 平台搜索单页大小：QQ 音乐单页上限 20，统一按 20 分页（各平台均支持） */
+const SEARCH_PAGE_SIZE = 20
 
 interface PlaylistSectionProps {
   platforms: PlatformMeta[]
@@ -148,7 +151,6 @@ export default function PlaylistSection({
   // 滚动分页加载防重入（歌单/歌曲共用）
   const loadingMoreRef = useRef(false)
   const [refreshing, setRefreshing] = useState(false)
-  const [error, setError] = useState<string>('')
 
   // --- 缓存兜底 + 后台重新验证的行级更新 ---
   /** 后台重新验证后有变化的歌单行 id（行级高亮动画，结束后移除） */
@@ -241,10 +243,18 @@ export default function PlaylistSection({
   /** 移除按钮悬浮即时提示（锚点 = 按钮底边中心，Tooltip 挂 body 显示） */
   const [removeTip, setRemoveTip] = useState<{ x: number; y: number; text: string } | null>(null)
   const [searchInput, setSearchInput] = useState('')
+  /** 搜索面板展开（聚焦输入框展开，点击面板外收起） */
+  const [searchOpen, setSearchOpen] = useState(false)
   const [searching, setSearching] = useState(false)
-  const [searchError, setSearchError] = useState('')
   const [searchResults, setSearchResults] = useState<PlatformSong[] | null>(null)
+  /** 搜索结果是否还有下一页（返回条数达到单页上限即视为有） */
+  const [searchHasMore, setSearchHasMore] = useState(false)
+  const [searchLoadingMore, setSearchLoadingMore] = useState(false)
   const [addingIds, setAddingIds] = useState<Set<string>>(new Set())
+  /** 本次会话中已添加成功的搜索歌曲（连同歌单已有歌曲标记「已添加」） */
+  const [addedSongIds, setAddedSongIds] = useState<Set<string>>(new Set())
+  const searchPageRef = useRef(1)
+  const searchLoadingMoreRef = useRef(false)
 
   const loggedIn = active !== '' && active !== 'local' && accounts[active] !== null
   const keyword = searchQuery.trim().toLowerCase()
@@ -297,7 +307,6 @@ export default function PlaylistSection({
       if (!loggedIn) return
       // 有缓存兜底时静默返回（不显示整区 loading），后台重新验证经事件推送行级更新
       if (playlistsRef.current.length === 0) setLoading(true)
-      setError('')
       try {
         const res = await window.electronAPI.platforms.userPlaylistsPage(
           active,
@@ -325,7 +334,7 @@ export default function PlaylistSection({
         })
       } catch (e) {
         log.error('playlist.list.fetch-failed', '拉取歌单列表失败', e, { platform: active })
-        setError(e instanceof Error ? e.message : t('playlist.fetchFailed'))
+        notifyError(e, t('playlist.fetchFailed'))
       } finally {
         setLoading(false)
       }
@@ -456,12 +465,14 @@ export default function PlaylistSection({
       setActiveId(id)
       // 跨歌单切换才显示整区 loading；同歌单重开有缓存兜底，静默返回后经事件行级更新
       if (songsPlaylistIdRef.current !== id) setLoading(true)
-      setError('')
-      // 切换歌单时重置管理操作状态
+      // 切换歌单时重置管理操作状态与搜索会话
       setRenamingId(null)
       setSearchResults(null)
       setSearchInput('')
-      setSearchError('')
+      setSearchHasMore(false)
+      setSearchOpen(false)
+      setAddedSongIds(new Set())
+      searchPageRef.current = 1
       try {
         // 打开即静默强制重新验证一次（令牌桶约束，桶允许才请求接口）：先缓存兜底展示，
         // 后台验证完成后经事件推送行级更新
@@ -486,7 +497,7 @@ export default function PlaylistSection({
         setSongTotal(res.total)
       } catch (e) {
         log.error('playlist.songs.fetch-failed', '拉取歌曲失败', e, { platform: active, playlistId: id })
-        setError(e instanceof Error ? e.message : t('playlist.fetchSongsFailed'))
+        notifyError(e, t('playlist.fetchSongsFailed'))
       } finally {
         setLoading(false)
       }
@@ -753,10 +764,7 @@ export default function PlaylistSection({
       log.error('playlist.open-external-failed', '打开外部链接失败', e, {
         platform: active,
       })
-      notify(
-        'error',
-        t('playlist.openFailed', { reason: e instanceof Error ? e.message : 'unknown' }),
-      )
+      notifyError(e, t('playlist.openFailed'))
     }
   }
 
@@ -797,14 +805,13 @@ export default function PlaylistSection({
     renameSubmittingRef.current = true
     log.info('playlist.rename', '重命名歌单', { platform: active, playlistId: id })
     setManaging(true)
-    setError('')
     try {
       await window.electronAPI.platforms.renamePlaylist(active, id, name)
       setPlaylists((prev) => prev.map((p) => (p.id === id ? { ...p, name } : p)))
       return true
     } catch (e) {
       log.error('playlist.rename-failed', '重命名失败', e, { platform: active, playlistId: id })
-      setError(e instanceof Error ? e.message : t('playlist.fetchFailed'))
+      notifyError(e, t('playlist.renameFailed'))
       return false
     } finally {
       setManaging(false)
@@ -835,7 +842,6 @@ export default function PlaylistSection({
     if (!playlist || !canDelete) return
     log.info('playlist.delete', '删除歌单', { platform: active, playlistId: playlist.id })
     setManaging(true)
-    setError('')
     try {
       await window.electronAPI.platforms.deletePlaylist(active, playlist.id)
       setPlaylists((prev) => prev.filter((p) => p.id !== playlist.id))
@@ -846,6 +852,10 @@ export default function PlaylistSection({
         setSongTotal(0)
         setActiveId(null)
         setSearchResults(null)
+        setSearchHasMore(false)
+        setSearchOpen(false)
+        setAddedSongIds(new Set())
+        searchPageRef.current = 1
         songsPlaylistIdRef.current = null
       }
       setDeleteTarget(null)
@@ -854,7 +864,7 @@ export default function PlaylistSection({
         platform: active,
         playlistId: playlist.id,
       })
-      setError(e instanceof Error ? e.message : t('playlist.fetchFailed'))
+      notifyError(e, t('playlist.deleteFailed'))
     } finally {
       setManaging(false)
     }
@@ -868,19 +878,26 @@ export default function PlaylistSection({
       songId,
     })
     setRemovingIds((prev) => new Set(prev).add(songId))
-    setError('')
     try {
       await window.electronAPI.platforms.removeSongsFromPlaylist(active, activeId, [songId])
       setSongs((prev) => prev.filter((s) => s.id !== songId))
       setSongTotal((total) => Math.max(0, total - 1))
+      // 歌单列表卡片数字即时 -1（主进程已标记缓存失效，后台重新验证后以平台数据为准）
+      setPlaylists((prev) =>
+        prev.map((p) =>
+          p.id === activeId && p.songCount !== undefined
+            ? { ...p, songCount: Math.max(0, p.songCount - 1) }
+            : p,
+        ),
+      )
     } catch (e) {
       log.error('playlist.remove-song-failed', '移除歌曲失败', e, {
         platform: active,
         playlistId: activeId,
         songId,
       })
-      // 行内操作失败用全局 toast 提示（歌单头部错误条位置偏远，操作上下文割裂）
-      notify('error', t('playlist.removeSongFailed'), ipcErrorMessage(e))
+      // 行内操作失败用右上角 toast 提示，代码性报错不展示给用户
+      notifyError(e, t('playlist.removeSongFailed'))
     } finally {
       setRemovingIds((prev) => {
         const next = new Set(prev)
@@ -890,22 +907,45 @@ export default function PlaylistSection({
     }
   }
 
-  const handleSearch = async () => {
+  const handleSearch = async (page = 1) => {
     const kw = searchInput.trim()
     if (!kw) return
-    log.info('playlist.search-songs', '搜索歌曲', { platform: active, keyword: kw })
-    setSearching(true)
-    setSearchError('')
+    const isFirstPage = page === 1
+    if (isFirstPage) {
+      log.info('playlist.search-songs', '搜索歌曲', { platform: active, keyword: kw })
+      setSearching(true)
+    } else {
+      setSearchLoadingMore(true)
+    }
     try {
-      const results = await window.electronAPI.platforms.searchSongs(active, kw)
-      setSearchResults(results)
+      const results = await window.electronAPI.platforms.searchSongs(
+        active,
+        kw,
+        SEARCH_PAGE_SIZE,
+        page,
+      )
+      searchPageRef.current = page
+      setSearchResults((prev) => (isFirstPage ? results : [...(prev ?? []), ...results]))
+      // 返回达到单页上限即视为可能还有下一页（滚动到底继续加载，多余一次空请求无害）
+      setSearchHasMore(results.length === SEARCH_PAGE_SIZE)
+      setSearchOpen(true)
     } catch (e) {
       log.error('playlist.search-failed', '搜索歌曲失败', e, { platform: active, keyword: kw })
-      // 剥离 IPC 包装；平台给出的用户可读文案（中文）直接展示，其余用通用提示
-      const raw = ipcErrorMessage(e)
-      setSearchError(/[\u4e00-\u9fff]/.test(raw) ? raw : t('playlist.searchFailedHint'))
+      notifyError(e, t('playlist.searchFailedHint'))
     } finally {
       setSearching(false)
+      setSearchLoadingMore(false)
+    }
+  }
+
+  /** 滚动接近底部提前加载下一页搜索结果 */
+  const loadMoreSearch = async () => {
+    if (searchLoadingMoreRef.current || !searchHasMore) return
+    searchLoadingMoreRef.current = true
+    try {
+      await handleSearch(searchPageRef.current + 1)
+    } finally {
+      searchLoadingMoreRef.current = false
     }
   }
 
@@ -917,13 +957,22 @@ export default function PlaylistSection({
       songId: song.id,
     })
     setAddingIds((prev) => new Set(prev).add(song.id))
-    setError('')
     try {
       await window.electronAPI.platforms.addSongsToPlaylist(active, activeId, [song.id])
-      setSearchResults((prev) => prev?.filter((s) => s.id !== song.id) ?? null)
-      setSongs((prev) => (prev.some((s) => s.id === song.id) ? prev : [...prev, song]))
-      if (!songs.some((s) => s.id === song.id)) {
+      // 添加成功：结果行保留并标记「已添加」，不再从结果里移除
+      setAddedSongIds((prev) => new Set(prev).add(song.id))
+      const isNew = !songs.some((s) => s.id === song.id)
+      setSongs((prev) => (isNew ? [...prev, song] : prev))
+      if (isNew) {
         setSongTotal((total) => total + 1)
+        // 歌单列表卡片数字即时 +1（主进程已标记缓存失效，后台重新验证后以平台数据为准）
+        setPlaylists((prev) =>
+          prev.map((p) =>
+            p.id === activeId && p.songCount !== undefined
+              ? { ...p, songCount: p.songCount + 1 }
+              : p,
+          ),
+        )
       }
     } catch (e) {
       log.error('playlist.add-song-failed', '添加歌曲失败', e, {
@@ -931,7 +980,7 @@ export default function PlaylistSection({
         playlistId: activeId,
         songId: song.id,
       })
-      setError(e instanceof Error ? e.message : t('playlist.fetchFailed'))
+      notifyError(e, t('playlist.addSongFailed'))
     } finally {
       setAddingIds((prev) => {
         const next = new Set(prev)
@@ -969,7 +1018,6 @@ export default function PlaylistSection({
       playlistIds: selected.map((p) => p.id),
     })
     setGathering(true)
-    setError('')
     try {
       // 拉取所选歌单歌曲并去重
       const seen = new Set<string>()
@@ -1253,16 +1301,21 @@ export default function PlaylistSection({
           </div>
 
           <div className="flex min-h-0 min-w-0 flex-1 flex-col rounded-lg border border-outline-variant bg-surface-container-low">
-            {error && (
-              <p className="shrink-0 px-4 py-2 font-label-sm text-label-sm text-error">{error}</p>
-            )}
             {loading && (
               <p className="shrink-0 px-4 py-2 font-label-md text-label-md text-outline">
                 {t('common.loading')}
               </p>
             )}
             {!loading && activeId && canAddSongs && (
-              <div className="shrink-0 border-b border-outline-variant px-4 py-2">
+              <div
+                className="shrink-0 border-b border-outline-variant px-4 py-2"
+                // 点击搜索面板外区域收起（relatedTarget 为焦点去向，仍在容器内则不收起）
+                onBlur={(e) => {
+                  if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+                    setSearchOpen(false)
+                  }
+                }}
+              >
                 <div className="flex items-center gap-2">
                   <span className="flex items-center gap-1 font-label-sm text-label-sm text-on-surface-variant">
                     <span className="material-symbols-outlined text-sm text-primary">
@@ -1273,6 +1326,7 @@ export default function PlaylistSection({
                   <input
                     value={searchInput}
                     onChange={(e) => setSearchInput(e.target.value)}
+                    onFocus={() => setSearchOpen(true)}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') void handleSearch()
                     }}
@@ -1293,38 +1347,20 @@ export default function PlaylistSection({
                     {t('playlist.search')}
                   </button>
                 </div>
-                {searchError && (
-                  <p className="mt-1.5 flex items-center gap-1 font-label-sm text-label-sm text-error">
-                    <span className="material-symbols-outlined text-sm">error_outline</span>
-                    {searchError}
-                  </p>
-                )}
-                {searchResults && (
+                {searchOpen && searchResults && (
                   <div className="mt-2">
-                    {searchResults.length === 0 ? (
-                      <p className="rounded-md border border-outline-variant px-3 py-2 font-label-sm text-label-sm text-outline">
-                        {t('playlist.noSearchResult')}
-                      </p>
-                    ) : (
-                      <SongList
-                        songs={searchResults}
-                        showIndex={false}
-                        maxHeightClass="max-h-64"
-                        className="rounded-md border border-outline-variant"
-                        renderAction={(s) => (
-                          <button
-                            onClick={() => void handleAddSong(s)}
-                            disabled={addingIds.has(s.id)}
-                            className="flex shrink-0 items-center gap-1 rounded-md border border-outline-variant px-2 py-0.5 font-label-sm text-label-sm text-primary transition-colors hover:bg-surface-container-high disabled:opacity-50"
-                          >
-                            <span className="material-symbols-outlined text-sm">
-                              {addingIds.has(s.id) ? 'progress_activity' : 'add'}
-                            </span>
-                            {t('playlist.added')}
-                          </button>
-                        )}
-                      />
-                    )}
+                    <SongSearchResults
+                      songs={searchResults}
+                      hasMore={searchHasMore}
+                      loadingMore={searchLoadingMore}
+                      addingIds={addingIds}
+                      addedIds={
+                        new Set([...addedSongIds, ...songs.map((s) => s.id)])
+                      }
+                      onAdd={(s) => void handleAddSong(s)}
+                      onLoadMore={() => void loadMoreSearch()}
+                      emptyText={t('playlist.noSearchResult')}
+                    />
                   </div>
                 )}
               </div>

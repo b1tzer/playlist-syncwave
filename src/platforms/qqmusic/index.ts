@@ -206,9 +206,14 @@ export class QqMusicAdapter extends BasePlatformAdapter {
     }
   }
 
-  protected async doSearch(token: string, keyword: string, limit: number): Promise<PlatformSong[]> {
+  protected async doSearch(
+    token: string,
+    keyword: string,
+    limit: number,
+    page = 1,
+  ): Promise<PlatformSong[]> {
     try {
-      return await this.searchRaw(token, keyword, limit)
+      return await this.searchRaw(token, keyword, limit, page)
     } catch (e) {
       // 平台错误分类：405 限流、5xx/网络错误可重试（判定逻辑归属平台适配器）
       const message = e instanceof Error ? e.message : '搜索请求失败'
@@ -221,10 +226,15 @@ export class QqMusicAdapter extends BasePlatformAdapter {
     }
   }
 
-  private async searchRaw(token: string, keyword: string, limit: number): Promise<PlatformSong[]> {
+  private async searchRaw(
+    token: string,
+    keyword: string,
+    limit: number,
+    page: number,
+  ): Promise<PlatformSong[]> {
     const res = await this.call(
       'GET',
-      `/search?keyword=${encodeURIComponent(keyword)}&type=song&limit=${limit}`,
+      `/search?keyword=${encodeURIComponent(keyword)}&type=song&limit=${limit}&page=${page}`,
       token,
     )
     const items = asArray(res.items)
