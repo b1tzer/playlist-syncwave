@@ -42,7 +42,12 @@ interface BuildPlaylistMenuOptions<T extends PlaylistMenuTarget> {
   onSync?: (targetId: string, selection: Set<string>) => void
   onExport?: (playlist: T, format: 'm3u' | 'csv') => void
   onDelete?: (playlist: T) => void
-  /** 平台专属项（打开链接 / 保存到本地），插在同步与导出之间 */
+  /**
+   * 「同步到本地」项：排在所有平台同步目标之前（同步区的第一位），
+   * 单选与多选均显示（与 extraItems 不同，不受 single 门禁）。
+   */
+  localSync?: ContextMenuEntry | null
+  /** 平台专属项（打开链接等），仅单选，插在同步与导出之间 */
   extraItems?: ContextMenuEntry[]
 }
 
@@ -64,6 +69,7 @@ export function buildPlaylistMenuEntries<T extends PlaylistMenuTarget>({
   onSync,
   onExport,
   onDelete,
+  localSync = null,
   extraItems = [],
 }: BuildPlaylistMenuOptions<T>): ContextMenuEntry[] {
   const entries: ContextMenuEntry[] = []
@@ -94,7 +100,11 @@ export function buildPlaylistMenuEntries<T extends PlaylistMenuTarget>({
       onSelect: () => onRename?.(playlist),
     })
   }
-  if (entries.length > 0 && syncTargets.length > 0) pushDivider()
+  // 同步区：「同步到本地」在所有平台目标之前（第一位），随后是各平台
+  if (entries.length > 0 && (syncTargets.length > 0 || localSync)) pushDivider()
+  if (localSync) {
+    entries.push(localSync)
+  }
   for (const target of syncTargets) {
     entries.push({
       type: 'item',

@@ -15,6 +15,8 @@ import { createRendererLogger } from './logging/rendererLogger'
 import { useI18n } from './i18n'
 import { failedDetailLines, songDupKey } from './sync/helpers'
 import { useSyncRunner } from './sync/useSyncRunner'
+import { deriveTaskCounts } from '@core/sync/taskStats'
+import TaskCenter from './components/TaskCenter'
 
 const log = createRendererLogger('renderer.app')
 
@@ -345,7 +347,8 @@ export default function App() {
         return
       }
 
-      const ok = rep.playlistId !== ''
+      // 建单成功但一首未写入（空歌单）视为失败：结果与「无内容」一致，失败原因随任务展示
+      const ok = rep.playlistId !== '' && rep.added > 0
       if (ok) {
         // 右上角通知：给用户明确的执行结果
         if (rep.failed.length > 0) {
@@ -365,6 +368,8 @@ export default function App() {
             t('toast.confirmDoneDetail', { added: rep.added, name: rep.playlistName }),
           )
         }
+      } else if (rep.playlistId !== '') {
+        notify('error', t('toast.syncFailedTitle'), t('toast.syncEmptyDetail'))
       } else {
         // 全部未匹配/未选择：未创建歌单，同样以右上角通知呈现
         notify(
@@ -374,13 +379,18 @@ export default function App() {
         )
       }
       const { task } = pendingConfirm
+      // 终态计数以最终明细为权威口径：行摘要与展开明细永远一致
+      const counts = deriveTaskCounts(rep.items, {
+        added: rep.added,
+        failed: rep.failed.length,
+      })
       handleTaskUpdate({
         ...task,
         name: rep.playlistName,
         status: ok ? 'done' : 'failed',
         total: rep.total,
-        added: rep.added,
-        failed: rep.failed.length,
+        added: counts.added,
+        failed: counts.failed,
         progress: 1,
         failedDetail: failedDetailLines(rep.failed),
         detail: rep.items,
@@ -481,6 +491,8 @@ export default function App() {
               </button>
             )}
           </div>
+          {/* 右上角任务中心：运行中任务显示名称与进度，结束后显示成功/失败与失败原因 */}
+          <TaskCenter tasks={tasks} platforms={platforms} />
         </header>
 
         <main className="flex-1 overflow-y-auto">

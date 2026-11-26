@@ -5,6 +5,8 @@ import type { SyncItemResult, SyncTaskRecord, SyncTaskStatus } from '@core/model
 import { useI18n } from '../i18n'
 import type { TranslationKey, TranslateParams } from '../i18n/translations'
 import { syncItemTitle } from '../sync/helpers'
+import { syncSourceLabel, isLocalSource } from '../sync/sourceLabel'
+import { deriveTaskCounts, firstFailureReason, taskSummaryKind } from '@core/sync/taskStats'
 import SongList from './SongList'
 import PlatformLogo from './PlatformLogo'
 import ProgressBar from './ProgressBar'
@@ -182,7 +184,16 @@ function TaskDetailSection({
           </p>
         )
       ) : (
-        <div className="max-h-96 space-y-3 overflow-y-auto">
+        <div>
+          {(task.status === 'failed' || task.status === 'interrupted') &&
+            task.failedDetail.length > 0 && (
+              <ul className="mb-3 space-y-1 font-label-sm text-label-sm text-error">
+                {task.failedDetail.map((f, i) => (
+                  <li key={i}>· {f}</li>
+                ))}
+              </ul>
+            )}
+          <div className="max-h-96 space-y-3 overflow-y-auto">
           {matched.length > 0 && (
             <section>
               <p className="flex items-center gap-1.5 font-label-sm text-label-sm font-medium text-primary">
@@ -260,6 +271,7 @@ function TaskDetailSection({
               </div>
             </div>
           )}
+          </div>
         </div>
       )}
     </div>
@@ -472,6 +484,8 @@ export default function SyncHistory({
           const intervenable = intervenableIds.includes(task.id)
           const statusMeta = STATUS_META[task.status]
           const target = platforms.find((p) => p.id === task.targetPlatform)
+          // 行摘要计数以逐首明细为权威口径（空明细回退标量），与展开详情保持一致
+          const counts = deriveTaskCounts(task.detail, { added: task.added, failed: task.failed })
           return (
             <div
               key={task.id}
@@ -494,12 +508,18 @@ export default function SyncHistory({
                   <p className="truncate font-body-md text-body-md font-medium">{task.name}</p>
                   <span className="flex shrink-0 items-center gap-2 font-label-sm text-label-sm text-on-surface-variant">
                     <span className="flex items-center gap-1">
-                      <span className="material-symbols-outlined text-sm">description</span>
-                      {task.source === 'text-import'
-                        ? t('syncHistory.sourceTextImport')
-                        : task.source === 'playlist-import'
-                          ? t('syncHistory.sourcePlaylistImport')
-                          : task.source}
+                      {isLocalSource(task.source) ? (
+                        <PlatformLogo
+                          platform="local"
+                          name={t('syncHistory.sourceLocalPlaylist')}
+                          icon="description"
+                          size="h-4 w-4"
+                          iconSize="text-sm"
+                        />
+                      ) : (
+                        <span className="material-symbols-outlined text-sm">description</span>
+                      )}
+                      {syncSourceLabel(task.source, t)}
                     </span>
                     <span className="material-symbols-outlined text-sm text-outline">
                       arrow_forward
@@ -560,7 +580,7 @@ export default function SyncHistory({
               </div>
 
               <div className="mt-3 flex items-center gap-2 font-label-sm text-label-sm text-on-surface-variant">
-                {task.status === 'running' && (
+                {taskSummaryKind(task.status) === 'progress' && (
                   <span className="flex items-center gap-1 text-tertiary">
                     <span className="material-symbols-outlined text-sm">refresh</span>
                     {t('syncHistory.matchingProgress', {
@@ -569,16 +589,22 @@ export default function SyncHistory({
                     })}
                   </span>
                 )}
-                {(task.status === 'done' || task.status === 'failed' || task.status === 'stopped') && (
+                {taskSummaryKind(task.status) === 'counts' && (
                   <span>
                     {t('syncHistory.success')} <span className="text-primary">{task.added}</span>
-                    {task.failed > 0 && (
+                    {counts.failed > 0 && (
                       <>
                         {' '}
                         {t('syncHistory.failedCount')}{' '}
-                        <span className="text-error">{task.failed}</span>
+                        <span className="text-error">{counts.failed}</span>
                       </>
                     )}
+                  </span>
+                )}
+                {taskSummaryKind(task.status) === 'failure' && (
+                  <span className="flex items-center gap-1 text-error">
+                    <span className="material-symbols-outlined text-sm">error_outline</span>
+                    {firstFailureReason(task) ?? t('sync.failedGeneric')}
                   </span>
                 )}
               </div>

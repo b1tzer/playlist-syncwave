@@ -31,6 +31,8 @@ export type SyncFailedReason =
   | 'rate-limited'
   | 'unresolved'
   | 'skipped'
+  /** 任务整体异常（建单/写入阶段崩溃）：明细收敛时用于标记未完成项 */
+  | 'task-failed'
 
 export interface SyncFailedItem {
   query: MatchQuery

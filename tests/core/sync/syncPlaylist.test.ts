@@ -132,6 +132,28 @@ describe('syncPlaylist — 单向同步引擎（T4）', () => {
     expect(report.failed[0].message).toContain('添加失败')
   })
 
+  it('添加失败回写：明细改写为 failed 时实时广播 onStep（主进程检查点与最终报告一致）', async () => {
+    const index: Record<string, PlatformSong[]> = {}
+    for (let i = 1; i <= 2; i++) index[`歌${i}`] = [song(String(i), `歌${i}`, '某人')]
+    const target = makeTarget(index, { addError: true })
+    const steps: Array<{ index: number; status: string; reason?: string }> = []
+    const report = await run(
+      [1, 2].map((i) => ({ title: `歌${i}`, artist: '某人' })),
+      'x',
+      target,
+      {
+        batchSize: 1,
+        onStep: (item) =>
+          steps.push({ index: item.index, status: item.status, reason: item.reason }),
+      },
+    )
+    // matching 阶段先广播 matched，写入失败后必须再广播一次改写为 failed
+    expect(report.failed).toHaveLength(2)
+    const failedSteps = steps.filter((s) => s.status === 'failed' && s.reason === 'add-failed')
+    expect(failedSteps).toHaveLength(2)
+    expect(report.items.every((i) => i.status === 'failed')).toBe(true)
+  })
+
   it('进度回调：matching 与 adding 两个阶段，最终到达 1', async () => {
     const target = makeTarget({
       晴天: [song('1', '晴天', '周杰伦')],
@@ -935,7 +957,11 @@ describe('同步引擎 — 检查点与断点续写（定期保存/重启恢复�
       status: 'matched' as const,
       songId: String(i),
     }))
-    const report = await resumeSync('pl-x', 0, detail, 'x', target, { batchSize: 1 })
+    const steps: Array<{ index: number; status: string }> = []
+    const report = await resumeSync('pl-x', 0, detail, 'x', target, {
+      batchSize: 1,
+      onStep: (item) => steps.push({ index: item.index, status: item.status }),
+    })
     expect(report.added).toBe(2)
     expect(report.failed).toHaveLength(1)
     expect(report.failed[0].reason).toBe('add-failed')
@@ -943,6 +969,8 @@ describe('同步引擎 — 检查点与断点续写（定期保存/重启恢复�
       status: 'failed',
       reason: 'add-failed',
     })
+    // 续写失败同样实时广播明细改写（回归：重启后检查点明细与报告不一致）
+    expect(steps).toContainEqual({ index: 1, status: 'failed' })
   })
 
   it('executeSync 用户确认的明细实时触发 onStep（供主进程检查点持久化）', async () => {

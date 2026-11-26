@@ -504,6 +504,9 @@ export async function executeSync(
           item.status = 'failed'
           item.reason = 'add-failed'
           item.message = message
+          // 明细改写实时广播：主进程检查点与渲染层详情与最终报告保持一致，
+          // 否则中断重启后检查点里仍是 matched，出现「失败 N / 展开成功 N 首」的不一致
+          options.onStep?.(item)
         }
       }
     }
@@ -615,6 +618,8 @@ export async function resumeSync(
           item.status = 'failed'
           item.reason = 'add-failed'
           item.message = message
+          // 明细改写实时广播（与 executeSync 同口径）
+          options.onStep?.(item)
         }
       }
     }

@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1e1f25"/>
+      <stop offset="1" stop-color="#0d0e13"/>
+    </linearGradient>
+    <linearGradient id="note" x1="0" y1="153" x2="0" y2="359" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#6ef2bd"/>
+      <stop offset="1" stop-color="#10b981"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#4edea3" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#4edea3" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="512" height="512" rx="116" fill="url(#bg)"/>
+  <circle cx="256" cy="256" r="196" fill="url(#glow)"/>
+  <!-- 声波条 ×2 + 乐符：整体水平居中，垂直对齐 256 中心线 -->
+  <rect x="159" y="216" width="26" height="80" rx="13" fill="#4edea3" opacity="0.45"/>
+  <rect x="209" y="186" width="26" height="140" rx="13" fill="#4edea3" opacity="0.7"/>
+  <!-- 修长音符：符干 / 符头 / 符尾 三部分分离、互不重叠 -->
+  <rect x="314" y="153" width="10" height="172" rx="5" fill="url(#note)"/>
+  <ellipse cx="298" cy="329" rx="34" ry="22" transform="rotate(-16 298 329)" fill="url(#note)"/>
+  <path d="M324 153 C 348 155 356 173 354 197 C 349 181 336 169 324 167 Z" fill="url(#note)"/>
+</svg>

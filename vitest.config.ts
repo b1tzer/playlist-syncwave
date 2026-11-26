@@ -6,10 +6,13 @@ const root = dirname(fileURLToPath(import.meta.url))
 
 export default defineConfig({
   resolve: {
-    alias: { '@core': resolve(root, 'src/core') },
+    alias: {
+      '@core': resolve(root, 'src/core'),
+      '@renderer': resolve(root, 'src/renderer/src'),
+    },
   },
   test: {
     environment: 'node',
-    include: ['tests/**/*.test.ts'],
+    include: ['tests/**/*.test.{ts,tsx}'],
   },
 })

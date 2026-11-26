@@ -12,6 +12,7 @@ import { useI18n } from '../i18n'
 import { notify } from '../components/toast'
 import { notifyError } from '../utils/notifyError'
 import { syncFailedText } from './helpers'
+import { deriveTaskCounts, markTaskDetailFailed } from '@core/sync/taskStats'
 
 const log = createRendererLogger('renderer.sync-runner')
 
@@ -171,7 +172,9 @@ export function useSyncRunner() {
         }
 
         setReport(rep)
-        const ok = rep.playlistId !== ''
+        // 建单成功但一首都没写进去（空歌单）同样视为失败：用户侧结果与「无内容」一致，
+        // 且失败原因（逐首 add-failed 明细）随任务展示，可直接重新执行补写。
+        const ok = rep.playlistId !== '' && rep.added > 0
         log.info('runner.done', '同步结束', {
           targetPlatform,
           playlistId: rep.playlistId,
@@ -201,6 +204,8 @@ export function useSyncRunner() {
               }),
             )
           }
+        } else if (rep.playlistId !== '') {
+          notify('error', t('toast.syncFailedTitle'), t('toast.syncEmptyDetail'))
         } else {
           notify(
             'error',
@@ -208,12 +213,17 @@ export function useSyncRunner() {
             t('toast.syncNoneDetail', { count: rep.failed.length || rep.total }),
           )
         }
+        // 终态计数以最终明细为权威口径：行摘要与展开明细永远一致
+        const counts = deriveTaskCounts(finalDetail, {
+          added: rep.added,
+          failed: rep.failed.length,
+        })
         onTaskUpdate({
           ...baseTask,
           name: rep.playlistName,
           status: ok ? 'done' : 'failed',
-          added: rep.added,
-          failed: rep.failed.length,
+          added: counts.added,
+          failed: counts.failed,
           progress: 1,
           failedDetail: rep.failed.map((f) => syncFailedText(t, f)),
           detail: finalDetail,
@@ -225,6 +235,8 @@ export function useSyncRunner() {
         setError(msg)
         // 错误提示走右上角 toast，代码性报错过滤为通用文案
         notifyError(e, t('toast.syncFailedTitle'))
+        // 整体异常：明细收敛为全失败，与 failed=total 标量自洽（保留 query 供重新执行）
+        const failedDetail = markTaskDetailFailed([...detailRef], queries, msg)
         onTaskUpdate({
           ...baseTask,
           status: 'failed',
@@ -232,7 +244,7 @@ export function useSyncRunner() {
           failed: queries.length,
           progress: 1,
           failedDetail: [msg],
-          detail: [...detailRef],
+          detail: failedDetail,
         })
       } finally {
         offProgress()

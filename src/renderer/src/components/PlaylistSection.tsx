@@ -600,14 +600,28 @@ export default function PlaylistSection({
         onSelect: () => void handleOpenUrl(url),
       })
     }
-    if (single) {
-      extraItems.push({
-        type: 'item',
-        id: 'save-local',
-        label: t('playlist.saveToLocal'),
-        icon: 'bookmark_add',
-        onSelect: () => {
-          setSaveTarget(single)
+    // 「同步到本地」：单选与多选均显示，位置在所有平台目标之前（应用 logo）。
+    // 单选弹出目标选择（新建/合并到已有），多选逐个保存为新的本地歌单。
+    const saveSelection = playlists.filter((p) => syncSelection.has(p.id))
+    const localSync: ContextMenuEntry = {
+      type: 'item',
+      id: 'save-local',
+      label: t('playlist.syncToLocal'),
+      iconNode: (
+        <PlatformLogo
+          platform="local"
+          name={t('playlist.syncToLocal')}
+          icon="save"
+          size="h-4 w-4"
+          iconSize="text-sm"
+        />
+      ),
+      disabled: managing,
+      onSelect: () => {
+        if (saveSelection.length <= 1) {
+          const target = saveSelection[0] ?? null
+          if (!target) return
+          setSaveTarget(target)
           void window.electronAPI.localPlaylists
             .list()
             .then(setLocalTargets)
@@ -615,8 +629,10 @@ export default function PlaylistSection({
               log.error('playlist.save-local-list-failed', '读取本地歌单列表失败', e)
               setLocalTargets([])
             })
-        },
-      })
+        } else {
+          void handleSaveToLocalMany(saveSelection)
+        }
+      },
     }
     const entries = buildPlaylistMenuEntries({
       playlist,
@@ -632,6 +648,7 @@ export default function PlaylistSection({
       onSync: (targetId, selection) => void handleSyncTo(targetId, selection),
       onExport: (target, format) => void handleMenuExport(target, format),
       onDelete: (target) => setDeleteTarget(target),
+      localSync,
       extraItems,
     })
     if (!entries.some((entry) => entry.type === 'item')) return
@@ -734,6 +751,38 @@ export default function PlaylistSection({
       }
     } catch (e) {
       log.error('playlist.save-local-failed', '保存到本地失败', e, { platform: active })
+      notifyError(e, t('playlist.saveToLocalFailed'))
+    } finally {
+      setManaging(false)
+    }
+  }
+
+  /** 多选歌单批量保存到本地：逐个保存为新的本地歌单，完成后统一提示 */
+  const handleSaveToLocalMany = async (playlists: PlatformPlaylist[]) => {
+    if (managing || playlists.length === 0) return
+    log.info('playlist.save-local-many', '批量保存平台歌单到本地', {
+      platform: active,
+      count: playlists.length,
+    })
+    setManaging(true)
+    try {
+      let saved = 0
+      for (const p of playlists) {
+        const result = await window.electronAPI.localPlaylists.importPlatformPlaylist(
+          active,
+          p,
+          undefined,
+        )
+        if (result) saved++
+      }
+      log.info('playlist.saved-local-many', '批量保存到本地完成', {
+        platform: active,
+        saved,
+        total: playlists.length,
+      })
+      notify('success', t('playlist.savedToLocalMany', { count: saved }))
+    } catch (e) {
+      log.error('playlist.save-local-many-failed', '批量保存到本地失败', e, { platform: active })
       notifyError(e, t('playlist.saveToLocalFailed'))
     } finally {
       setManaging(false)

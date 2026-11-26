@@ -17,6 +17,7 @@ import {
 import type { MatchQuery } from '@core/models/match'
 import { getPlatform, resolveAdapter } from './platformRegistry'
 import { findMappings, saveAutoMapping } from './mappingService'
+import { deriveTaskCounts, markTaskDetailFailed } from '@core/sync/taskStats'
 import { getDatabase } from './appDatabase'
 import { syncTuning } from './settingsService'
 import { notifySyncResult, notifySyncStopped } from './notifications'
@@ -529,6 +530,7 @@ export async function resumePendingSyncTask(task: SyncTaskRecord): Promise<void>
     }
 
     if (report.status === 'stopped') {
+      // 停止：已写入部分保留，计数用权威标量（部分 matched 尚未写入，明细派生会虚高）
       checkpoint.persistFinal({
         status: 'stopped',
         name: report.playlistName,
@@ -543,13 +545,19 @@ export async function resumePendingSyncTask(task: SyncTaskRecord): Promise<void>
       return
     }
 
-    const ok = report.playlistId !== ''
+    // 建单成功但一首未写入（空歌单）视为失败：与渲染层同一口径
+    const ok = report.playlistId !== '' && report.added > 0
+    // 终态计数以最终明细为权威口径，行摘要与展开明细保持一致
+    const counts = deriveTaskCounts(report.items, {
+      added: report.added,
+      failed: report.failed.length,
+    })
     checkpoint.persistFinal({
       status: ok ? 'done' : 'failed',
       name: report.playlistName,
       playlistId: report.playlistId || undefined,
-      added: report.added,
-      failed: report.failed.length,
+      added: counts.added,
+      failed: counts.failed,
       progress: 1,
       failedDetail: failedDetailLines(report.failed),
       detail: report.items,
@@ -558,18 +566,24 @@ export async function resumePendingSyncTask(task: SyncTaskRecord): Promise<void>
       taskId: task.id,
       status: ok ? 'done' : 'failed',
       playlistId: report.playlistId,
-      added: report.added,
-      failed: report.failed.length,
+      added: counts.added,
+      failed: counts.failed,
     })
   } catch (e) {
     const msg = errorMessage(e)
     log.error('resume.failed', '恢复执行失败', e, { taskId: task.id })
+    // 整体异常：明细收敛为全失败，与 failed=total 标量自洽（不再出现「失败 N / 展开成功 N 首」）
+    const detail = markTaskDetailFailed(
+      checkpoint.currentTask().detail,
+      rebuildQueries(task),
+      msg,
+    )
     checkpoint.persistFinal({
       status: 'failed',
       progress: 1,
-      failed: task.total,
+      failed: detail.length || task.total,
       failedDetail: [msg],
-      detail: checkpoint.currentTask().detail,
+      detail,
     })
   } finally {
     control.done()

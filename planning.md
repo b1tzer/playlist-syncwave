@@ -83,7 +83,7 @@ tests/             # Vitest 单元测试（core/main/platforms/renderer）
 ### 3.4 歌单、缓存与数据层
 - 歌单管理：重命名（内联编辑）、删除（两步确认）、增删歌曲，`capabilities.write` 平台才显示管理操作；本地歌单库（事务化整单替换/追加/按位删除重排，无需登录）；导入 m3u/m3u8/csv/txt/lrc/json（5MB 上限、去 BOM），导出 m3u/csv；平台与本地歌单列表共用唯一模板 `PlaylistList.tsx`（行结构、封面 / 单行名称 / 歌曲数、来源平台 logo、选中配色、错峰入场动效与行内重命名都在模板内），样式常量在 `playlistRowStyles.ts`、长文本在 `MarqueeText.tsx`，调用方只传数据与回调；平台标识在所有区域只显示 `PlatformLogo`，平台名称仅保留在 `title`/`alt`、右键菜单文字描述与必要说明文案中（平台切换、账号卡片、同步目标、文本导入、同步历史、扫码弹窗统一；右键菜单文案保持原样）
 - 歌曲列表 `SongList.tsx`：`showHeader` 开启时渲染「# / 歌名 / 歌手 / 专辑 / 时长」固定表头（列宽与数据行对齐、整列缺失同步隐藏、行尾操作列等宽占位）；封面缺失回退音符图标；超长文本 marquee 裁剪；`selectable` 可选开启鼠标多选（无复选框：点击行切换选中、Shift 点选锚点到当前行整段连选、按下拖动超 5px 后按经过行整段框选并抑制一次 click；选中高亮与歌单列表一致用 `transition-colors` 渐变），列头在选中后切换为「已选 N 首 / 全选 / 取消选择 / 删除所选」文字工具条，一次 IPC 批量删除；平台歌单按 `removeSongs` 能力置灰并悬浮显示原因，本地歌单按 position 批量删除后同步重排序号；搜索结果与同步历史不开多选
-- 歌单选择：`usePlaylistMultiSelect.ts` 统一实现拖拽框选（5px 阈值、锚点→当前行）、Cmd/Ctrl+单击切换，已选计数/清除用 `PlaylistSelectionStatus.tsx`；右键菜单由 `buildPlaylistMenu.tsx` 统一构造公共项（重命名/同步到/导出/删除），「新建歌单」仅列表空白区右键显示（行右键 stopPropagation 不显示），平台专属项（打开链接、保存到本地）走 `extraItems`，删除确认统一 `PlaylistDeleteDialog.tsx`，本地按平台同等对待；菜单渲染仍用 `ContextMenu.tsx`；新建歌单内联表单在 `PlaylistList.tsx` 统一渲染，本地不再有右上角独立新建按钮，平台新建通过 `platform:playlist-create` 调适配器（四平台均实现），本地走 `local-playlist:create`（portal 挂载、视口翻转定位、键盘导航、滚动/resize 关闭、role/aria）；多选仅「同步到」各平台，单选另含重命名/应用打开/浏览器打开（scheme 白名单 http/https/orpheus/qqmusic）；本地歌单列表右键复用同一菜单，含重命名、按目标歌单同步到（已登录且可写平台）、导出 m3u/csv、删除（两步确认），无歌曲时同步/导出项禁用，同步中或待确认时同步项禁用
+- 歌单选择：`usePlaylistMultiSelect.ts` 统一实现拖拽框选（5px 阈值、锚点→当前行）、Cmd/Ctrl+单击切换，已选计数/清除用 `PlaylistSelectionStatus.tsx`；右键菜单由 `buildPlaylistMenu.tsx` 统一构造公共项（重命名/同步到/导出/删除），「新建歌单」仅列表空白区右键显示（行右键 stopPropagation 不显示），平台专属项（打开链接）走 `extraItems`，「同步到本地」经 `localSync` 参数排在所有平台目标之前（应用 logo，单选弹目标选择、多选逐个保存为新本地歌单），删除确认统一 `PlaylistDeleteDialog.tsx`，本地按平台同等对待；菜单渲染仍用 `ContextMenu.tsx`；新建歌单内联表单在 `PlaylistList.tsx` 统一渲染，本地不再有右上角独立新建按钮，平台新建通过 `platform:playlist-create` 调适配器（四平台均实现），本地走 `local-playlist:create`（portal 挂载、视口翻转定位、键盘导航、滚动/resize 关闭、role/aria）；多选支持「同步到」各平台与「同步到本地」，单选另含重命名/应用打开/浏览器打开（scheme 白名单 http/https/orpheus/qqmusic）；本地歌单列表右键复用同一菜单，含重命名、按目标歌单同步到（已登录且可写平台）、导出 m3u/csv、删除（两步确认），无歌曲时同步/导出项禁用，同步中或待确认时同步项禁用
 - 添加歌曲搜索：`page` 参数贯通适配器和 IPC，四平台分页映射（酷狗 page/pagesize、QQ page 单页 20、网易云 offset=(page-1)*limit、Apple catalog offset）；渲染层单页 20 条，`LoadMoreSentinel` 提前 200px 预取；按钮三态（添加 / 添加中 / 已添加禁用）；面板失焦收起；`SongSearchResults` 在平台歌单与本地歌单两处复用；歌单卡片歌曲数增删后就地 ±1
 - 异常与加载：所有异常统一走 `renderer/src/utils/notifyError.ts` 右上角 toast（平台中文文案作详情、代码性报错过滤为通用标题），无组件内联错误条；歌单列表/歌曲拉取 30s 超时；超 3s 文案切「网络较慢，正在获取中…」并保持转圈，loading 区域居中
 - 数据库：正式版 `userData/app.db`、开发版 `userData/dev/app.db`（由 `src/main/appPaths.ts` 在 ready 前隔离，`PLAYLIST_USER_DATA_DIR` 可覆盖；WAL），十一张表——`sync_tasks`（同步历史，逐首明细存 `detail`）、`app_settings`、`song_mappings`（人工确认优先）、`playlist_cache`、`playlist_song_cache`、`playlist_song_meta`、`playlist_cache_schema`（按 platform 隔离 scope）、`local_playlists`、`local_playlist_songs`、`local_playlist_sources`（本地歌单 ↔ 平台歌单多来源）、`schema_migrations`。本地歌单扩展：`local_playlists` 存 `source_platform` / `source_playlist_id` / 链接 / `owner_id` / `extra_ids` JSON（酷狗 gcid 等）/ `cover_url` / `cover_source`；`local_playlist_songs` 存 `source_platform` / `source_song_id` / `identifiers` JSON（平台次级唯一 id）/ `cover_url`，另有 `(source_platform, source_playlist_id)` 与 `(playlist_id, source_platform, source_song_id)` 索引；`local_playlist_sources` 主键 `(playlist_id, platform, source_playlist_id)`，存链接/ownerId/extra_ids/cover_url/last_synced_at 并有 `(platform, source_playlist_id)` 唯一索引（一个平台歌单只归属一个本地歌单，一对多而非多对多）
@@ -118,7 +118,7 @@ tests/             # Vitest 单元测试（core/main/platforms/renderer）
 |---|---|
 | `npm run typecheck` | 通过（无错误） |
 | `npm run lint` | 通过（无错误） |
-| `npm run test` | 33 个测试文件、418 项测试全部通过 |
+| `npm run test` | 39 个测试文件、457 项测试全部通过 |
 | `npm run build` | 通过（主进程 / preload / renderer 均产出） |
 
 **代码事实核对**（文档与代码同步基准）：
@@ -133,7 +133,7 @@ tests/             # Vitest 单元测试（core/main/platforms/renderer）
 | 缓存常量 | 列表 TTL 10min / 歌曲 TTL 30min / 令牌桶 3 个、10s 补 1 | `src/core/cachePolicy.ts:18-37` |
 | 同步调优 | 默认 0.6 / 2 / 500ms；预设 0.45 / 0.6 / 0.75 | `src/core/sync/tuning.ts:17-40` |
 | 更新源 | GitHub Releases（唯一源） | `electron-builder.yml:26-32`、`src/main/updater.ts:14-15` |
-| 测试数 | 415 | `npm run test` 输出 |
+| 测试数 | 457 | `npm run test` 输出 |
 
 **构建**：本地未执行 `electron-builder` 打包；tag 推送后由发布工作流在 CI 完成三平台未签名构建、更新元数据生成与 draft release（见第 8 节，尚未执行）。
 

@@ -51,7 +51,7 @@ npm run typecheck  # TypeScript 全量类型检查
 npm run lint       # ESLint
 ```
 
-发布前依次执行 `npm run typecheck && npm run lint && npm run test && npm run build`，全部通过后再打包；人工验收已于 2026-11-25 完成（清单见 `planning.md` 第 5 节）。当前基线：418 项测试全部通过。
+发布前依次执行 `npm run typecheck && npm run lint && npm run test && npm run build`，全部通过后再打包；人工验收已于 2026-11-25 完成（清单见 `planning.md` 第 5 节）。当前基线：457 项测试全部通过（含 jsdom + Testing Library 组件测试）。
 
 ### 打包
 
@@ -90,7 +90,7 @@ npm run dist:linux  # Linux：AppImage
 - **前端**：React + TypeScript（strict）+ Tailwind CSS + Zustand
 - **数据**：better-sqlite3（WAL 模式，版本化 schema 迁移）
 - **平台接入**：NeteaseCloudMusicApi（网易云）、@yakult-green-tea/qq-music-api（QQ 音乐 Node 模式）、kugoumusicapi（酷狗，库模式直调）、Apple Music Web API（社区路径，适配器自实现）
-- **测试**：Vitest
+- **测试**：Vitest（+ jsdom / Testing Library 组件测试）
 - **打包分发**：electron-builder + electron-updater
 
 ## 项目结构
