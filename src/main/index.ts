@@ -40,6 +40,7 @@ import {
   beginRunningSync,
   abortRunningSync,
   skipRunningSync,
+  registerLocalPlaylistSyncTarget,
 } from './syncPipeline'
 import {
   broadcastAccountsChanged,
@@ -906,6 +907,8 @@ ipcMain.handle(
       batchSize?: number
       /** 重新执行时复用上次已匹配结果：dupKey -> songId，命中后跳过搜索 */
       reuseMatches?: Array<{ key: string; songId: string; matchedSong?: SyncMatchedResource }>
+      /** 来源本地歌单 id：同步建单成功后登记反向关联（本地列表点亮平台 logo） */
+      sourceLocalPlaylistId?: string
     },
   ) =>
     ipcLog.time(
@@ -930,6 +933,7 @@ ipcMain.handle(
             autoNameDate: payload.autoNameDate,
             batchSize: payload.batchSize,
             reuseMatches: payload.reuseMatches,
+            sourceLocalPlaylistId: payload.sourceLocalPlaylistId,
             signal: control.signal,
             skipCheck: control.skipCheck,
             onStep: (item) => {
@@ -941,7 +945,14 @@ ipcMain.handle(
             onProgress: notify,
             onCheckpoint: checkpoint.onCheckpoint,
             onChoiceNeeded: (plan, finalName, target, batchSize) => {
-              pendingSyncs.set(taskId, { platform, plan, target, playlistName: finalName, batchSize })
+              pendingSyncs.set(taskId, {
+                platform,
+                plan,
+                target,
+                playlistName: finalName,
+                batchSize,
+                sourceLocalPlaylistId: payload.sourceLocalPlaylistId,
+              })
             },
           })
           return { taskId, report }
@@ -1270,12 +1281,14 @@ ipcMain.handle(
           if (report.playlistId !== '') {
             playlistCacheStore.markStalePlaylists(platform)
           }
+          registerLocalPlaylistSyncTarget(pending.sourceLocalPlaylistId, platform, report.playlistId)
           notifySyncResult(report.playlistName, report.added, report.failed.length)
           return report
         } catch (e) {
           if (e instanceof SyncAbortedError) {
             ipcLog.info('platform.confirm-sync', '写入被用户停止', { platform, taskId })
             notifySyncStopped(pending.playlistName)
+            registerLocalPlaylistSyncTarget(pending.sourceLocalPlaylistId, platform, e.partial.playlistId ?? '')
             return stoppedReport(e.partial, pending.playlistName)
           }
           throw e

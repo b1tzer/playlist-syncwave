@@ -304,7 +304,6 @@ export default function TextCreator({
                     size="h-4 w-4"
                     iconSize="text-sm"
                   />
-                  {p.name}
                 </button>
               )
             })}

@@ -407,6 +407,7 @@ export default function LocalPlaylistPanel({
       queries,
       name: playlist.name,
       source: 'local-playlist',
+      sourceLocalPlaylistId: playlist.id,
       onTaskUpdate,
       onPendingConfirmChange,
     })
@@ -672,6 +673,7 @@ export default function LocalPlaylistPanel({
                       syncTargets.map((p) => (
                         <button
                           key={p.id}
+                          title={p.name}
                           onClick={() => void handleSyncTo(p.id)}
                           className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 font-label-md text-label-md text-on-surface transition-colors hover:bg-surface-container-highest"
                         >
@@ -682,7 +684,6 @@ export default function LocalPlaylistPanel({
                             size="h-4 w-4"
                             iconSize="text-sm"
                           />
-                          {p.name}
                         </button>
                       ))
                     )}

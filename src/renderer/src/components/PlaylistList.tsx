@@ -22,6 +22,9 @@ export interface PlaylistListItem {
   sources?: Array<{ platform: string; playlistId: string }>
 }
 
+/** 多个来源 logo 堆叠时的旋转角度序列（度，按下标取模），模拟散开的专辑堆叠视角 */
+const STACKED_LOGO_ROTATIONS = [-9, 6, -12, 4, -7, 10]
+
 interface PlaylistListProps<T extends PlaylistListItem> {
   items: T[]
   /** 本地歌单来源 logo 所需的平台元信息 */
@@ -164,6 +167,9 @@ export default function PlaylistList<T extends PlaylistListItem>({
       {items.map((item, i) => {
         const flashing = flashIds?.has(item.id) ?? false
         const entered = enteredIds.has(item.id)
+        const sources = item.sources ?? []
+        /** 多个来源时堆叠展示：重叠 30%、逐个微旋转，像一叠散开的专辑 */
+        const stacked = sources.length > 1
         return (
           <li
             key={item.id}
@@ -214,12 +220,23 @@ export default function PlaylistList<T extends PlaylistListItem>({
                 <CoverImage src={item.coverUrl} alt={item.name} size="sm" fallbackIcon="queue_music" />
                 <MarqueeText text={item.name} className={playlistNameClass} />
                 <span className="flex shrink-0 items-center gap-1">
-                  {(item.sources ?? []).map((source) => {
+                  {sources.map((source, idx) => {
                     const meta = platforms?.find((m) => m.id === source.platform)
                     return (
                       <span
                         key={`${source.platform}:${source.playlistId}`}
                         title={meta?.name ?? source.platform}
+                        className={`inline-flex shrink-0 ${stacked ? 'drop-shadow' : ''}`}
+                        style={
+                          stacked
+                            ? {
+                                // translateX 百分比相对自身宽度：每个 logo 与前一个重叠 30%
+                                transform: `${idx === 0 ? '' : 'translateX(-30%) '}rotate(${
+                                  STACKED_LOGO_ROTATIONS[idx % STACKED_LOGO_ROTATIONS.length]
+                                }deg)`,
+                              }
+                            : undefined
+                        }
                       >
                         <PlatformLogo
                           platform={source.platform}

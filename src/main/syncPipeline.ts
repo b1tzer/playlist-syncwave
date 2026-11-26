@@ -27,7 +27,15 @@ const log = logCenter.logger('sync-pipeline')
 /** 待确认的同步会话：choice-needed 后缓存 plan，等待用户选择（同步发起与恢复执行共用） */
 export const pendingSyncs = new Map<
   string,
-  { platform: string; plan: SyncPlan; target: SyncTarget; playlistName: string; batchSize?: number }
+  {
+    platform: string
+    plan: SyncPlan
+    target: SyncTarget
+    playlistName: string
+    batchSize?: number
+    /** 来源本地歌单 id：确认写入成功后登记反向关联 */
+    sourceLocalPlaylistId?: string
+  }
 >()
 
 /** 执行中的同步任务：支持停止（abort）与跳过当前歌曲（skip 标志，一次性消耗） */
@@ -115,6 +123,25 @@ export function broadcastSync(channel: string, payload: unknown): void {
   }
 }
 
+/**
+ * 本地歌单 → 平台同步建单成功后：登记「本地歌单 → 平台歌单」反向关联并广播，
+ * 本地列表据此点亮平台 logo。只写关系表，不覆盖本地歌单自身的来源/封面列。
+ */
+export function registerLocalPlaylistSyncTarget(
+  sourceLocalPlaylistId: string | undefined,
+  platform: string,
+  playlistId: string,
+): void {
+  if (!sourceLocalPlaylistId || !playlistId) return
+  getDatabase().localPlaylists.linkSyncTarget(
+    sourceLocalPlaylistId,
+    platform,
+    playlistId,
+    new Date().toISOString(),
+  )
+  broadcastSync('local-playlist:changed', { id: sourceLocalPlaylistId })
+}
+
 /** 失败明细行：`歌名 - 歌手（原因）`（主进程恢复执行终态写入用，与渲染层同格式） */
 export function failedDetailLines(failed: SyncFailedItem[]): string[] {
   return failed.map(
@@ -151,6 +178,8 @@ export interface RunSyncPipelineArgs {
   batchSize?: number
   /** 重新执行/恢复执行时复用上次已匹配结果：命中后跳过搜索 */
   reuseMatches?: Array<{ key: string; songId: string; matchedSong?: SyncMatchedResource }>
+  /** 来源本地歌单 id：目标平台建单成功后登记反向关联（本地列表点亮平台 logo） */
+  sourceLocalPlaylistId?: string
   /** 中断恢复：已创建的目标歌单，跳过匹配阶段直接续写剩余批次 */
   resumePlaylistId?: string
   resumeAdded?: number
@@ -181,6 +210,7 @@ export async function runSyncPipeline(args: RunSyncPipelineArgs): Promise<SyncRe
     autoNameDate,
     batchSize,
     reuseMatches,
+    sourceLocalPlaylistId,
     resumePlaylistId,
     resumeAdded,
     resumeDetail,
@@ -254,6 +284,7 @@ export async function runSyncPipeline(args: RunSyncPipelineArgs): Promise<SyncRe
       )
       if (report.playlistId !== '') {
         getDatabase().playlistCache.markStalePlaylists(platform)
+        registerLocalPlaylistSyncTarget(sourceLocalPlaylistId, platform, report.playlistId)
       }
       log.info('pipeline.resume-done', '恢复同步续写完成', {
         platform,
@@ -300,6 +331,7 @@ export async function runSyncPipeline(args: RunSyncPipelineArgs): Promise<SyncRe
     // 目标平台新建了歌单：标记列表缓存过期，下次访问先兜底再重新验证
     if (report.playlistId !== '') {
       getDatabase().playlistCache.markStalePlaylists(platform)
+      registerLocalPlaylistSyncTarget(sourceLocalPlaylistId, platform, report.playlistId)
     }
     log.info('pipeline.done', '同步完成', {
       platform,
@@ -317,6 +349,8 @@ export async function runSyncPipeline(args: RunSyncPipelineArgs): Promise<SyncRe
       const fallbackName = (playlistName ?? '').trim() || autoNameDate || '未命名歌单'
       log.info('pipeline.stopped', '同步被用户停止', { platform, taskId })
       notifySyncStopped(fallbackName)
+      // 停止前可能已建单并写入部分批次：歌单已存在于平台，同样登记反向关联
+      registerLocalPlaylistSyncTarget(sourceLocalPlaylistId, platform, e.partial.playlistId ?? '')
       return stoppedReport(e.partial, fallbackName)
     }
     throw e
@@ -453,6 +487,7 @@ export async function resumePendingSyncTask(task: SyncTaskRecord): Promise<void>
       queries,
       playlistName: task.name,
       reuseMatches,
+      sourceLocalPlaylistId: task.sourceLocalPlaylistId,
       resumePlaylistId,
       resumeAdded: task.added,
       resumeDetail: task.detail,
@@ -471,6 +506,7 @@ export async function resumePendingSyncTask(task: SyncTaskRecord): Promise<void>
           target,
           playlistName: finalName,
           batchSize,
+          sourceLocalPlaylistId: task.sourceLocalPlaylistId,
         })
       },
     })

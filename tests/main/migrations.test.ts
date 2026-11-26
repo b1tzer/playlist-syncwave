@@ -104,7 +104,7 @@ describe('runMigrations — 版本化迁移', () => {
     const version = fresh
       .prepare('SELECT MAX(version) AS v FROM schema_migrations')
       .get() as { v: number }
-    expect(version.v).toBe(10)
+    expect(version.v).toBe(11)
     // 迁移不建业务表：建表仍由各 Store 负责
     const tables = fresh
       .prepare(`SELECT name FROM sqlite_master WHERE type = 'table'`)
@@ -204,6 +204,35 @@ INSERT INTO local_playlists (id, name, created_at, updated_at, source_platform, 
       legacy.prepare('SELECT COUNT(*) AS c FROM local_playlist_sources').get() as { c: number }
     ).c
     expect(count).toBe(1)
+    legacy.close()
+  })
+
+  it('v11：存量 sync_tasks 补 source_local_playlist_id 列，重复执行幂等', () => {
+    const legacy = new Database(':memory:')
+    legacy.exec(`
+CREATE TABLE sync_tasks (
+  id TEXT PRIMARY KEY, name TEXT NOT NULL, target_platform TEXT NOT NULL,
+  source TEXT NOT NULL, status TEXT NOT NULL, total INTEGER NOT NULL,
+  added INTEGER NOT NULL, failed INTEGER NOT NULL, created_at TEXT NOT NULL,
+  created_at_ms INTEGER NOT NULL DEFAULT 0, progress REAL NOT NULL,
+  failed_detail TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '[]',
+  raw_input TEXT NOT NULL DEFAULT '[]', playlist_id TEXT NOT NULL DEFAULT ''
+);
+INSERT INTO sync_tasks
+  (id, name, target_platform, source, status, total, added, failed, created_at, progress, failed_detail)
+  VALUES ('t1', '旧任务', 'netease', 'local-playlist', 'done', 1, 1, 0, '2026-11-01', 1, '[]');
+`)
+    runMigrations(legacy)
+    const cols = (legacy.pragma('table_info(sync_tasks)') as Array<{ name: string }>).map(
+      (c) => c.name,
+    )
+    expect(cols).toContain('source_local_playlist_id')
+    // 幂等：重复执行不报错，存量行新列保持 NULL
+    expect(() => runMigrations(legacy)).not.toThrow()
+    const row = legacy
+      .prepare('SELECT source_local_playlist_id FROM sync_tasks WHERE id = ?')
+      .get('t1') as { source_local_playlist_id: string | null }
+    expect(row.source_local_playlist_id).toBeNull()
     legacy.close()
   })
 

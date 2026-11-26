@@ -215,6 +215,8 @@ export interface SyncTaskRecord {
   rawInput: MatchQuery[]
   /** 执行中已创建的目标歌单 ID（adding 阶段检查点）：中断恢复时继续写入剩余批次 */
   playlistId?: string
+  /** 发起同步的来源本地歌单 ID（本地歌单 → 平台）：成功后登记反向关联，本地列表点亮平台 logo */
+  sourceLocalPlaylistId?: string
 }
 
 /**

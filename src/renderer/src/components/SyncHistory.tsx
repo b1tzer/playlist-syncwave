@@ -504,7 +504,10 @@ export default function SyncHistory({
                     <span className="material-symbols-outlined text-sm text-outline">
                       arrow_forward
                     </span>
-                    <span className="flex items-center gap-1">
+                    <span
+                      className="flex items-center gap-1"
+                      title={target?.name ?? task.targetPlatform}
+                    >
                       <PlatformLogo
                         platform={task.targetPlatform}
                         name={target?.name ?? task.targetPlatform}
@@ -512,7 +515,6 @@ export default function SyncHistory({
                         size="h-4 w-4"
                         iconSize="text-sm"
                       />
-                      {target?.name ?? task.targetPlatform}
                     </span>
                   </span>
                   <span className="material-symbols-outlined text-sm text-outline">

@@ -26,6 +26,8 @@ interface RunSyncArgs {
   /** 歌单名（空串由主进程自动命名） */
   name: string
   source: string
+  /** 来源本地歌单 id：同步建单成功后登记反向关联（本地列表点亮平台 logo） */
+  sourceLocalPlaylistId?: string
   /** 重新执行时复用上次已匹配结果（dupKey -> songId），命中后跳过搜索 */
   reuseMatches?: Array<{ key: string; songId: string; matchedSong?: SyncMatchedResource }>
   onTaskUpdate: (task: SyncTaskRecord) => void
@@ -54,6 +56,7 @@ export function useSyncRunner() {
       queries,
       name,
       source,
+      sourceLocalPlaylistId,
       reuseMatches,
       onTaskUpdate,
       onPendingConfirmChange,
@@ -84,6 +87,8 @@ export function useSyncRunner() {
         detail: [],
         // 原始输入随任务持久化：重新执行时直接复用
         rawInput: queries,
+        // 来源本地歌单 id 随任务持久化：中断恢复完成后同样登记反向关联
+        sourceLocalPlaylistId,
       }
       onTaskUpdate(baseTask)
 
@@ -112,6 +117,7 @@ export function useSyncRunner() {
           autoNameDate,
           undefined,
           reuseMatches,
+          sourceLocalPlaylistId,
         )
         const finalDetail = rep.items ?? [...detailRef]
 

@@ -218,4 +218,32 @@ describe('localPlaylistStore — 本地歌单存储', () => {
     expect(store.listSources('a')).toHaveLength(0)
     expect(store.listSources('b')).toHaveLength(1)
   })
+
+  it('linkSyncTarget：同步到平台后登记反向关联，不改本地歌单的来源/封面列', () => {
+    store.create('x', '手工歌单', '2024-01-01T00:00:00.000Z')
+    store.setCoverIfEmpty('x', 'https://p1.example/song.jpg', 'song', '2024-01-01T00:00:00.000Z')
+    store.linkSyncTarget('x', 'netease', 'n1', '2024-01-02T00:00:00.000Z')
+
+    const p = store.get('x')
+    // 反向关联可见：本地列表据此点亮平台 logo
+    expect(p?.sources).toEqual([{ platform: 'netease', playlistId: 'n1', lastSyncedAt: '2024-01-02T00:00:00.000Z' }])
+    expect(store.listSources('x')).toHaveLength(1)
+    expect(store.findBySource('netease', 'n1')).toBe('x')
+    // 本地歌单不是从平台导入：origin 与封面不受影响
+    expect(p?.origin).toBeUndefined()
+    expect(p?.coverUrl).toBe('https://p1.example/song.jpg')
+    expect(p?.coverSource).toBe('song')
+
+    // 同一本地歌单重复登记同一平台歌单：幂等覆盖时间戳，不产生重复行
+    store.linkSyncTarget('x', 'netease', 'n1', '2024-01-03T00:00:00.000Z')
+    expect(store.listSources('x')).toHaveLength(1)
+    expect(store.get('x')?.sources?.[0].lastSyncedAt).toBe('2024-01-03T00:00:00.000Z')
+
+    // 同一平台歌单改派到别的本地歌单：旧归属删除
+    store.create('y', '另一个歌单', '2024-01-01T00:00:00.000Z')
+    store.linkSyncTarget('y', 'netease', 'n1', '2024-01-04T00:00:00.000Z')
+    expect(store.findBySource('netease', 'n1')).toBe('y')
+    expect(store.listSources('x')).toHaveLength(0)
+    expect(store.listSources('y')).toHaveLength(1)
+  })
 })

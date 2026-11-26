@@ -329,6 +329,29 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_local_playlist_sources_unique_source
       return readSources(id)
     },
 
+    /**
+     * 登记「本地歌单 → 平台歌单」反向关联（同步到平台建单成功后）：
+     * 只写关系表，不动本地歌单自身的单来源/封面列（该本地歌单并非从平台导入）。
+     * 同一平台歌单已登记到别的本地歌单时视为改派（先删旧归属）。
+     */
+    linkSyncTarget(playlistId: string, platform: string, sourcePlaylistId: string, now: string): void {
+      withTransaction(db, () => {
+        db.prepare(
+          `DELETE FROM local_playlist_sources
+           WHERE platform = ? AND source_playlist_id = ? AND playlist_id <> ?`,
+        ).run(platform, sourcePlaylistId, playlistId)
+        db.prepare(
+          `INSERT INTO local_playlist_sources
+            (playlist_id, platform, source_playlist_id, web_url, app_url,
+             owner_id, extra_ids, cover_url, last_synced_at)
+           VALUES (?, ?, ?, NULL, NULL, NULL, NULL, NULL, ?)
+           ON CONFLICT(platform, source_playlist_id) DO UPDATE SET
+             playlist_id = excluded.playlist_id,
+             last_synced_at = excluded.last_synced_at`,
+        ).run(playlistId, platform, sourcePlaylistId, now)
+      })
+    },
+
     /** 按来源平台歌曲 id 增量写入：已存在的原地更新，新歌追加，不删除上游已移除的歌 */
     upsertSongs(
       id: string,

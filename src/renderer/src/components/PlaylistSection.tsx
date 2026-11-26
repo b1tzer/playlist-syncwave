@@ -1037,6 +1037,7 @@ export default function PlaylistSection({
           {platforms.map((p) => (
             <button
               key={p.id}
+              title={p.name}
               onClick={() => {
                 log.info('playlist.platform-switch', '切换歌单平台', { platform: p.id })
                 setActive(p.id)
@@ -1054,7 +1055,6 @@ export default function PlaylistSection({
                 size="h-4 w-4"
                 iconSize="text-sm"
               />
-              {p.name}
             </button>
           ))}
           <button

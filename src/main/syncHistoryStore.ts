@@ -18,15 +18,16 @@ interface TaskRow {
   detail: string
   raw_input: string
   playlist_id: string
+  source_local_playlist_id: string | null
 }
 
 const INTERRUPTED_DETAIL = ['任务中断：应用在同步完成前退出']
 
 const UPSERT_SQL = `
 INSERT INTO sync_tasks
-  (id, name, target_platform, source, status, total, added, failed, created_at, created_at_ms, progress, failed_detail, detail, raw_input, playlist_id)
+  (id, name, target_platform, source, status, total, added, failed, created_at, created_at_ms, progress, failed_detail, detail, raw_input, playlist_id, source_local_playlist_id)
 VALUES
-  (@id, @name, @targetPlatform, @source, @status, @total, @added, @failed, @createdAt, @createdAtMs, @progress, @failedDetail, @detail, @rawInput, @playlistId)
+  (@id, @name, @targetPlatform, @source, @status, @total, @added, @failed, @createdAt, @createdAtMs, @progress, @failedDetail, @detail, @rawInput, @playlistId, @sourceLocalPlaylistId)
 ON CONFLICT(id) DO UPDATE SET
   name = excluded.name,
   target_platform = excluded.target_platform,
@@ -44,6 +45,10 @@ ON CONFLICT(id) DO UPDATE SET
   playlist_id = CASE
     WHEN excluded.playlist_id = '' THEN playlist_id
     ELSE excluded.playlist_id
+  END,
+  source_local_playlist_id = CASE
+    WHEN excluded.source_local_playlist_id IS NULL THEN source_local_playlist_id
+    ELSE excluded.source_local_playlist_id
   END
 `
 
@@ -96,6 +101,7 @@ function rowToTask(row: TaskRow): SyncTaskRecord {
     detail: parseDetail(row.detail),
     rawInput: parseRawInput(row.raw_input),
     playlistId: row.playlist_id || undefined,
+    sourceLocalPlaylistId: row.source_local_playlist_id || undefined,
   }
 }
 
@@ -116,7 +122,8 @@ CREATE TABLE IF NOT EXISTS sync_tasks (
   failed_detail TEXT NOT NULL,
   detail TEXT NOT NULL DEFAULT '[]',
   raw_input TEXT NOT NULL DEFAULT '[]',
-  playlist_id TEXT NOT NULL DEFAULT ''
+  playlist_id TEXT NOT NULL DEFAULT '',
+  source_local_playlist_id TEXT
 )
 `)
 
@@ -139,6 +146,7 @@ CREATE TABLE IF NOT EXISTS sync_tasks (
         detail: JSON.stringify(task.detail),
         rawInput: JSON.stringify(task.rawInput ?? []),
         playlistId: task.playlistId ?? '',
+        sourceLocalPlaylistId: task.sourceLocalPlaylistId ?? null,
       })
     },
 

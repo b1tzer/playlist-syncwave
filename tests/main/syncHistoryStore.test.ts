@@ -171,6 +171,17 @@ describe('syncHistoryStore — SQLite 持久化', () => {
     expect(store.getTask('keep')?.playlistId).toBe('pl-keep')
   })
 
+  it('sourceLocalPlaylistId 往返无损，且不带该字段的写入不清空已保存值', () => {
+    store.upsertTask(makeTask({ id: 's', status: 'running', sourceLocalPlaylistId: 'lp-1' }))
+    expect(store.getTask('s')?.sourceLocalPlaylistId).toBe('lp-1')
+    // 进度/明细更新不带该字段（主进程 checkpoint 补写）：不覆盖已有来源本地歌单 id
+    store.upsertTask(makeTask({ id: 's', status: 'running', progress: 0.5 }))
+    expect(store.getTask('s')?.sourceLocalPlaylistId).toBe('lp-1')
+    // 文本导入等无来源本地歌单的任务：读取为 undefined
+    store.upsertTask(makeTask({ id: 't' }))
+    expect(store.getTask('t')?.sourceLocalPlaylistId).toBeUndefined()
+  })
+
   it('getTask 按 id 查询单条任务', () => {
     store.upsertTask(makeTask({ id: 'g', playlistId: 'pl-x' }))
     expect(store.getTask('g')?.playlistId).toBe('pl-x')

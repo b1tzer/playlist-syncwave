@@ -167,6 +167,15 @@ CREATE TABLE IF NOT EXISTS local_playlist_sources (
       )
     },
   },
+  {
+    version: 11,
+    name: '同步任务记录来源本地歌单 id（本地歌单 → 平台同步建单后登记反向关联）',
+    up: (db) => {
+      if (tableExists(db, 'sync_tasks')) {
+        addColumnIfMissing(db, 'sync_tasks', 'source_local_playlist_id', 'source_local_playlist_id TEXT')
+      }
+    },
+  },
 ]
 
 /** 应用所有未执行的迁移（按版本序，每个迁移独立事务并记录版本） */

@@ -234,6 +234,7 @@ export default function LoginSection({ platforms, accounts, onAccountChange }: L
             <div
               key={p.id}
               data-card
+              title={p.name}
               className="rounded-lg border border-outline-variant bg-surface-container-low p-4"
             >
               <div className="flex items-center justify-between gap-3">
@@ -247,7 +248,6 @@ export default function LoginSection({ platforms, accounts, onAccountChange }: L
                     className="shrink-0"
                   />
                   <div className="flex items-baseline gap-2 whitespace-nowrap">
-                    <p className="font-body-md text-body-md font-medium">{p.name}</p>
                     {account && (
                       <>
                         <p className="font-label-md text-label-md text-on-surface-variant">
@@ -313,9 +313,16 @@ export default function LoginSection({ platforms, accounts, onAccountChange }: L
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
           <div className="w-80 rounded-lg border border-outline-variant bg-surface-container p-5">
             <div className="flex items-center justify-between">
-              <p className="font-body-md text-body-md font-medium">
-                {t('login.qrTitle', { platform: qrMeta?.name ?? qrFor })}
-              </p>
+              <div className="flex items-center gap-2">
+                <PlatformLogo
+                  platform={qrFor}
+                  name={qrMeta?.name ?? qrFor}
+                  icon={qrMeta?.icon ?? 'cloud'}
+                  size="h-5 w-5"
+                  iconSize="text-base"
+                />
+                <p className="font-body-md text-body-md font-medium">{t('login.qrTitle')}</p>
+              </div>
               <button
                 onClick={closeQr}
                 className="text-on-surface-variant transition-colors hover:text-on-surface"

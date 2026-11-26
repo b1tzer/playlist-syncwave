@@ -242,6 +242,8 @@ const api = {
       batchSize?: number,
       /** 重新执行时复用上次已匹配结果（dupKey -> songId），命中后跳过搜索 */
       reuseMatches?: Array<{ key: string; songId: string; matchedSong?: SyncMatchedResource }>,
+      /** 来源本地歌单 id：同步建单成功后登记反向关联（本地列表点亮平台 logo） */
+      sourceLocalPlaylistId?: string,
     ): Promise<{ taskId: string; report: SyncReport }> =>
       ipcRenderer.invoke('platform:sync-playlist', platform, {
         taskId,
@@ -250,6 +252,7 @@ const api = {
         autoNameDate,
         batchSize,
         reuseMatches,
+        sourceLocalPlaylistId,
       }),
     confirmSync: (
       platform: string,
