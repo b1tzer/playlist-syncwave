@@ -109,7 +109,7 @@ tests/             # Vitest 单元测试（core/main/platforms/renderer）
 
 ---
 
-## 4. 发布前自动化检查（已执行，2026-11-26，v0.1.2 发布前）
+## 4. 发布前自动化检查（已执行，2026-11-26，v0.1.3 发布前）
 
 | 检查项 | 结果 |
 |---|---|
@@ -122,7 +122,7 @@ tests/             # Vitest 单元测试（core/main/platforms/renderer）
 
 | 项目 | 当前值 | 证据 |
 |---|---|---|
-| 应用版本 / 名称 | 0.1.2 / playlist-sync（产品名 SyncWave） | `package.json:2-3` |
+| 应用版本 / 名称 | 0.1.3 / playlist-sync（产品名 SyncWave） | `package.json:2-3` |
 | 平台 | 4：netease / qqmusic / kugou / applemusic | `src/platforms/*/index.ts` |
 | SQLite 表 | 10（含 `schema_migrations`） | `src/main/*Store.ts`、`migrations.ts` |
 | 迁移 | 唯一基线 `version=6`，启动先于 Store 建表 | `src/main/migrations.ts:43-106`、`appDatabase.ts:73-80` |
@@ -138,7 +138,7 @@ tests/             # Vitest 单元测试（core/main/platforms/renderer）
 
 ## 5. 发布前人工验收清单
 
-> 已于 2026-11-25 由用户确认 v0.1.0/v0.1.1 验收全部完成（真实平台账号与安装包环境）；2026-11-26 补充 v0.1.2 更新安装改动（下载后手动安装）的全平台手动安装实测。自动化检查已覆盖的部分不再重复。
+> 已于 2026-11-25 由用户确认 v0.1.0/v0.1.1 验收全部完成（真实平台账号与安装包环境）；2026-11-26 补充 v0.1.3 更新安装改动（下载后手动安装）的全平台手动安装实测。自动化检查已覆盖的部分不再重复。
 
 **账号登录**
 - [x] 网易云扫码登录 → 拉取歌单列表与歌曲
@@ -178,7 +178,7 @@ tests/             # Vitest 单元测试（core/main/platforms/renderer）
 **桌面与打包**
 - [x] 快捷键 `Cmd/Ctrl+1..5`、`Cmd/Ctrl+N`、`Cmd/Ctrl+,`；开发包刷新与 DevTools 可用，正式包不可用
 - [x] 单实例、窗口状态记忆、开机启动、系统通知、崩溃恢复、自动更新（GitHub Releases）
-- [x] v0.1.2 更新安装全平台实测（2026-11-26）：检查到新版本后按平台下载 dmg/exe/AppImage、sha512 校验、存入「下载」并打开或定位，「重新打开安装包」按钮与通知文案正确
+- [x] v0.1.3 更新安装全平台实测（2026-11-26）：检查到新版本后按平台下载 dmg/exe/AppImage、sha512 校验、存入「下载」并打开或定位，「重新打开安装包」按钮与通知文案正确
 - [x] macOS dmg/zip 与 Windows nsis 安装包产出、安装与首次启动
 - [x] 未签名安装包在 macOS（右键打开）与 Windows（仍要运行）的放行路径可完成安装与首次启动
 

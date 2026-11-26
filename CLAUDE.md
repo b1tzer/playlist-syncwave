@@ -53,7 +53,7 @@
 - 依赖版本以 package.json 为准，不臆造不存在的包名或版本。
 
 ## 当前状态
-- V0.1（MVP，package.json version 0.1.2）。已交付：文本快速创建、匹配与单向同步、歌单管理（含本地歌单库）、歌单缓存、同步中心、设置中心与桌面基础能力。接入四平台：网易云、QQ音乐、酷狗、Apple Music。
+- V0.1（MVP，package.json version 0.1.3）。已交付：文本快速创建、匹配与单向同步、歌单管理（含本地歌单库）、歌单缓存、同步中心、设置中心与桌面基础能力。接入四平台：网易云、QQ音乐、酷狗、Apple Music。
 - 当前行为：网易云扫码登录可用；搜索限速 + 指数退避重试；主进程吞掉 EPIPE；npm 11 安装脚本需 `npm install-scripts approve <pkg>` 放行。异常提示统一走右上角 toast（`renderer/src/utils/notifyError.ts`），代码性报错过滤为通用标题；主进程歌单拉取（列表/歌曲）带 30s 超时；慢加载超 3s 文案切为「网络较慢，正在获取中…」并保持转圈。平台封面 URL 统一 https（打包版 CSP 只放行 https 图片）：适配器 `toHttps` 源头升级 + 渲染层 `utils/coverUrl.ts` 兜底，缓存 schema v6 触发旧 http 缓存重验。
 - 同步匹配：受控并发池（`searchConcurrency` 默认 3）+ 双关键词并行预取 + 任务内关键词缓存（normalize key，含在途去重）+ 全局相邻搜索最小间隔（`searchIntervalMs`，预约式限速器）+ rateLimited 全局冷却 4s + 搜索超时 15s（建单/加歌 60s）；同歌不同作者走 choice-needed 两阶段确认；运行中任务可停止/跳过当前歌，逐首明细持久化。
 - 歌单添加歌曲搜索：`page` 参数贯通 IPC/适配器，单页 20 条 + 哨兵提前 200px 预取，`SongSearchResults` 两处复用；歌单卡片歌曲数增删后就地同步。同步中心任务卡片展示「来源 → 目标平台」及品牌 logo、状态徽标置于时间前、状态多选筛选（空集合＝全部）；歌曲列表带「# / 歌名 / 歌手 / 专辑 / 时长」固定表头。
