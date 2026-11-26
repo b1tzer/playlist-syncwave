@@ -2,6 +2,15 @@
 
 本项目遵循语义化版本（SemVer）。首个正式版本为 `v0.1.0`。
 
+## [0.1.2] - 2026-11-26
+
+### 变更
+- 自动更新改为「检查版本 + 手动安装」：electron-updater 仅检查版本（`autoDownload`/`autoInstallOnAppQuit` 全部关闭），主进程按平台从 GitHub Release 的 `v<version>/<asset>` 固定地址下载安装包（macOS dmg / Windows exe / Linux AppImage）、流式校验 sha512、存入「下载」目录后打开或定位，由用户手动完成安装
+- 设置页下载完成后按钮统一为「重新打开安装包」，通知文案统一为「安装包已下载」（IPC `update:open-installer`）
+
+### 修复
+- 封面 URL 统一升级为 https：适配器源头 `toHttps` + 渲染层 `coverUrl.ts` 兜底，避免打包版 CSP 拦截 http 封面；缓存 schema v5→v6 触发旧 http 缓存重验
+
 ## [0.1.1] - 2026-11-25
 
 ### 修复
@@ -40,5 +49,6 @@
 - Apple Music 写接口 401：写操作改走 `amp-api.music.apple.com`
 - 歌单列表混入收藏的他人歌单：酷狗按 `type≠1`、网易云过滤 `specialType=5` 与 `subscribed=true`
 
+[0.1.2]: https://github.com/b1tzer/playlist-syncwave/releases/tag/v0.1.2
 [0.1.1]: https://github.com/b1tzer/playlist-syncwave/releases/tag/v0.1.1
 [0.1.0]: https://github.com/b1tzer/playlist-syncwave/releases/tag/v0.1.0
