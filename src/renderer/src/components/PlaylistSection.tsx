@@ -40,6 +40,7 @@ import {
   playlistRowAnimationClass,
   playlistRowClass,
 } from './playlistRowStyles'
+import { usePlaylistMultiSelect } from '../hooks/usePlaylistMultiSelect'
 import { notify } from './toast'
 import { notifyError } from '../utils/notifyError'
 import { operationAllowed, operationReason } from '../utils/platformCapabilities'
@@ -145,18 +146,12 @@ export default function PlaylistSection({
     })
   }
 
-  // --- 歌单选择与右键菜单 ---
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  // --- 右键菜单 ---
   const [menu, setMenu] = useState<{
     x: number
     y: number
     entries: ContextMenuEntry[]
   } | null>(null)
-  // 拖拽框选：mousedown 记录锚点，移动超阈值后进入框选，行 mouseenter 扩展范围
-  const dragRef = useRef<{ anchorId: string; startX: number; startY: number; moved: boolean } | null>(
-    null,
-  )
-  const suppressClickRef = useRef(false)
 
   // --- 跨平台歌单同步状态（gathering 为拉取源歌单歌曲阶段） ---
   const [gathering, setGathering] = useState(false)
@@ -232,26 +227,16 @@ export default function PlaylistSection({
   const visiblePlaylists = keyword
     ? playlists.filter((p) => p.name.toLowerCase().includes(keyword))
     : playlists
+  const {
+    selectedIds,
+    setSelectedIds,
+    toggleSelect,
+    clearSelection,
+    handleRowMouseDown,
+    handleRowMouseEnter,
+    consumeSuppressedClick,
+  } = usePlaylistMultiSelect(visiblePlaylists.map((p) => p.id))
 
-  /** 拖拽框选：锚点行到结束行（含）之间的可见行 */
-  const selectRange = (anchorId: string, endId: string): Set<string> => {
-    const idxA = visiblePlaylists.findIndex((p) => p.id === anchorId)
-    const idxB = visiblePlaylists.findIndex((p) => p.id === endId)
-    if (idxA === -1 || idxB === -1) return new Set([anchorId])
-    const [from, to] = idxA < idxB ? [idxA, idxB] : [idxB, idxA]
-    return new Set(visiblePlaylists.slice(from, to + 1).map((p) => p.id))
-  }
-
-  const handleRowMouseDown = (e: ReactMouseEvent, id: string) => {
-    if (e.button !== 0) return
-    dragRef.current = { anchorId: id, startX: e.clientX, startY: e.clientY, moved: false }
-  }
-
-  const handleRowMouseEnter = (id: string) => {
-    const drag = dragRef.current
-    if (!drag || !drag.moved) return
-    setSelectedIds(selectRange(drag.anchorId, id))
-  }
   const sourceName = platforms.find((p) => p.id === active)?.name ?? active
   /** 右键可同步到的目标平台：已登录 + 非源平台 + 具备建单/加曲能力 */
   const syncTargets = platforms.filter(
@@ -379,35 +364,6 @@ export default function PlaylistSection({
     autoOpenedRef.current = {}
     void fetchPlaylists()
   }, [fetchPlaylists])
-
-  // 拖拽框选：全局监听移动/抬起，移动超阈值即进入框选
-  useEffect(() => {
-    const onMove = (e: MouseEvent) => {
-      const drag = dragRef.current
-      if (!drag || drag.moved) return
-      if (Math.abs(e.clientX - drag.startX) > 5 || Math.abs(e.clientY - drag.startY) > 5) {
-        drag.moved = true
-        setSelectedIds(new Set([drag.anchorId]))
-      }
-    }
-    const onUp = () => {
-      const wasDrag = dragRef.current?.moved ?? false
-      dragRef.current = null
-      if (wasDrag) {
-        // 拖拽结束后在同一行释放会触发 click，先抑制一次打开行为
-        suppressClickRef.current = true
-        setTimeout(() => {
-          suppressClickRef.current = false
-        }, 0)
-      }
-    }
-    window.addEventListener('mousemove', onMove)
-    window.addEventListener('mouseup', onUp)
-    return () => {
-      window.removeEventListener('mousemove', onMove)
-      window.removeEventListener('mouseup', onUp)
-    }
-  }, [])
 
   // 手动强制刷新：主进程等待真实请求完成才返回，期间按钮置灰，完成后恢复可点
   const handleRefresh = async () => {
@@ -600,19 +556,6 @@ export default function PlaylistSection({
       loadingMoreRef.current = false
     }
   }
-
-  // --- 歌单选择 ---
-
-  const toggleSelect = (id: string) => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
-  }
-
-  const clearSelection = () => setSelectedIds(new Set())
 
   /** 右键行：未选中则单选该行，构建菜单条目后在鼠标位置弹出（无可选操作则不弹） */
   const handleRowContextMenu = (e: ReactMouseEvent, playlist: PlatformPlaylist) => {
@@ -1258,10 +1201,7 @@ export default function PlaylistSection({
                         onClick={(e) => {
                           // 双击的第二次 click（detail=2）交给 onDoubleClick 处理
                           if (e.detail === 2) return
-                          if (suppressClickRef.current) {
-                            suppressClickRef.current = false
-                            return
-                          }
+                          if (consumeSuppressedClick()) return
                           if (e.metaKey || e.ctrlKey) {
                             toggleSelect(p.id)
                             return

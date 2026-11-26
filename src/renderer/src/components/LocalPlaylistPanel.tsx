@@ -33,6 +33,7 @@ import {
   playlistRowAnimationClass,
   playlistRowClass,
 } from './playlistRowStyles'
+import { usePlaylistMultiSelect } from '../hooks/usePlaylistMultiSelect'
 
 const log = createRendererLogger('renderer.local-playlist')
 
@@ -58,6 +59,15 @@ export default function LocalPlaylistPanel({
   const [activeId, setActiveId] = useState<string | null>(null)
   const [songs, setSongs] = useState<LocalPlaylistSong[]>([])
   const [loadingSongs, setLoadingSongs] = useState(false)
+  const {
+    selectedIds,
+    setSelectedIds,
+    toggleSelect,
+    clearSelection,
+    handleRowMouseDown,
+    handleRowMouseEnter,
+    consumeSuppressedClick,
+  } = usePlaylistMultiSelect(playlists.map((p) => p.id))
   /** 已完成入场动画的行：与平台歌单列表共用错峰淡入效果 */
   const [enteredIds, setEnteredIds] = useState<Set<string>>(new Set())
   const markEntered = (id: string) => {
@@ -140,6 +150,15 @@ export default function LocalPlaylistPanel({
       void fetchPlaylists()
     })
   }, [])
+
+  // 歌单被删除后剔除已不存在的选择
+  useEffect(() => {
+    const valid = new Set(playlists.map((p) => p.id))
+    setSelectedIds((prev) => {
+      const next = new Set([...prev].filter((id) => valid.has(id)))
+      return next.size === prev.size ? prev : next
+    })
+  }, [playlists, setSelectedIds])
 
   /** 读取指定歌单歌曲：选中加载与右键菜单操作共用 */
   const fetchSongs = async (id: string) => window.electronAPI.localPlaylists.songs(id)
@@ -528,17 +547,37 @@ export default function LocalPlaylistPanel({
             <span className="font-label-sm text-label-sm text-on-surface-variant">
               {t('localPlaylist.listTitle')}
             </span>
-            <button
-              onClick={() => {
-                setCreating(true)
-                setCreateDraft('')
-              }}
-              disabled={creating}
-              className="flex items-center gap-1 rounded-md px-2 py-1 font-label-sm text-label-sm text-primary transition-colors hover:bg-primary/10 disabled:opacity-50"
-            >
-              <span className="material-symbols-outlined text-sm">add</span>
-              {t('localPlaylist.new')}
-            </button>
+            <div className="flex items-center gap-1">
+              {selectedIds.size > 0 ? (
+                <div className="flex items-center gap-1">
+                  <span className="font-label-mono text-label-mono text-primary">
+                    {t('playlist.selectedCount', { count: selectedIds.size })}
+                  </span>
+                  <button
+                    onClick={clearSelection}
+                    title={t('playlist.clearSelection')}
+                    className="flex items-center rounded-md p-0.5 text-outline transition-colors hover:bg-surface-container-highest hover:text-on-surface"
+                  >
+                    <span className="material-symbols-outlined text-sm">close</span>
+                  </button>
+                </div>
+              ) : (
+                <span className="font-label-mono text-label-mono text-outline">
+                  {playlists.length}
+                </span>
+              )}
+              <button
+                onClick={() => {
+                  setCreating(true)
+                  setCreateDraft('')
+                }}
+                disabled={creating}
+                className="flex items-center gap-1 rounded-md px-2 py-1 font-label-sm text-label-sm text-primary transition-colors hover:bg-primary/10 disabled:opacity-50"
+              >
+                <span className="material-symbols-outlined text-sm">add</span>
+                {t('localPlaylist.new')}
+              </button>
+            </div>
           </div>
 
           {creating && (
@@ -612,6 +651,12 @@ export default function LocalPlaylistPanel({
                       onClick={(e) => {
                         // 双击的第二次 click（detail=2）交给 onDoubleClick 处理
                         if (e.detail === 2) return
+                        if (consumeSuppressedClick()) return
+                        if (e.metaKey || e.ctrlKey) {
+                          toggleSelect(p.id)
+                          return
+                        }
+                        clearSelection()
                         handleSelect(p.id)
                       }}
                       onDoubleClick={() => {
@@ -621,8 +666,10 @@ export default function LocalPlaylistPanel({
                         setRenameDraft(p.name)
                         setRenamingId(p.id)
                       }}
+                      onMouseDown={(e) => handleRowMouseDown(e, p.id)}
+                      onMouseEnter={() => handleRowMouseEnter(p.id)}
                       onContextMenu={(e) => handleRowContextMenu(e, p)}
-                      className={playlistRowClass(activeId === p.id)}
+                      className={playlistRowClass(activeId === p.id, selectedIds.has(p.id))}
                     >
                       <CoverImage
                         src={p.coverUrl}
