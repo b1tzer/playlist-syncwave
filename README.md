@@ -66,7 +66,14 @@ npm run dist:linux  # Linux：AppImage
 
 本项目不购买代码签名/公证证书，构建不校验、不提示签名凭据。未签名包的安装方式：
 
-- **macOS**：打开 dmg/zip 后若被 Gatekeeper 拦截，右键安装包 →「打开」，或在「系统设置 → 隐私与安全性」中允许
+- **macOS**：打开 dmg/zip 后若被 Gatekeeper 拦截，右键安装包 →「打开」，或在「系统设置 → 隐私与安全性」中允许。macOS 15 起若提示「已损坏」（安装包内 Mach-O 带 linker 签名所致），执行：
+  ```bash
+  find /Applications/SyncWave.app -type f -print0 | while IFS= read -r -d '' f; do
+    if file -b "$f" 2>/dev/null | grep -q 'Mach-O'; then sudo codesign --remove-signature "$f"; fi
+  done
+  sudo xattr -cr /Applications/SyncWave.app
+  open /Applications/SyncWave.app
+  ```
 - **Windows**：SmartScreen 提示时选择「更多信息」→「仍要运行」
 - **Linux**：AppImage 直接运行即可，无需安装
 
