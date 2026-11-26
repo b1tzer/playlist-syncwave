@@ -1,9 +1,7 @@
 # electron-builder 打包配置
 # 本项目发布未签名安装包：不配置 CSC_LINK/CSC_KEY_PASSWORD，也不做公证；用户按 README 指引手动放行安装
-# afterPack 剥离 Mach-O 的 linker 签名（macOS 15 起 linker-signed 且无 bundle seal 的 app 会被判「已损坏」且右键打开无效；完全未签名只提示「无法验证开发者」，右键可放行）
 appId: com.syncwave.app
 productName: SyncWave
-afterPack: scripts/mac-unsign.cjs
 
 directories:
   buildResources: build

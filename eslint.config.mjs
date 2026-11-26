@@ -16,21 +16,6 @@ export default tseslint.config(
     },
   },
   {
-    files: ['scripts/**/*.cjs'],
-    languageOptions: {
-      globals: {
-        require: 'readonly',
-        module: 'readonly',
-        exports: 'readonly',
-        console: 'readonly',
-        process: 'readonly',
-      },
-    },
-    rules: {
-      '@typescript-eslint/no-require-imports': 'off',
-    },
-  },
-  {
     rules: {
       '@typescript-eslint/no-explicit-any': 'error',
       '@typescript-eslint/no-unused-vars': [

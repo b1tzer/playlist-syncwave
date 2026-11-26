@@ -10,7 +10,6 @@
 
 ### 修复
 - 封面 URL 统一升级为 https：适配器源头 `toHttps` + 渲染层 `coverUrl.ts` 兜底，避免打包版 CSP 拦截 http 封面；缓存 schema v5→v6 触发旧 http 缓存重验
-- macOS 15 安装提示「已损坏」且右键打开无效：构建后经 `scripts/mac-unsign.cjs` 剥离全部 Mach-O 的 linker 签名，安装包改为完全未签名（Gatekeeper 提示变为「无法验证开发者」，右键打开可放行）
 
 ## [0.1.1] - 2026-11-25
 
