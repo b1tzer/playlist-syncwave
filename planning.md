@@ -81,8 +81,8 @@ tests/             # Vitest 单元测试（core/main/platforms/renderer）
 - **Apple Music**：社区路径（网页前端 developer token `iss=AMPWebPlay` + 登录 cookie 的 `media-user-token`）；读接口 `api.music.apple.com`，写接口必须 `amp-api.music.apple.com`（删除在官方主机固定 401）；无「移除歌曲」端点（UI 隐藏）；建单/加曲单次上限 100、分批写入，新建歌单 404 时 1.5s 重试一次；catalog search limit ≤25，搜索词把 ` - ` 替换为空格；官方 API 无用户资料接口，`userId` 为 storefront 地区码；网页登录 cookie 到手即落最小凭证并广播 `pending: true` 临时登录态，昵称（`profileSelector`）与账户页 Apple ID 邮箱（`accountProbe`）在隐藏窗口后台串行补全后经 `accounts:changed` 刷新；邮箱属 PII，仅存本地加密凭证，日志不记录
 
 ### 3.4 歌单、缓存与数据层
-- 歌单管理：重命名（内联编辑）、删除（两步确认）、增删歌曲，`capabilities.write` 平台才显示管理操作；本地歌单库（事务化整单替换/追加/按位删除重排，无需登录）；导入 m3u/m3u8/csv/txt/lrc/json（5MB 上限、去 BOM），导出 m3u/csv
-- 歌曲列表 `SongList.tsx`：`showHeader` 开启时渲染「# / 歌名 / 歌手 / 专辑 / 时长」固定表头（列宽与数据行对齐、整列缺失同步隐藏、行尾操作列等宽占位）；封面缺失回退音符图标；超长文本 marquee 裁剪；`selectable` 可选开启行多选（勾选框 / 点击行 / 全选），列头在选中后切换为「已选 N 首 / 取消选择 / 删除所选」工具条，一次 IPC 批量删除；平台歌单按 `removeSongs` 能力置灰并悬浮显示原因，本地歌单按 position 批量删除后同步重排序号；搜索结果与同步历史不开多选
+- 歌单管理：重命名（内联编辑）、删除（两步确认）、增删歌曲，`capabilities.write` 平台才显示管理操作；本地歌单库（事务化整单替换/追加/按位删除重排，无需登录）；导入 m3u/m3u8/csv/txt/lrc/json（5MB 上限、去 BOM），导出 m3u/csv；平台与本地歌单列表共用 `playlistRowStyles.ts` 与 `MarqueeText.tsx`（同一套封面 / 单行名称 / 歌曲数行样式、选中配色与错峰入场动效，本地额外在行尾显示来源平台 logo）
+- 歌曲列表 `SongList.tsx`：`showHeader` 开启时渲染「# / 歌名 / 歌手 / 专辑 / 时长」固定表头（列宽与数据行对齐、整列缺失同步隐藏、行尾操作列等宽占位）；封面缺失回退音符图标；超长文本 marquee 裁剪；`selectable` 可选开启鼠标多选（无复选框：点击行切换选中、Shift 点选锚点到当前行整段连选、按下拖动超 5px 后按经过行整段框选并抑制一次 click；选中高亮与歌单列表一致用 `transition-colors` 渐变），列头在选中后切换为「已选 N 首 / 全选 / 取消选择 / 删除所选」文字工具条，一次 IPC 批量删除；平台歌单按 `removeSongs` 能力置灰并悬浮显示原因，本地歌单按 position 批量删除后同步重排序号；搜索结果与同步历史不开多选
 - 歌单选择：拖拽框选（5px 阈值、锚点→当前行）、Cmd/Ctrl+单击切换；右键 `ContextMenu.tsx`（portal 挂载、视口翻转定位、键盘导航、滚动/resize 关闭、role/aria）；多选仅「同步到」各平台，单选另含重命名/应用打开/浏览器打开（scheme 白名单 http/https/orpheus/qqmusic）；本地歌单列表右键复用同一菜单，含重命名、按目标歌单同步到（已登录且可写平台）、导出 m3u/csv、删除（两步确认），无歌曲时同步/导出项禁用，同步中或待确认时同步项禁用
 - 添加歌曲搜索：`page` 参数贯通适配器和 IPC，四平台分页映射（酷狗 page/pagesize、QQ page 单页 20、网易云 offset=(page-1)*limit、Apple catalog offset）；渲染层单页 20 条，`LoadMoreSentinel` 提前 200px 预取；按钮三态（添加 / 添加中 / 已添加禁用）；面板失焦收起；`SongSearchResults` 在平台歌单与本地歌单两处复用；歌单卡片歌曲数增删后就地 ±1
 - 异常与加载：所有异常统一走 `renderer/src/utils/notifyError.ts` 右上角 toast（平台中文文案作详情、代码性报错过滤为通用标题），无组件内联错误条；歌单列表/歌曲拉取 30s 超时；超 3s 文案切「网络较慢，正在获取中…」并保持转圈，loading 区域居中
@@ -175,7 +175,7 @@ tests/             # Vitest 单元测试（core/main/platforms/renderer）
 - [ ] v0.2 新增：导入的本地歌单显示平台封面；手工歌单首次添加带封面歌曲后显示派生封面；封面不可达时回退占位图标
 - [ ] v0.2 新增：同一平台歌单多次保存到本地不会重复建单，第二次仅提示新增/更新数量且歌曲不重复；合并到已有歌单后本地列表显示两个平台 logo
 - [ ] v0.2 新增：本地歌单右键菜单的重命名、同步到、导出 m3u/csv、删除均作用于右键目标歌单（非当前选中项），无歌曲时同步/导出禁用
-- [ ] v0.2 新增：平台歌单与本地歌单的歌曲列表均可勾选/全选并一次批量删除，Apple Music 无删除端点时批量按钮置灰并提示原因；删除后剩余歌曲序号与歌单歌曲数正确
+- [ ] v0.2 新增：平台歌单与本地歌单的歌曲列表均可用鼠标点选/Shift 连选/拖拽多选/全选并一次批量删除，Apple Music 无删除端点时批量按钮置灰并提示原因；删除后剩余歌曲序号与歌单歌曲数正确
 
 **设置与缓存**
 - [x] 主题三态（浅色 / 深色 / 跟随系统）随系统切换，重启后保持；原生菜单与界面一致

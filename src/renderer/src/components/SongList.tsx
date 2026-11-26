@@ -79,6 +79,44 @@ export default function SongList({
   const [bulkTip, setBulkTip] = useState<{ x: number; y: number; text: string } | null>(null)
   /** Shift 连选锚点：最后一次普通点选的行 */
   const anchorIdRef = useRef<string | null>(null)
+  /** 拖拽框选：按下锚点 + 起点，移动超 5px 才进入框选 */
+  const dragRef = useRef<{
+    anchorId: string
+    startX: number
+    startY: number
+    moved: boolean
+  } | null>(null)
+  /** 拖拽结束后同一行释放会触发 click，抑制一次避免撤销框选 */
+  const suppressClickRef = useRef(false)
+
+  useEffect(() => {
+    if (!selectable) return
+    const onMove = (e: MouseEvent) => {
+      const drag = dragRef.current
+      if (!drag || drag.moved) return
+      if (Math.abs(e.clientX - drag.startX) > 5 || Math.abs(e.clientY - drag.startY) > 5) {
+        drag.moved = true
+        anchorIdRef.current = drag.anchorId
+        setSelectedIds(new Set([drag.anchorId]))
+      }
+    }
+    const onUp = () => {
+      const wasDrag = dragRef.current?.moved ?? false
+      dragRef.current = null
+      if (wasDrag) {
+        suppressClickRef.current = true
+        setTimeout(() => {
+          suppressClickRef.current = false
+        }, 0)
+      }
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+    return () => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+  }, [selectable])
 
   // 歌曲列表整体替换（切歌单/删除后重排）时丢弃已不存在的选中项与锚点
   useEffect(() => {
@@ -105,8 +143,26 @@ export default function SongList({
     anchorIdRef.current = null
     setSelectedIds(new Set())
   }
+  const handleRowMouseDown = (e: ReactMouseEvent, song: PlatformSong) => {
+    if (e.button !== 0) return
+    dragRef.current = { anchorId: song.id, startX: e.clientX, startY: e.clientY, moved: false }
+  }
+  /** 拖拽经过的行：以按下行到当前行整段替换选择 */
+  const handleRowMouseEnter = (song: PlatformSong) => {
+    const drag = dragRef.current
+    if (!drag?.moved) return
+    const from = songs.findIndex((s) => s.id === drag.anchorId)
+    const to = songs.findIndex((s) => s.id === song.id)
+    if (from === -1 || to === -1) return
+    const [start, end] = from < to ? [from, to] : [to, from]
+    setSelectedIds(new Set(songs.slice(start, end + 1).map((s) => s.id)))
+  }
   /** 点选切换选中；Shift 点选把锚点到当前行之间整段加入选择 */
   const handleRowClick = (e: ReactMouseEvent, song: PlatformSong) => {
+    if (suppressClickRef.current) {
+      suppressClickRef.current = false
+      return
+    }
     if (e.shiftKey && anchorIdRef.current) {
       const from = songs.findIndex((s) => s.id === anchorIdRef.current)
       const to = songs.findIndex((s) => s.id === song.id)
@@ -221,13 +277,16 @@ export default function SongList({
         return (
           <li
             key={s.id}
-            className={`${flashing ? 'row-updated' : entered ? '' : 'list-item-enter'} group flex items-center gap-3 px-4 py-1.5 font-body-md text-body-md ${
+            className={`${flashing ? 'row-updated' : entered ? '' : 'list-item-enter'} group flex items-center gap-3 px-4 py-1.5 font-body-md text-body-md transition-colors ${
               selectable ? 'cursor-pointer select-none' : ''
-            } ${selected ? 'bg-primary/10' : ''}`}
+            } ${selected ? 'bg-primary/10 text-on-surface' : ''}`}
             style={
               flashing || entered ? undefined : { animationDelay: `${Math.min(i, 15) * 24}ms` }
             }
             onClick={selectable ? (e) => handleRowClick(e, s) : undefined}
+            onMouseDown={selectable ? (e) => handleRowMouseDown(e, s) : undefined}
+            onMouseEnter={selectable ? () => handleRowMouseEnter(s) : undefined}
+            onDragStart={selectable ? (e) => e.preventDefault() : undefined}
             onAnimationEnd={(e) => {
               if (e.target !== e.currentTarget) return
               if (flashing) {

@@ -29,6 +29,17 @@ import ProgressBar from './ProgressBar'
 import LoadMoreSentinel from './LoadMoreSentinel'
 import ContextMenu, { type ContextMenuEntry } from './ContextMenu'
 import Tooltip from './Tooltip'
+import MarqueeText from './MarqueeText'
+import {
+  playlistCountClass,
+  playlistEmptyClass,
+  playlistListClass,
+  playlistNameClass,
+  playlistRenameInputClass,
+  playlistRenameRowClass,
+  playlistRowAnimationClass,
+  playlistRowClass,
+} from './playlistRowStyles'
 import { notify } from './toast'
 import { notifyError } from '../utils/notifyError'
 import { operationAllowed, operationReason } from '../utils/platformCapabilities'
@@ -56,54 +67,6 @@ interface PlaylistSectionProps {
   /** 待确认会话（App 层持有，选择流程由 ConfirmSyncDialog 完成） */
   pendingConfirm: PendingConfirmSession | null
   onPendingConfirmChange: (session: PendingConfirmSession | null) => void
-}
-
-/** 超长文本：默认省略号截断，悬浮时自动来回滚动展示全文。
- *  外层是 flex 裁剪容器（overflow-hidden 挡住滚动文字，不溢出到封面/数字），
- *  内层 block 做省略号与 translateX 动画；flex 布局避免 inline-block 基线空隙。 */
-function MarqueeText({ text, className }: { text: string; className?: string }) {
-  const ref = useRef<HTMLSpanElement>(null)
-  const [shift, setShift] = useState(0)
-  const [duration, setDuration] = useState(6)
-  const [hovered, setHovered] = useState(false)
-
-  // 只在真正悬浮时测一次宽度：每行一个 ResizeObserver 会在窗口拉伸时产生数百次回调与 setState
-  const handleMouseEnter = () => {
-    const el = ref.current
-    if (el) {
-      const distance = Math.max(0, el.scrollWidth - el.clientWidth)
-      setShift(distance)
-      setDuration(Math.min(12, Math.max(2.5, distance / 17.5)))
-    }
-    setHovered(true)
-  }
-
-  const scrolling = hovered && shift > 0
-
-  return (
-    <span
-      onMouseEnter={handleMouseEnter}
-      onMouseLeave={() => setHovered(false)}
-      className={`flex min-w-0 items-center overflow-hidden ${className ?? ''}`}
-    >
-      <span
-        ref={ref}
-        className={`max-w-full whitespace-nowrap ${
-          scrolling ? 'marquee-x' : 'overflow-hidden text-ellipsis'
-        }`}
-        style={
-          scrolling
-            ? {
-                ['--marquee-shift' as string]: `-${shift}px`,
-                animationDuration: `${duration}s`,
-              }
-            : undefined
-        }
-      >
-        {text}
-      </span>
-    </span>
-  )
 }
 
 export default function PlaylistSection({
@@ -1243,9 +1206,9 @@ export default function PlaylistSection({
                   {slowLoading ? t('playlist.slowFetch') : t('common.loading')}
                 </div>
               ) : (
-              <ul className="min-h-0 flex-1 select-none space-y-0.5 overflow-y-auto p-1.5">
+              <ul className={playlistListClass}>
                 {!loading && visiblePlaylists.length === 0 && (
-                  <li className="px-2 py-2 font-label-md text-label-md text-outline">
+                  <li className={playlistEmptyClass}>
                     {keyword ? t('playlist.noMatch') : t('playlist.empty')}
                   </li>
                 )}
@@ -1255,7 +1218,7 @@ export default function PlaylistSection({
                   return (
                   <li
                     key={p.id}
-                    className={flashing ? 'row-updated' : entered ? '' : 'list-item-enter'}
+                    className={playlistRowAnimationClass(flashing, entered)}
                     style={
                       flashing || entered ? undefined : { animationDelay: `${Math.min(i, 15) * 24}ms` }
                     }
@@ -1271,7 +1234,7 @@ export default function PlaylistSection({
                     }}
                   >
                     {renamingId === p.id ? (
-                      <div className="flex w-full items-center gap-1.5 rounded-lg bg-primary-container/15 px-2 py-1.5 text-primary">
+                      <div className={playlistRenameRowClass}>
                         <CoverImage src={p.coverUrl} alt={p.name} size="sm" fallbackIcon="queue_music" />
                         <input
                           ref={inlineRenameInputRef}
@@ -1285,7 +1248,7 @@ export default function PlaylistSection({
                           onBlur={handleInlineBlur}
                           placeholder={t('playlist.renamePlaceholder')}
                           disabled={managing}
-                          className="min-w-0 flex-1 border-0 border-b border-primary bg-transparent px-0 py-0.5 font-body-md text-body-md text-on-surface outline-none placeholder:text-outline disabled:opacity-50"
+                          className={playlistRenameInputClass}
                         />
                       </div>
                     ) : (
@@ -1319,20 +1282,11 @@ export default function PlaylistSection({
                         onMouseDown={(e) => handleRowMouseDown(e, p.id)}
                         onMouseEnter={() => handleRowMouseEnter(p.id)}
                         onContextMenu={(e) => handleRowContextMenu(e, p)}
-                        className={`flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors ${
-                          activeId === p.id
-                            ? 'bg-primary-container/15 text-primary'
-                            : selectedIds.has(p.id)
-                              ? 'bg-primary/10 text-on-surface'
-                              : 'text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface'
-                        }`}
+                        className={playlistRowClass(activeId === p.id, selectedIds.has(p.id))}
                       >
                         <CoverImage src={p.coverUrl} alt={p.name} size="sm" fallbackIcon="queue_music" />
-                        <MarqueeText
-                          text={p.name}
-                          className="min-w-0 flex-1 font-body-md text-body-md"
-                        />
-                        <span className="font-label-mono text-label-mono text-outline">
+                        <MarqueeText text={p.name} className={playlistNameClass} />
+                        <span className={playlistCountClass}>
                           {/* 平台未提供歌曲数（如 Apple Music 资料库歌单）时留空 */}
                           {p.songCount ?? ''}
                         </span>

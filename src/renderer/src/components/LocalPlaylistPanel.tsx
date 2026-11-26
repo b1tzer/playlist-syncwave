@@ -22,6 +22,17 @@ import { notifyError } from '../utils/notifyError'
 import { operationAllowed } from '../utils/platformCapabilities'
 import CoverImage from './CoverImage'
 import ContextMenu, { type ContextMenuEntry } from './ContextMenu'
+import MarqueeText from './MarqueeText'
+import {
+  playlistCountClass,
+  playlistEmptyClass,
+  playlistListClass,
+  playlistNameClass,
+  playlistRenameInputClass,
+  playlistRenameRowClass,
+  playlistRowAnimationClass,
+  playlistRowClass,
+} from './playlistRowStyles'
 
 const log = createRendererLogger('renderer.local-playlist')
 
@@ -47,6 +58,16 @@ export default function LocalPlaylistPanel({
   const [activeId, setActiveId] = useState<string | null>(null)
   const [songs, setSongs] = useState<LocalPlaylistSong[]>([])
   const [loadingSongs, setLoadingSongs] = useState(false)
+  /** 已完成入场动画的行：与平台歌单列表共用错峰淡入效果 */
+  const [enteredIds, setEnteredIds] = useState<Set<string>>(new Set())
+  const markEntered = (id: string) => {
+    setEnteredIds((prev) => {
+      if (prev.has(id)) return prev
+      const next = new Set(prev)
+      next.add(id)
+      return next
+    })
+  }
 
   // 新建 / 重命名
   const [creating, setCreating] = useState(false)
@@ -549,61 +570,68 @@ export default function LocalPlaylistPanel({
             </div>
           )}
 
-          <ul className="min-h-0 flex-1 space-y-0.5 overflow-y-auto p-1.5">
+          <ul className={playlistListClass}>
             {playlists.length === 0 && (
-              <li className="px-2 py-2 font-label-md text-label-md text-outline">
-                {t('localPlaylist.empty')}
-              </li>
+              <li className={playlistEmptyClass}>{t('localPlaylist.empty')}</li>
             )}
-            {playlists.map((p) => (
-              <li key={p.id}>
-                {renamingId === p.id ? (
-                  <div className="flex items-center gap-1.5 rounded-md bg-primary/10 px-2.5 py-1.5">
-                    <span className="material-symbols-outlined text-base">queue_music</span>
-                    <input
-                      ref={inlineRenameInputRef}
-                      autoFocus
-                      value={renameDraft}
-                      onChange={(e) => setRenameDraft(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') void handleInlineRename()
-                        if (e.key === 'Escape') setRenamingId(null)
+            {playlists.map((p, i) => {
+              const entered = enteredIds.has(p.id)
+              return (
+                <li
+                  key={p.id}
+                  className={playlistRowAnimationClass(false, entered)}
+                  style={entered ? undefined : { animationDelay: `${Math.min(i, 15) * 24}ms` }}
+                  onAnimationEnd={(e) => {
+                    if (e.target === e.currentTarget) markEntered(p.id)
+                  }}
+                >
+                  {renamingId === p.id ? (
+                    <div className={playlistRenameRowClass}>
+                      <CoverImage
+                        src={p.coverUrl}
+                        alt={p.name}
+                        size="sm"
+                        fallbackIcon="queue_music"
+                      />
+                      <input
+                        ref={inlineRenameInputRef}
+                        autoFocus
+                        value={renameDraft}
+                        onChange={(e) => setRenameDraft(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') void handleInlineRename()
+                          if (e.key === 'Escape') setRenamingId(null)
+                        }}
+                        onBlur={handleInlineBlur}
+                        placeholder={t('localPlaylist.namePlaceholder')}
+                        className={playlistRenameInputClass}
+                      />
+                    </div>
+                  ) : (
+                    <button
+                      onClick={(e) => {
+                        // 双击的第二次 click（detail=2）交给 onDoubleClick 处理
+                        if (e.detail === 2) return
+                        handleSelect(p.id)
                       }}
-                      onBlur={handleInlineBlur}
-                      placeholder={t('localPlaylist.namePlaceholder')}
-                      className="min-w-0 flex-1 border-0 border-b border-primary bg-transparent px-0 py-0.5 font-label-md text-label-md text-on-surface outline-none placeholder:text-outline"
-                    />
-                  </div>
-                ) : (
-                  <button
-                    onClick={(e) => {
-                      // 双击的第二次 click（detail=2）交给 onDoubleClick 处理
-                      if (e.detail === 2) return
-                      handleSelect(p.id)
-                    }}
-                    onDoubleClick={() => {
-                      log.info('local-playlist.rename-inline', '双击行内重命名本地歌单', {
-                        id: p.id,
-                      })
-                      setRenameDraft(p.name)
-                      setRenamingId(p.id)
-                    }}
-                    onContextMenu={(e) => handleRowContextMenu(e, p)}
-                    className={`flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left transition-colors ${
-                      activeId === p.id
-                        ? 'bg-primary/10 text-primary'
-                        : 'text-on-surface hover:bg-surface-container-high'
-                    }`}
-                  >
-                    <CoverImage
-                      src={p.coverUrl}
-                      alt={p.name}
-                      size="sm"
-                      fallbackIcon="queue_music"
-                    />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate font-label-md text-label-md">{p.name}</span>
-                      <span className="flex items-center gap-1 font-label-sm text-label-sm text-on-surface-variant">
+                      onDoubleClick={() => {
+                        log.info('local-playlist.rename-inline', '双击行内重命名本地歌单', {
+                          id: p.id,
+                        })
+                        setRenameDraft(p.name)
+                        setRenamingId(p.id)
+                      }}
+                      onContextMenu={(e) => handleRowContextMenu(e, p)}
+                      className={playlistRowClass(activeId === p.id)}
+                    >
+                      <CoverImage
+                        src={p.coverUrl}
+                        alt={p.name}
+                        size="sm"
+                        fallbackIcon="queue_music"
+                      />
+                      <MarqueeText text={p.name} className={playlistNameClass} />
+                      <span className="flex shrink-0 items-center gap-1">
                         {(p.sources ?? []).map((source) => {
                           const meta = platforms.find((m) => m.id === source.platform)
                           return (
@@ -621,13 +649,13 @@ export default function LocalPlaylistPanel({
                             </span>
                           )
                         })}
-                        <span>{t('localPlaylist.songCount', { count: p.songCount })}</span>
+                        <span className={playlistCountClass}>{p.songCount}</span>
                       </span>
-                    </span>
-                  </button>
-                )}
-              </li>
-            ))}
+                    </button>
+                  )}
+                </li>
+              )
+            })}
           </ul>
         </div>
       </div>
