@@ -88,13 +88,13 @@ tests/             # Vitest 单元测试（core/main/platforms/renderer）
 - 异常与加载：所有异常统一走 `renderer/src/utils/notifyError.ts` 右上角 toast（平台中文文案作详情、代码性报错过滤为通用标题），无组件内联错误条；歌单列表/歌曲拉取 30s 超时；超 3s 文案切「网络较慢，正在获取中…」并保持转圈，loading 区域居中
 - 数据库：统一 `userData/app.db`（WAL），十张表——`sync_tasks`（同步历史，逐首明细存 `detail`）、`app_settings`、`song_mappings`（人工确认优先）、`playlist_cache`、`playlist_song_cache`、`playlist_song_meta`、`playlist_cache_schema`（按 platform 隔离 scope）、`local_playlists`、`local_playlist_songs`、`schema_migrations`
 - 迁移：`main/migrations.ts` 当前唯一迁移为发布前基线 `version=6`（幂等；内测旧库补列并回填 `created_at_ms`，无条件重建 `playlist_cache`；列补丁包在 `tableExists` 检查内，全新库跳过由 Store 最新 DDL 建表）；`runMigrations` 在 `getDatabase()` 中先于所有 Store 建表；正式发布后 `MIGRATIONS` 只追加（version ≥ 7）、不修改、不删除
-- 缓存策略（`core/cachePolicy.ts` + `playlistCacheService` + `playlistCacheStore`）：列表 TTL 10min、歌曲 TTL 30min；手动强制刷新为令牌桶（容量 3、每 10s 补 1 令牌），令牌不足静默降级返回缓存，渲染层按钮同步冷却；单飞去重共享在途请求；重命名/删除/增删歌曲/同步建单后联动失效；`PLAYLIST_CACHE_SCHEMA_VERSION=5`，字段映射或过滤规则变更需 bump
+- 缓存策略（`core/cachePolicy.ts` + `playlistCacheService` + `playlistCacheStore`）：列表 TTL 10min、歌曲 TTL 30min；手动强制刷新为令牌桶（容量 3、每 10s 补 1 令牌），令牌不足静默降级返回缓存，渲染层按钮同步冷却；单飞去重共享在途请求；重命名/删除/增删歌曲/同步建单后联动失效；`PLAYLIST_CACHE_SCHEMA_VERSION=6`（v5→v6 封面 URL 统一 https），字段映射/过滤规则/缓存内容协议变更需 bump。封面一律 https：平台适配器源头 `toHttps` 升级，渲染层 `utils/coverUrl.ts` 兜底（打包版 CSP `img-src` 只放行 https）
 - 登录态内存缓存（`main/loginStatusCache.ts`）：`platform:login-status` 命中直接返回，首次查询写入；扫码登录成功/登出/保活失效时清除，网页登录先写 `pending` 临时态、后台补全后覆盖；渲染层初始化逐平台独立点亮，失败平台 3s 重试
 - 数据层模式：`createXxxStore(db)` 依赖注入 + `appDatabase.getDatabase()` 统一入口 + `xxxService.ts` 供 IPC 调用；凭证与 QQ 会话文件保持文件存储，不进 SQLite
 
 ### 3.5 桌面体验与设置
 - 桌面能力：单实例锁与二次启动聚焦、窗口状态记忆（防抖 500ms 保存、跨显示器校验）、应用菜单（中英随语言重建）、开机启动真实设置、系统通知（仅窗口失焦、四类事件）、崩溃恢复对话框与重启、版本号显示、自动更新
-- 自动更新：唯一源为 GitHub Releases（`electron-builder.yml` 的 `publish`），无备用源；状态广播 `checking/available/not-available/downloading/downloaded/error`；开发模式拒绝检查
+- 自动更新：唯一源为 GitHub Releases（`electron-builder.yml` 的 `publish`），无备用源；状态广播 `checking/available/not-available/downloading/downloaded/error`；开发模式拒绝检查。全平台关闭 `autoDownload/autoInstallOnAppQuit`，`updater.ts` 检查命中后按平台下载安装包（dmg/exe/AppImage）、校验 sha512、打开或定位，由用户手动完成安装；不再有原生自动安装分支
 - 快捷键：`main/menu.ts` 统一定义——导航 `CmdOrCtrl+1..5`（快速创建/歌单/同步/账号/设置），`CmdOrCtrl+N` 为隐藏别名；`before-input-event` 处理 `Cmd/Ctrl+,`（设置）与正式包吞掉 `Cmd/Ctrl+R`（含 Shift）/F5；View 菜单 Reload/DevTools 仅开发模式，`webPreferences.devTools: isDev`；不注册 globalShortcut
 - 设置页：分区（外观/通用/网络/高级/数据/关于）+ 设置搜索（命中自动展开高级区）+ 主题三态 `light/dark/system`（默认深色；渲染层 `prefers-color-scheme` 联动，主进程同步 `nativeTheme.themeSource`）+ 阈值语义预设（宽松 0.45 / 平衡 0.6 / 严格 0.75）+ 重试/间隔滑块（350ms 防抖回写）+ 高级区默认折叠与「恢复默认」+ 开关失败回滚 + 代理「先测后用」（`main/proxy.ts testProxy` 独立 axios 请求 Cloudflare 204，测试通过且输入未改动才应用，未通过时 Apply 置灰、外层 span 悬浮 Tooltip、Enter 同样拦截）+ 清空歌曲缓存两步确认（`playlistCacheStore.clearAll` 物理删除）
 - 调优参数单一事实源 `core/sync/tuning.ts`：`SYNC_TUNING_DEFAULTS`（threshold 0.6 / retries 2 / interval 500ms）、`SYNC_TUNING_RANGE`（0.4~0.9 / 0~5 / 300~3000ms）、`THRESHOLD_PRESETS`（0.45/0.6/0.75）；引擎、主进程、设置页三处同源引用
@@ -126,11 +126,11 @@ tests/             # Vitest 单元测试（core/main/platforms/renderer）
 | 平台 | 4：netease / qqmusic / kugou / applemusic | `src/platforms/*/index.ts` |
 | SQLite 表 | 10（含 `schema_migrations`） | `src/main/*Store.ts`、`migrations.ts` |
 | 迁移 | 唯一基线 `version=6`，启动先于 Store 建表 | `src/main/migrations.ts:43-106`、`appDatabase.ts:73-80` |
-| 缓存 schema | `PLAYLIST_CACHE_SCHEMA_VERSION=5` | `src/core/cachePolicy.ts:11` |
-| 缓存常量 | 列表 TTL 10min / 歌曲 TTL 30min / 令牌桶 3 个、10s 补 1 | `src/core/cachePolicy.ts:17-36` |
+| 缓存 schema | `PLAYLIST_CACHE_SCHEMA_VERSION=6` | `src/core/cachePolicy.ts:12` |
+| 缓存常量 | 列表 TTL 10min / 歌曲 TTL 30min / 令牌桶 3 个、10s 补 1 | `src/core/cachePolicy.ts:18-37` |
 | 同步调优 | 默认 0.6 / 2 / 500ms；预设 0.45 / 0.6 / 0.75 | `src/core/sync/tuning.ts:17-40` |
 | 更新源 | GitHub Releases（唯一源） | `electron-builder.yml:26-32`、`src/main/updater.ts:14-15` |
-| 测试数 | 384 | `npm run test` 输出 |
+| 测试数 | 392 | `npm run test` 输出 |
 
 **构建**：本地未执行 `electron-builder` 打包；tag 推送后由发布工作流在 CI 完成三平台未签名构建、更新元数据生成与 draft release（见第 8 节，尚未执行）。
 
@@ -220,7 +220,7 @@ tests/             # Vitest 单元测试（core/main/platforms/renderer）
 - **校验**：tag 必须与 `package.json` 的 `version` 一致；不校验签名凭据（本项目不购买签名/公证证书，构建不提示）
 - **构建**：mac（dmg/zip）、win（nsis）、linux（AppImage）三平台独立 job，均执行 lint/typecheck/test/build 后 `electron-builder --<target> --publish never`（`CSC_IDENTITY_AUTO_DISCOVERY: 'false'`），上传安装包与 `latest*.yml` 到 Artifacts
 - **draft release**：汇总 Artifacts、校验 `latest.yml`/`latest-mac.yml`/`latest-linux.yml` 三份更新元数据齐全，创建 GitHub draft release；人工复核安装包与元数据后转正式
-- **更新源**：仅 GitHub Releases（`electron-builder.yml` 的 `publish`），未配置备用源（Gitee 单文件 100MB 配额无法托管安装包）
+- **更新源**：仅 GitHub Releases（`electron-builder.yml` 的 `publish`），未配置备用源（Gitee 单文件 100MB 配额无法托管安装包）；客户端按 `v<version>/<asset>` 固定地址下载对应平台安装包，不调用 GitHub API `/releases/latest`（未认证限流 60 次/小时）
 - **用户安装**：未签名包在 macOS 需右键打开，在 Windows 需选择「仍要运行」（见 `README.md`「发布流程」）
 - **版本记录**：`CHANGELOG.md` 随版本更新；回滚只发更高版本，不重发同版本
 - **工具链边界**：当前 electron-builder 26.18.0 不强制更新清单签名；升级到 27 时发布构建需 `electron-builder create-update-key` 生成的 Ed25519 key（`ELECTRON_BUILDER_UPDATE_SIGN_KEY`），不在发布窗口升级

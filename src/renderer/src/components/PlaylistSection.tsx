@@ -31,6 +31,7 @@ import Tooltip from './Tooltip'
 import { notify } from './toast'
 import { notifyError } from '../utils/notifyError'
 import { operationAllowed, operationReason } from '../utils/platformCapabilities'
+import { toHttpsCover } from '../utils/coverUrl'
 
 const log = createRendererLogger('renderer.playlist')
 
@@ -68,7 +69,7 @@ function PlaylistCover({ playlist }: { playlist: PlatformPlaylist }) {
   }
   return (
     <img
-      src={playlist.coverUrl}
+      src={toHttpsCover(playlist.coverUrl)}
       alt={playlist.name}
       loading="lazy"
       onError={() => setFailed(true)}

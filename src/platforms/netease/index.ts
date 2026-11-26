@@ -11,7 +11,7 @@ import {
   type LoginStatusRaw,
   type QrCheckRaw,
 } from '../base'
-import { artistNames, asArray, asObject, pickString, type JsonObject } from '../json'
+import { artistNames, asArray, asObject, pickString, toHttps, type JsonObject } from '../json'
 
 /** NeteaseCloudMusicApi 的模块函数签名（CJS） */
 export type NcmApiFn = (query?: Record<string, unknown>) => Promise<unknown>
@@ -128,7 +128,7 @@ export class NeteaseAdapter extends BasePlatformAdapter {
           id,
           name: pickString(item.name) ?? '未命名歌单',
           songCount: Number(item.trackCount ?? item.track_count ?? 0),
-          coverUrl: pickString(item.coverImgUrl),
+          coverUrl: toHttps(pickString(item.coverImgUrl)),
           webUrl: `https://music.163.com/#/playlist?id=${id}`,
           appUrl: `orpheus://playlist/${id}`,
         }
@@ -236,7 +236,7 @@ function mapTrack(t: unknown): PlatformSong {
     title: pickString(item.name, item.title) ?? '未知歌曲',
     artist: artistNames(asArray(item.ar ?? item.artists)),
     album: pickString(album.name),
-    coverUrl: pickString(album.picUrl),
+    coverUrl: toHttps(pickString(album.picUrl)),
     durationMs: typeof item.dt === 'number' ? item.dt : undefined,
     genre: pickString(item.genre),
   }

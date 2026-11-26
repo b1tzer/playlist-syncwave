@@ -49,7 +49,7 @@ npm run typecheck  # TypeScript 全量类型检查
 npm run lint       # ESLint
 ```
 
-发布前依次执行 `npm run typecheck && npm run lint && npm run test && npm run build`，全部通过后再打包；人工验收已于 2026-11-25 完成（清单见 `planning.md` 第 5 节）。当前基线：384 项测试全部通过。
+发布前依次执行 `npm run typecheck && npm run lint && npm run test && npm run build`，全部通过后再打包；人工验收已于 2026-11-25 完成（清单见 `planning.md` 第 5 节）。当前基线：392 项测试全部通过。
 
 ### 打包
 
@@ -68,6 +68,9 @@ npm run dist:linux  # Linux：AppImage
 
 - **macOS**：打开 dmg/zip 后若被 Gatekeeper 拦截，右键安装包 →「打开」，或在「系统设置 → 隐私与安全性」中允许
 - **Windows**：SmartScreen 提示时选择「更多信息」→「仍要运行」
+- **Linux**：AppImage 直接运行即可，无需安装
+
+应用内检查到新版本时会自动下载对应平台安装包并展示：macOS 打开 dmg、Windows 运行 NSIS 安装程序、Linux 在文件管理器中定位 AppImage，由你手动完成后续步骤；设置页可重新打开或定位安装包。
 
 `workflow_dispatch` 仅用于构建预演：产出三平台 Artifacts，不发布。本地临时打包可直接用上面的 `npm run dist*`，但不会上传更新元数据。
 

@@ -12,7 +12,7 @@ import { createLogger } from '@core/logging'
 import type { PlatformModule } from '../meta'
 import type { HttpHandler } from '../httpHandler'
 import { BasePlatformAdapter, type LoginStatusRaw, type QrCheckRaw } from '../base'
-import { artistNames, asArray, asObject, pickString, type JsonObject } from '../json'
+import { artistNames, asArray, asObject, pickString, toHttps, type JsonObject } from '../json'
 
 const log = createLogger({ module: 'platform.qqmusic' })
 
@@ -25,7 +25,7 @@ const log = createLogger({ module: 'platform.qqmusic' })
  */
 function coverOf(item: JsonObject, album: JsonObject): string | undefined {
   const direct = pickString(album.picUrl, album.albumPic, album.pic, item.albumPic, item.picUrl, item.coverUrl)
-  if (direct) return direct
+  if (direct) return toHttps(direct)
   const albumMid = pickString(
     item.albummid,
     item.album_mid,
@@ -162,7 +162,7 @@ export class QqMusicAdapter extends BasePlatformAdapter {
           id,
           name: pickString(item.dirName, item.title, item.name) ?? '未命名歌单',
           songCount: Number(item.songNum ?? item.songCnt ?? item.song_count ?? 0),
-          coverUrl: pickString(item.picUrl, item.coverUrl, item.pic),
+          coverUrl: toHttps(pickString(item.picUrl, item.coverUrl, item.pic)),
           webUrl: `https://y.qq.com/n/ryqq/playlist/${id}`,
           appUrl: `qqmusic://qq.com/media/playSonglist?p=${id}`,
         }

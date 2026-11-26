@@ -334,7 +334,7 @@ export default function SettingsView() {
       case 'downloading':
         return t('settings.updateDownloading', { percent: String(updateStatus.percent) })
       case 'downloaded':
-        return t('settings.updateDownloaded')
+        return t('settings.updateDownloadedManual')
       case 'error':
         return t('settings.updateFailed')
     }
@@ -442,12 +442,17 @@ export default function SettingsView() {
           {updateStatus?.state === 'downloaded' ? (
             <button
               onClick={() => {
-                log.info('settings.update-install', '重启并安装新版本')
-                window.electronAPI.updater.quitAndInstall().catch(() => {})
+                log.info('settings.update-install', '重新打开安装包')
+                window.electronAPI.updater
+                  .openInstaller()
+                  .catch((e) => {
+                    log.error('settings.update-install-failed', '打开更新失败', e)
+                    setUpdateStatus({ state: 'error', message: t('settings.updateFailed') })
+                  })
               }}
               className="rounded-lg bg-primary px-3 py-1.5 font-label-md text-label-md font-medium text-on-primary transition-colors hover:brightness-110"
             >
-              {t('settings.updateRestart')}
+              {t('settings.updateOpenInstaller')}
             </button>
           ) : (
             <button

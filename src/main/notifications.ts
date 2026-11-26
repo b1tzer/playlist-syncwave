@@ -35,8 +35,8 @@ const LABELS: Record<
     syncStoppedBody: (name) => `「${name}」的同步任务已停止，已完成部分已保留`,
     accountExpired: '账号已过期',
     accountExpiredBody: (platform) => `${platform} 登录已失效，请重新扫码登录`,
-    updateReady: '新版本已就绪',
-    updateReadyBody: (version) => `SyncWave ${version} 已下载，重启应用即可完成安装`,
+    updateReady: '安装包已下载',
+    updateReadyBody: (version) => `SyncWave ${version} 安装包已下载，请按系统提示完成安装`,
   },
   'en-US': {
     syncDone: 'Sync completed',
@@ -50,8 +50,9 @@ const LABELS: Record<
     syncStoppedBody: (name) => `Sync of "${name}" was stopped; completed parts are kept`,
     accountExpired: 'Account expired',
     accountExpiredBody: (platform) => `${platform} login expired, please sign in again`,
-    updateReady: 'Update ready',
-    updateReadyBody: (version) => `SyncWave ${version} is downloaded; restart to install`,
+    updateReady: 'Installer downloaded',
+    updateReadyBody: (version) =>
+      `SyncWave ${version} installer is downloaded; follow the prompts to finish`,
   },
 }
 
@@ -108,7 +109,7 @@ export function notifyAccountExpired(platform: string): void {
   sendNotification(t.accountExpired, t.accountExpiredBody(platform))
 }
 
-/** 新版本下载完成 */
+/** 新版本安装包下载完成，提示用户手动完成安装 */
 export function notifyUpdateReady(version: string): void {
   const t = labels()
   sendNotification(t.updateReady, t.updateReadyBody(version))

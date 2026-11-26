@@ -55,10 +55,14 @@ describe('NeteaseAdapter — 映射契约', () => {
     expect(none).toBeNull()
   })
 
-  it('歌单列表映射：id/name/songCount', async () => {
+  it('歌单列表映射：id/name/songCount；http 封面强制升级 https', async () => {
     const api = makeApi({
       user_playlist: async () => ({
-        body: { playlist: [{ id: 1, name: '我的收藏', trackCount: 42 }] },
+        body: {
+          playlist: [
+            { id: 1, name: '我的收藏', trackCount: 42, coverImgUrl: 'http://p1.music.126.net/a.jpg' },
+          ],
+        },
       }),
     })
     const list = await new NeteaseAdapter(api).getUserPlaylists('c', '1')
@@ -67,7 +71,7 @@ describe('NeteaseAdapter — 映射契约', () => {
         id: '1',
         name: '我的收藏',
         songCount: 42,
-        coverUrl: undefined,
+        coverUrl: 'https://p1.music.126.net/a.jpg',
         webUrl: 'https://music.163.com/#/playlist?id=1',
         appUrl: 'orpheus://playlist/1',
       },

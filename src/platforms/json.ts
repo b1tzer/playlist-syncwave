@@ -24,6 +24,12 @@ export function asArray(v: unknown): unknown[] {
   return Array.isArray(v) ? v : []
 }
 
+/** 封面等图片 URL 强制 https（打包版渲染层 CSP 只放行 https 图片） */
+export function toHttps(url: string | undefined): string | undefined {
+  if (!url) return url
+  return url.replace(/^http:/, 'https:')
+}
+
 /** 歌手对象数组 → 顿号分隔的人名串（如 [{name:'A'},{name:'B'}] → 'A / B'） */
 export function artistNames(list: unknown[]): string {
   return list

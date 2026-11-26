@@ -120,7 +120,7 @@ const api = {
   /** 自动更新：状态流转（与主进程 updater.UpdateStatus 保持同构） */
   updater: {
     check: (): Promise<void> => ipcRenderer.invoke('update:check'),
-    quitAndInstall: (): Promise<void> => ipcRenderer.invoke('update:quit-and-install'),
+    openInstaller: (): Promise<void> => ipcRenderer.invoke('update:open-installer'),
     onStatus: (callback: (status: UpdateStatus) => void): (() => void) => {
       const listener = (_event: unknown, status: UpdateStatus) => callback(status)
       ipcRenderer.on('update:status', listener)

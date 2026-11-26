@@ -3,6 +3,7 @@ import type { PendingConfirmSession } from "@core/models/sync";
 import { createRendererLogger } from "../logging/rendererLogger";
 import { useI18n } from "../i18n";
 import { formatDuration } from "../sync/helpers";
+import { toHttpsCover } from "../utils/coverUrl";
 
 const log = createRendererLogger("renderer.confirm-dialog");
 
@@ -141,7 +142,7 @@ function Cover({ template }: { template: CandidateDisplayTemplate }) {
   }
   return (
     <img
-      src={template.coverUrl}
+      src={toHttpsCover(template.coverUrl)}
       alt={template.album ?? template.title}
       referrerPolicy="no-referrer"
       loading="lazy"

@@ -196,7 +196,7 @@ describe('QqMusicAdapter — serverless HTTP 映射', () => {
         id: '111',
         name: '我的歌单',
         songCount: 33,
-        coverUrl: 'http://x/y.jpg',
+        coverUrl: 'https://x/y.jpg',
         webUrl: 'https://y.qq.com/n/ryqq/playlist/111',
         appUrl: 'qqmusic://qq.com/media/playSonglist?p=111',
       },

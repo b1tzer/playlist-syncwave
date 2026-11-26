@@ -62,7 +62,7 @@ import {
 import { loadWindowState, trackWindowState } from './windowState'
 import { beginWebLogin } from './webLoginService'
 import { buildApplicationMenu, installWindowShortcuts } from './menu'
-import { setupAutoUpdater, checkForUpdates, quitAndInstall, setAutoUpdateEnabled } from './updater'
+import { setupAutoUpdater, checkForUpdates, openInstaller, setAutoUpdateEnabled } from './updater'
 import { notifySyncResult, notifySyncStopped } from './notifications'
 import { createPlaylistCacheService } from './playlistCacheService'
 import { getDatabase, takePendingResumeTasks } from './appDatabase'
@@ -259,9 +259,9 @@ ipcMain.handle('update:check', () =>
   }),
 )
 
-ipcMain.handle('update:quit-and-install', () =>
-  ipcLog.time('update.quit-and-install', async () => {
-    quitAndInstall()
+ipcMain.handle('update:open-installer', () =>
+  ipcLog.time('update.open-installer', async () => {
+    await openInstaller()
   }),
 )
 

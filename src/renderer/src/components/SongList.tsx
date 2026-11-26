@@ -2,6 +2,7 @@ import { useState, type ReactNode } from 'react'
 import type { PlatformSong } from '@core/models/platform'
 import { useI18n } from '../i18n'
 import { formatDuration } from '../sync/helpers'
+import { toHttpsCover } from '../utils/coverUrl'
 
 interface SongListProps {
   songs: PlatformSong[]
@@ -38,7 +39,7 @@ function SongCover({ song }: { song: PlatformSong }) {
   }
   return (
     <img
-      src={song.coverUrl}
+      src={toHttpsCover(song.coverUrl)}
       alt={t('song.coverAlt', { title: song.title })}
       loading="lazy"
       onError={() => setFailed(true)}
