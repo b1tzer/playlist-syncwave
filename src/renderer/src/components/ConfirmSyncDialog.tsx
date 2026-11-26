@@ -3,7 +3,7 @@ import type { PendingConfirmSession } from "@core/models/sync";
 import { createRendererLogger } from "../logging/rendererLogger";
 import { useI18n } from "../i18n";
 import { formatDuration } from "../sync/helpers";
-import { toHttpsCover } from "../utils/coverUrl";
+import CoverImage from "./CoverImage";
 
 const log = createRendererLogger("renderer.confirm-dialog");
 
@@ -128,30 +128,6 @@ function HighlightArtist({
   return <>{nodes}</>;
 }
 
-/** 封面图组件：防盗链 referer 置空，加载失败回退占位图标 */
-function Cover({ template }: { template: CandidateDisplayTemplate }) {
-  const [failed, setFailed] = useState(false);
-  if (!template.coverUrl || failed) {
-    return (
-      <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-md bg-surface-container-highest">
-        <span className="material-symbols-outlined text-2xl text-outline">
-          music_note
-        </span>
-      </span>
-    );
-  }
-  return (
-    <img
-      src={toHttpsCover(template.coverUrl)}
-      alt={template.album ?? template.title}
-      referrerPolicy="no-referrer"
-      loading="lazy"
-      onError={() => setFailed(true)}
-      className="h-14 w-14 shrink-0 rounded-md object-cover"
-    />
-  );
-}
-
 /** 候选卡片：按固定模板参数渲染，歌名/歌手与目标一致处高亮 */
 function CandidateCard({
   candidate,
@@ -173,7 +149,13 @@ function CandidateCard({
           : "border-outline-variant bg-surface-container-lowest hover:border-primary"
       }`}
     >
-      <Cover template={candidate} />
+      <CoverImage
+        src={candidate.coverUrl}
+        alt={candidate.album ?? candidate.title}
+        size="lg"
+        fallbackIcon="music_note"
+        noReferrer
+      />
       <span className="min-w-0 flex-1">
         <span className="block truncate font-body-md text-body-md text-on-surface">
           <HighlightText

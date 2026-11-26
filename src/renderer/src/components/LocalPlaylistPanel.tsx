@@ -1,4 +1,9 @@
-import { useEffect, useRef, useState } from 'react'
+import {
+  useEffect,
+  useRef,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+} from 'react'
 import type { LocalPlaylist, LocalPlaylistSong } from '@core/models/localPlaylist'
 import type { MatchQuery } from '@core/models/match'
 import type { PlatformAccount, PlatformMeta, PlatformSong } from '@core/models/platform'
@@ -15,6 +20,8 @@ import PlatformLogo from './PlatformLogo'
 import { notify } from './toast'
 import { notifyError } from '../utils/notifyError'
 import { operationAllowed } from '../utils/platformCapabilities'
+import CoverImage from './CoverImage'
+import ContextMenu, { type ContextMenuEntry } from './ContextMenu'
 
 const log = createRendererLogger('renderer.local-playlist')
 
@@ -61,6 +68,12 @@ export default function LocalPlaylistPanel({
   const [syncPicker, setSyncPicker] = useState(false)
   // 导出格式选择
   const [exportPicker, setExportPicker] = useState(false)
+  // 本地歌单列表右键菜单
+  const [contextMenu, setContextMenu] = useState<{
+    x: number
+    y: number
+    entries: ContextMenuEntry[]
+  } | null>(null)
 
   // 添加歌曲：搜索已登录平台
   const [searchPlatform, setSearchPlatform] = useState('')
@@ -107,11 +120,13 @@ export default function LocalPlaylistPanel({
     })
   }, [])
 
+  /** 读取指定歌单歌曲：选中加载与右键菜单操作共用 */
+  const fetchSongs = async (id: string) => window.electronAPI.localPlaylists.songs(id)
+
   const loadSongs = async (id: string) => {
     setLoadingSongs(true)
     try {
-      const list = await window.electronAPI.localPlaylists.songs(id)
-      setSongs(list)
+      setSongs(await fetchSongs(id))
     } catch (e) {
       log.error('local-playlist.songs-failed', '拉取本地歌单歌曲失败', e)
       setSongs([])
@@ -220,16 +235,24 @@ export default function LocalPlaylistPanel({
     }
   }
 
-  const handleRemoveSong = async (songId: number) => {
-    if (!activeId) return
+  /** 批量移除歌曲（行内单曲删除与列表多选删除共用）；本地歌曲 id 即歌单内序号 */
+  const handleRemoveSongs = async (songIds: number[]): Promise<boolean> => {
+    if (!activeId || songIds.length === 0) return false
     try {
-      await window.electronAPI.localPlaylists.removeSongs(activeId, [songId])
-      setSongs((prev) => prev.filter((s) => s.id !== songId))
+      await window.electronAPI.localPlaylists.removeSongs(activeId, songIds)
+      const removed = new Set(songIds)
+      // 主进程删除后重排 position，界面序号同步重排，避免后续删除错位
+      setSongs((prev) => prev.filter((s) => !removed.has(s.id)).map((s, i) => ({ ...s, id: i })))
       await fetchPlaylists()
-      log.info('local-playlist.song-removed', '已从本地歌单移除歌曲', { id: activeId })
+      log.info('local-playlist.song-removed', '已从本地歌单移除歌曲', {
+        id: activeId,
+        count: songIds.length,
+      })
+      return true
     } catch (e) {
       log.error('local-playlist.song-remove-failed', '移除歌曲失败', e)
       notify('error', t('localPlaylist.removeFailed'))
+      return false
     }
   }
 
@@ -285,6 +308,7 @@ export default function LocalPlaylistPanel({
           artist: song.artist ?? '',
           album: song.album,
           durationMs: song.durationMs,
+          coverUrl: song.coverUrl,
         },
       ])
       // 添加成功：结果行保留并标记「已添加」，不再从结果里移除
@@ -304,11 +328,14 @@ export default function LocalPlaylistPanel({
     }
   }
 
-  /** 导出当前歌单为 m3u/csv 文件 */
-  const handleExport = async (format: 'm3u' | 'csv') => {
-    if (!activePlaylist || songs.length === 0) return
-    setExportPicker(false)
-    const exportSongs = songs.map((s) => ({
+  /** 导出指定歌单为 m3u/csv 文件（头部按钮与右键菜单共用） */
+  const exportPlaylist = async (
+    playlist: LocalPlaylist,
+    playlistSongs: LocalPlaylistSong[],
+    format: 'm3u' | 'csv',
+  ) => {
+    if (playlistSongs.length === 0) return
+    const exportSongs = playlistSongs.map((s) => ({
       title: s.title,
       artist: s.artist || undefined,
       album: s.album,
@@ -316,22 +343,32 @@ export default function LocalPlaylistPanel({
     }))
     const content = format === 'm3u' ? toM3u(exportSongs) : toCsv(exportSongs)
     try {
-      const saved = await window.electronAPI.saveTextFile(activePlaylist.name, content, format)
-      log.info('local-playlist.exported', '歌单已导出', { id: activeId, format, saved })
+      const saved = await window.electronAPI.saveTextFile(playlist.name, content, format)
+      log.info('local-playlist.exported', '歌单已导出', { id: playlist.id, format, saved })
       if (saved) notify('success', t('localPlaylist.exported'), saved)
     } catch (e) {
-      log.error('local-playlist.export-failed', '导出失败', e, { id: activeId })
+      log.error('local-playlist.export-failed', '导出失败', e, { id: playlist.id })
       notify('error', t('localPlaylist.exportFailed'))
     }
   }
 
-  const handleSyncTo = async (targetPlatform: string) => {
-    if (!activeId || songs.length === 0) return
-    setSyncPicker(false)
+  const handleExport = async (format: 'm3u' | 'csv') => {
+    if (!activePlaylist || songs.length === 0) return
+    setExportPicker(false)
+    await exportPlaylist(activePlaylist, songs, format)
+  }
+
+  /** 从指定歌单发起同步（头部按钮与右键菜单共用） */
+  const syncPlaylist = async (
+    playlist: LocalPlaylist,
+    playlistSongs: LocalPlaylistSong[],
+    targetPlatform: string,
+  ) => {
+    if (syncRunning || pendingConfirm !== null || playlistSongs.length === 0) return
     // 去重后转同步查询
     const seen = new Set<string>()
     const queries: MatchQuery[] = []
-    for (const s of songs) {
+    for (const s of playlistSongs) {
       const key = songDupKey(s)
       if (seen.has(key)) continue
       seen.add(key)
@@ -343,18 +380,24 @@ export default function LocalPlaylistPanel({
       })
     }
     log.info('local-playlist.sync-to', '从本地歌单发起同步', {
-      id: activeId,
+      id: playlist.id,
       targetPlatform,
       total: queries.length,
     })
     await run({
       targetPlatform,
       queries,
-      name: activePlaylist?.name ?? '',
+      name: playlist.name,
       source: 'local-playlist',
       onTaskUpdate,
       onPendingConfirmChange,
     })
+  }
+
+  const handleSyncTo = async (targetPlatform: string) => {
+    if (!activePlaylist || songs.length === 0) return
+    setSyncPicker(false)
+    await syncPlaylist(activePlaylist, songs, targetPlatform)
   }
 
   /** 同步目标：已登录 + 具备建单/加曲能力（能力清单由平台适配器声明） */
@@ -364,6 +407,96 @@ export default function LocalPlaylistPanel({
       operationAllowed(p, 'createPlaylist') &&
       operationAllowed(p, 'addSongs'),
   )
+
+  const handleMenuSync = async (playlist: LocalPlaylist, targetPlatform: string) => {
+    try {
+      await syncPlaylist(playlist, await fetchSongs(playlist.id), targetPlatform)
+    } catch (e) {
+      log.error('local-playlist.sync-fetch-failed', '读取本地歌单歌曲失败', e, { id: playlist.id })
+      notify('error', t('localPlaylist.songsFailed'))
+    }
+  }
+
+  const handleMenuExport = async (playlist: LocalPlaylist, format: 'm3u' | 'csv') => {
+    try {
+      await exportPlaylist(playlist, await fetchSongs(playlist.id), format)
+    } catch (e) {
+      log.error('local-playlist.export-fetch-failed', '读取本地歌单歌曲失败', e, {
+        id: playlist.id,
+      })
+      notify('error', t('localPlaylist.songsFailed'))
+    }
+  }
+
+  /** 右键行：先选中该行（详情与删除确认随之指向目标），再按目标歌单构建菜单 */
+  const handleRowContextMenu = (e: ReactMouseEvent, playlist: LocalPlaylist) => {
+    e.preventDefault()
+    log.debug('local-playlist.context-menu', '打开本地歌单右键菜单', { id: playlist.id })
+    if (activeId !== playlist.id) handleSelect(playlist.id)
+
+    const hasSongs = playlist.songCount > 0
+    const syncBlocked = syncRunning || pendingConfirm !== null
+    const entries: ContextMenuEntry[] = [
+      {
+        type: 'item',
+        id: 'rename',
+        label: t('localPlaylist.rename'),
+        icon: 'edit',
+        onSelect: () => {
+          setRenameDraft(playlist.name)
+          setRenamingId(playlist.id)
+        },
+      },
+    ]
+    if (syncTargets.length > 0) {
+      entries.push({ type: 'divider', id: 'divider-sync' })
+      for (const p of syncTargets) {
+        entries.push({
+          type: 'item',
+          id: `sync-${p.id}`,
+          label: t('playlist.syncToPlatform', { platform: p.name }),
+          iconNode: (
+            <PlatformLogo
+              platform={p.id}
+              name={p.name}
+              icon={p.icon}
+              size="h-4 w-4"
+              iconSize="text-sm"
+            />
+          ),
+          disabled: !hasSongs || syncBlocked,
+          onSelect: () => void handleMenuSync(playlist, p.id),
+        })
+      }
+    }
+    entries.push({ type: 'divider', id: 'divider-export' })
+    entries.push({
+      type: 'item',
+      id: 'export-m3u',
+      label: t('playlist.exportM3u'),
+      icon: 'download',
+      disabled: !hasSongs,
+      onSelect: () => void handleMenuExport(playlist, 'm3u'),
+    })
+    entries.push({
+      type: 'item',
+      id: 'export-csv',
+      label: t('playlist.exportCsv'),
+      icon: 'table',
+      disabled: !hasSongs,
+      onSelect: () => void handleMenuExport(playlist, 'csv'),
+    })
+    entries.push({ type: 'divider', id: 'divider-delete' })
+    entries.push({
+      type: 'item',
+      id: 'delete',
+      label: t('localPlaylist.delete'),
+      icon: 'delete_outline',
+      danger: true,
+      onSelect: () => setConfirmDelete(true),
+    })
+    setContextMenu({ x: e.clientX, y: e.clientY, entries })
+  }
 
   return (
     <div className="mt-6 flex min-h-0 flex-1 gap-4">
@@ -455,17 +588,40 @@ export default function LocalPlaylistPanel({
                       setRenameDraft(p.name)
                       setRenamingId(p.id)
                     }}
+                    onContextMenu={(e) => handleRowContextMenu(e, p)}
                     className={`flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left transition-colors ${
                       activeId === p.id
                         ? 'bg-primary/10 text-primary'
                         : 'text-on-surface hover:bg-surface-container-high'
                     }`}
                   >
-                    <span className="material-symbols-outlined text-base">queue_music</span>
+                    <CoverImage
+                      src={p.coverUrl}
+                      alt={p.name}
+                      size="sm"
+                      fallbackIcon="queue_music"
+                    />
                     <span className="min-w-0 flex-1">
                       <span className="block truncate font-label-md text-label-md">{p.name}</span>
-                      <span className="block font-label-sm text-label-sm text-on-surface-variant">
-                        {t('localPlaylist.songCount', { count: p.songCount })}
+                      <span className="flex items-center gap-1 font-label-sm text-label-sm text-on-surface-variant">
+                        {(p.sources ?? []).map((source) => {
+                          const meta = platforms.find((m) => m.id === source.platform)
+                          return (
+                            <span
+                              key={`${source.platform}:${source.playlistId}`}
+                              title={meta?.name ?? source.platform}
+                            >
+                              <PlatformLogo
+                                platform={source.platform}
+                                name={meta?.name ?? source.platform}
+                                icon={meta?.icon ?? 'cloud'}
+                                size="h-4 w-4"
+                                iconSize="text-sm"
+                              />
+                            </span>
+                          )
+                        })}
+                        <span>{t('localPlaylist.songCount', { count: p.songCount })}</span>
                       </span>
                     </span>
                   </button>
@@ -697,18 +853,25 @@ export default function LocalPlaylistPanel({
                 </p>
               ) : (
                 <SongList
+                  key={activeId ?? 'none'}
                   songs={songs.map((s) => ({
                     id: String(s.id),
                     title: s.title,
                     artist: s.artist ?? '',
                     album: s.album,
                     durationMs: s.durationMs,
+                    coverUrl: s.coverUrl,
                   }))}
                   showIndex
                   showHeader
+                  selectable
+                  onRemoveSelected={(ids) => handleRemoveSongs(ids.map(Number))}
                   renderAction={(song) => (
                     <button
-                      onClick={() => void handleRemoveSong(Number(song.id))}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        void handleRemoveSongs([Number(song.id)])
+                      }}
                       title={t('localPlaylist.remove')}
                       className="flex items-center rounded-md p-1 text-outline opacity-0 transition-opacity hover:bg-surface-container-highest hover:text-error group-hover:opacity-100"
                     >
@@ -721,6 +884,17 @@ export default function LocalPlaylistPanel({
           </>
         )}
       </div>
+
+      {contextMenu && (
+        <ContextMenu
+          open
+          x={contextMenu.x}
+          y={contextMenu.y}
+          ariaLabel={t('localPlaylist.menuLabel')}
+          entries={contextMenu.entries}
+          onClose={() => setContextMenu(null)}
+        />
+      )}
     </div>
   )
 }

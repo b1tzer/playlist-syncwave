@@ -116,4 +116,106 @@ describe('localPlaylistStore — 本地歌单存储', () => {
       identifiers: { albumId: '14415', aliases: ['晴天（Live）'] },
     })
   })
+
+  it('封面：歌单与歌曲封面往返保持，setCoverIfEmpty 不覆盖已有封面', () => {
+    store.create(
+      'x',
+      '有封面的歌单',
+      '2024-01-01T00:00:00.000Z',
+      {
+        platform: 'netease',
+        playlistId: '123',
+        coverUrl: 'https://p1.example/cover.jpg',
+      },
+    )
+    store.replaceSongs(
+      'x',
+      [
+        {
+          title: '晴天',
+          artist: '周杰伦',
+          coverUrl: 'https://p1.example/song.jpg',
+        },
+      ],
+      '2024-01-02T00:00:00.000Z',
+    )
+    expect(store.get('x')?.coverUrl).toBe('https://p1.example/cover.jpg')
+    expect(store.get('x')?.coverSource).toBe('platform')
+    expect(store.songs('x')[0].coverUrl).toBe('https://p1.example/song.jpg')
+    store.setCoverIfEmpty('x', 'https://p2.example/other.jpg', 'song', '2024-01-03T00:00:00.000Z')
+    expect(store.get('x')?.coverUrl).toBe('https://p1.example/cover.jpg')
+
+    store.create('y', '手工歌单', '2024-01-01T00:00:00.000Z')
+    store.setCoverIfEmpty('y', 'https://p2.example/derived.jpg', 'song', '2024-01-03T00:00:00.000Z')
+    expect(store.get('y')?.coverUrl).toBe('https://p2.example/derived.jpg')
+    expect(store.get('y')?.coverSource).toBe('song')
+  })
+
+  it('多来源与幂等增量同步：同名来源不重复建单，重复歌曲原地更新，新歌追加', () => {
+    store.create('x', '合并歌单', '2024-01-01T00:00:00.000Z')
+    store.addOrUpdateSource(
+      'x',
+      { platform: 'netease', playlistId: 'p1', webUrl: 'https://music.163.com/#/playlist?id=p1' },
+      '2024-01-01T00:00:00.000Z',
+    )
+    expect(store.findBySource('netease', 'p1')).toBe('x')
+    expect(store.listSources('x')).toHaveLength(1)
+
+    const first = store.upsertSongs(
+      'x',
+      [
+        { title: '晴天', artist: '周杰伦', sourceSongId: 's1' },
+        { title: '稻香', artist: '周杰伦', sourceSongId: 's2' },
+      ],
+      'netease',
+      '2024-01-02T00:00:00.000Z',
+    )
+    expect(first).toEqual({ added: 2, updated: 0 })
+
+    store.addOrUpdateSource(
+      'x',
+      { platform: 'qqmusic', playlistId: 'p2' },
+      '2024-01-03T00:00:00.000Z',
+    )
+    const second = store.upsertSongs(
+      'x',
+      [
+        { title: '晴天（修正）', artist: '周杰伦', sourceSongId: 's1' },
+        { title: '青花瓷', artist: '周杰伦', sourceSongId: 's3' },
+      ],
+      'qqmusic',
+      '2024-01-03T00:00:00.000Z',
+    )
+    expect(second).toEqual({ added: 2, updated: 0 })
+    expect(store.findBySource('qqmusic', 'p2')).toBe('x')
+    expect(store.get('x')?.sources?.map((s) => s.platform).sort()).toEqual(['netease', 'qqmusic'])
+
+    const repeat = store.upsertSongs(
+      'x',
+      [
+        { title: '晴天（再修正）', artist: '周杰伦', sourceSongId: 's1' },
+        { title: '稻香', artist: '周杰伦', sourceSongId: 's2' },
+      ],
+      'netease',
+      '2024-01-04T00:00:00.000Z',
+    )
+    expect(repeat).toEqual({ added: 0, updated: 2 })
+    const songs = store.songs('x')
+    expect(songs).toHaveLength(4)
+    expect(songs.find((s) => s.sourceSongId === 's1')?.title).toBe('晴天（再修正）')
+    expect(songs.find((s) => s.sourcePlatform === 'qqmusic' && s.sourceSongId === 's1')?.title).toBe(
+      '晴天（修正）',
+    )
+  })
+
+  it('一个平台歌单只归属一个本地歌单：重复登记到别处视为改派', () => {
+    store.create('a', 'A', '2024-01-01T00:00:00.000Z')
+    store.create('b', 'B', '2024-01-01T00:00:00.000Z')
+    store.addOrUpdateSource('a', { platform: 'netease', playlistId: 'n1' }, '2024-01-02T00:00:00.000Z')
+    expect(store.findBySource('netease', 'n1')).toBe('a')
+    store.addOrUpdateSource('b', { platform: 'netease', playlistId: 'n1' }, '2024-01-03T00:00:00.000Z')
+    expect(store.findBySource('netease', 'n1')).toBe('b')
+    expect(store.listSources('a')).toHaveLength(0)
+    expect(store.listSources('b')).toHaveLength(1)
+  })
 })

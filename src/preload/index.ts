@@ -16,7 +16,11 @@ import type {
   SyncSelection,
   SyncTaskRecord,
 } from '@core/models/sync'
-import type { LocalPlaylist, LocalPlaylistSong } from '@core/models/localPlaylist'
+import type {
+  LocalPlaylist,
+  LocalPlaylistSong,
+  LocalPlaylistSyncResult,
+} from '@core/models/localPlaylist'
 import type { LogEntry } from '@core/logging'
 
 export interface SyncProgress {
@@ -319,7 +323,13 @@ const api = {
     list: (): Promise<LocalPlaylist[]> => ipcRenderer.invoke('local-playlist:list'),
     create: (
       name: string,
-      songs: Array<{ title: string; artist: string; album?: string; durationMs?: number }>,
+      songs: Array<{
+        title: string
+        artist: string
+        album?: string
+        durationMs?: number
+        coverUrl?: string
+      }>,
     ): Promise<LocalPlaylist | null> => ipcRenderer.invoke('local-playlist:create', name, songs),
     rename: (id: string, name: string): Promise<void> =>
       ipcRenderer.invoke('local-playlist:rename', id, name),
@@ -328,7 +338,13 @@ const api = {
       ipcRenderer.invoke('local-playlist:songs', id),
     addSongs: (
       id: string,
-      songs: Array<{ title: string; artist: string; album?: string; durationMs?: number }>,
+      songs: Array<{
+        title: string
+        artist: string
+        album?: string
+        durationMs?: number
+        coverUrl?: string
+      }>,
     ): Promise<void> => ipcRenderer.invoke('local-playlist:add-songs', id, songs),
     removeSongs: (id: string, positions: number[]): Promise<void> =>
       ipcRenderer.invoke('local-playlist:remove-songs', id, positions),
@@ -336,8 +352,9 @@ const api = {
     importPlatformPlaylist: (
       platform: string,
       playlist: PlatformPlaylist,
-    ): Promise<LocalPlaylist | null> =>
-      ipcRenderer.invoke('local-playlist:import-platform', platform, playlist),
+      targetId?: string,
+    ): Promise<LocalPlaylistSyncResult | null> =>
+      ipcRenderer.invoke('local-playlist:import-platform', platform, playlist, targetId),
     /** 主进程写入本地歌单后广播，渲染层据此刷新列表 */
     onChanged: (callback: () => void): (() => void) => {
       const listener = () => callback()

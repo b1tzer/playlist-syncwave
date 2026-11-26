@@ -97,6 +97,76 @@ const MIGRATIONS: Migration[] = [
       }
     },
   },
+  {
+    version: 8,
+    name: '本地歌单封面：歌单与歌曲封面 URL（只存 https）',
+    up: (db) => {
+      if (tableExists(db, 'local_playlists')) {
+        addColumnIfMissing(db, 'local_playlists', 'cover_url', 'cover_url TEXT')
+        addColumnIfMissing(db, 'local_playlists', 'cover_source', 'cover_source TEXT')
+      }
+      if (tableExists(db, 'local_playlist_songs')) {
+        addColumnIfMissing(db, 'local_playlist_songs', 'cover_url', 'cover_url TEXT')
+      }
+    },
+  },
+  {
+    version: 9,
+    name: '本地歌单多来源：来源关系表 + 存量单来源回填',
+    up: (db) => {
+      if (!tableExists(db, 'local_playlists')) return
+      db.exec(`
+CREATE TABLE IF NOT EXISTS local_playlist_sources (
+  playlist_id TEXT NOT NULL REFERENCES local_playlists(id) ON DELETE CASCADE,
+  platform TEXT NOT NULL,
+  source_playlist_id TEXT NOT NULL,
+  web_url TEXT,
+  app_url TEXT,
+  owner_id TEXT,
+  extra_ids TEXT,
+  cover_url TEXT,
+  last_synced_at TEXT,
+  PRIMARY KEY (playlist_id, platform, source_playlist_id)
+)
+`)
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_local_playlist_sources_local
+           ON local_playlist_sources (playlist_id, platform, source_playlist_id)`,
+      )
+      db.exec(
+        `CREATE UNIQUE INDEX IF NOT EXISTS idx_local_playlist_sources_unique_source
+           ON local_playlist_sources (platform, source_playlist_id)`,
+      )
+      db.exec(
+        `INSERT OR IGNORE INTO local_playlist_sources
+          (playlist_id, platform, source_playlist_id, web_url, app_url,
+           owner_id, extra_ids, cover_url, last_synced_at)
+         SELECT id, source_platform, source_playlist_id, source_web_url,
+                source_app_url, source_owner_id, extra_ids, cover_url, updated_at
+         FROM local_playlists
+         WHERE source_platform IS NOT NULL AND source_playlist_id IS NOT NULL`,
+      )
+    },
+  },
+  {
+    version: 10,
+    name: '来源关系改为本地一对多：平台歌单唯一归属一个本地歌单',
+    up: (db) => {
+      if (!tableExists(db, 'local_playlist_sources')) return
+      // 早期内测库可能把同一平台歌单登记到多个本地歌单，保留最早一条后加唯一约束
+      db.exec(
+        `DELETE FROM local_playlist_sources
+         WHERE rowid NOT IN (
+           SELECT MIN(rowid) FROM local_playlist_sources
+           GROUP BY platform, source_playlist_id
+         )`,
+      )
+      db.exec(
+        `CREATE UNIQUE INDEX IF NOT EXISTS idx_local_playlist_sources_unique_source
+           ON local_playlist_sources (platform, source_playlist_id)`,
+      )
+    },
+  },
 ]
 
 /** 应用所有未执行的迁移（按版本序，每个迁移独立事务并记录版本） */

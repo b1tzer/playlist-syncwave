@@ -1,8 +1,8 @@
-import type { LocalPlaylist } from '@core/models/localPlaylist'
+import type { LocalPlaylistSyncResult } from '@core/models/localPlaylist'
 import type { PlatformPlaylist, PlatformSong } from '@core/models/platform'
 import { asObject, pickString } from '../platforms/json'
 import { getPlatform, resolveAdapter } from './platformRegistry'
-import { createLocalPlaylist } from './localPlaylistService'
+import { syncPlatformPlaylistToLocal } from './localPlaylistService'
 
 const FETCH_TIMEOUT_MS = 30_000
 const MAX_EXPORT_SONGS = 10_000
@@ -24,7 +24,8 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 export async function importPlatformPlaylistToLocal(
   platformValue: unknown,
   playlistValue: unknown,
-): Promise<LocalPlaylist> {
+  targetIdValue?: unknown,
+): Promise<LocalPlaylistSyncResult> {
   const platform = pickString(platformValue)
   if (!platform) throw new Error('无效的平台')
   const raw = asObject(playlistValue)
@@ -53,8 +54,9 @@ export async function importPlatformPlaylistToLocal(
     sourcePlatform: platform,
     sourceSongId: song.id,
     identifiers: song.identifiers,
+    coverUrl: song.coverUrl,
   }))
-  const created = createLocalPlaylist(
+  return syncPlatformPlaylistToLocal(
     name,
     localSongs,
     {
@@ -64,8 +66,8 @@ export async function importPlatformPlaylistToLocal(
       appUrl: playlist.appUrl,
       ownerId: playlist.ownerId,
       extraIds: playlist.extraIds,
+      coverUrl: playlist.coverUrl,
     },
+    targetIdValue,
   )
-  if (!created) throw new Error('创建本地歌单失败')
-  return created
 }

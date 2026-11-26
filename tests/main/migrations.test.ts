@@ -104,7 +104,7 @@ describe('runMigrations — 版本化迁移', () => {
     const version = fresh
       .prepare('SELECT MAX(version) AS v FROM schema_migrations')
       .get() as { v: number }
-    expect(version.v).toBe(7)
+    expect(version.v).toBe(10)
     // 迁移不建业务表：建表仍由各 Store 负责
     const tables = fresh
       .prepare(`SELECT name FROM sqlite_master WHERE type = 'table'`)
@@ -112,7 +112,7 @@ describe('runMigrations — 版本化迁移', () => {
     expect(tables.map((t) => t.name)).not.toContain('sync_tasks')
   })
 
-  it('v7：存量本地歌单表补齐来源/唯一标识列，索引存在且幂等', () => {
+  it('v7/v8：存量本地歌单表补齐来源/唯一标识/封面列，索引存在且幂等', () => {
     const legacy = new Database(':memory:')
     legacy.exec(`
 CREATE TABLE local_playlists (
@@ -147,8 +147,9 @@ INSERT INTO local_playlist_songs (playlist_id, position, title, artist)
         'extra_ids',
       ]),
     )
+    expect(playlistCols).toEqual(expect.arrayContaining(['cover_url', 'cover_source']))
     expect(songCols).toEqual(
-      expect.arrayContaining(['source_platform', 'source_song_id', 'identifiers']),
+      expect.arrayContaining(['source_platform', 'source_song_id', 'identifiers', 'cover_url']),
     )
     const indexes = (
       legacy.prepare(`SELECT name FROM sqlite_master WHERE type = 'index'`).all() as Array<{
@@ -166,6 +167,79 @@ INSERT INTO local_playlist_songs (playlist_id, position, title, artist)
       legacy.prepare('SELECT version FROM schema_migrations').all() as Array<{ version: number }>
     ).map((r) => r.version)
     expect(versions.filter((v) => v === 7)).toHaveLength(1)
+    expect(versions.filter((v) => v === 8)).toHaveLength(1)
     legacy.close()
+  })
+
+  it('v9：创建多来源关系表并把存量单来源列回填为一条来源，重复执行幂等', () => {
+    const legacy = new Database(':memory:')
+    legacy.exec(`
+CREATE TABLE local_playlists (
+  id TEXT PRIMARY KEY, name TEXT NOT NULL,
+  created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+  source_platform TEXT, source_playlist_id TEXT,
+  source_web_url TEXT, source_app_url TEXT, source_owner_id TEXT,
+  extra_ids TEXT, cover_url TEXT, cover_source TEXT
+);
+INSERT INTO local_playlists (id, name, created_at, updated_at, source_platform, source_playlist_id, source_web_url, cover_url)
+  VALUES ('p1', '旧导入歌单', '2024-01-01', '2024-01-02', 'netease', 'n1', 'https://music.163.com/#/playlist?id=n1', 'https://p1.example/c.jpg');
+`)
+    runMigrations(legacy)
+    const source = legacy
+      .prepare('SELECT * FROM local_playlist_sources WHERE playlist_id = ?')
+      .get('p1') as { platform: string; source_playlist_id: string; cover_url: string }
+    expect(source).toMatchObject({
+      platform: 'netease',
+      source_playlist_id: 'n1',
+      cover_url: 'https://p1.example/c.jpg',
+    })
+    const indexes = (
+      legacy.prepare(`SELECT name FROM sqlite_master WHERE type = 'index'`).all() as Array<{
+        name: string
+      }>
+    ).map((r) => r.name)
+    expect(indexes).toContain('idx_local_playlist_sources_unique_source')
+    expect(() => runMigrations(legacy)).not.toThrow()
+    const count = (
+      legacy.prepare('SELECT COUNT(*) AS c FROM local_playlist_sources').get() as { c: number }
+    ).c
+    expect(count).toBe(1)
+    legacy.close()
+  })
+
+  it('v10：同一平台歌单被登记到多个本地歌单时去重并加唯一归属约束', () => {
+    const db10 = new Database(':memory:')
+    db10.exec(`
+CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL);
+INSERT INTO schema_migrations VALUES (9, 'v9', '2026-11-26');
+CREATE TABLE local_playlist_sources (
+  playlist_id TEXT NOT NULL, platform TEXT NOT NULL, source_playlist_id TEXT NOT NULL,
+  web_url TEXT, app_url TEXT, owner_id TEXT, extra_ids TEXT, cover_url TEXT, last_synced_at TEXT,
+  PRIMARY KEY (playlist_id, platform, source_playlist_id)
+);
+INSERT INTO local_playlist_sources (playlist_id, platform, source_playlist_id, last_synced_at)
+  VALUES ('a', 'netease', 'n1', '2026-11-26T10:00:00.000Z'),
+         ('b', 'netease', 'n1', '2026-11-26T11:00:00.000Z');
+`)
+    runMigrations(db10)
+    const rows = db10
+      .prepare('SELECT playlist_id FROM local_playlist_sources WHERE platform = ? AND source_playlist_id = ?')
+      .all('netease', 'n1') as Array<{ playlist_id: string }>
+    expect(rows).toEqual([{ playlist_id: 'a' }])
+    const indexes = (
+      db10.prepare(`SELECT name FROM sqlite_master WHERE type = 'index'`).all() as Array<{
+        name: string
+      }>
+    ).map((r) => r.name)
+    expect(indexes).toContain('idx_local_playlist_sources_unique_source')
+    expect(() =>
+      db10
+        .prepare(
+          `INSERT INTO local_playlist_sources (playlist_id, platform, source_playlist_id)
+           VALUES ('c', 'netease', 'n1')`,
+        )
+        .run(),
+    ).toThrow()
+    db10.close()
   })
 })

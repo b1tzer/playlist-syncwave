@@ -11,6 +11,7 @@ import type {
   PlatformPlaylist,
   PlatformSong,
 } from '@core/models/platform'
+import type { LocalPlaylist } from '@core/models/localPlaylist'
 import type { MatchQuery } from '@core/models/match'
 import type { PendingConfirmSession, SyncTaskRecord } from '@core/models/sync'
 import { VISIBLE_REFRESH_CHECK_MS } from '@core/cachePolicy'
@@ -31,7 +32,7 @@ import Tooltip from './Tooltip'
 import { notify } from './toast'
 import { notifyError } from '../utils/notifyError'
 import { operationAllowed, operationReason } from '../utils/platformCapabilities'
-import { toHttpsCover } from '../utils/coverUrl'
+import CoverImage from './CoverImage'
 
 const log = createRendererLogger('renderer.playlist')
 
@@ -55,27 +56,6 @@ interface PlaylistSectionProps {
   /** 待确认会话（App 层持有，选择流程由 ConfirmSyncDialog 完成） */
   pendingConfirm: PendingConfirmSession | null
   onPendingConfirmChange: (session: PendingConfirmSession | null) => void
-}
-
-/** 歌单封面：缺省或加载失败回退音符图标 */
-function PlaylistCover({ playlist }: { playlist: PlatformPlaylist }) {
-  const [failed, setFailed] = useState(false)
-  if (!playlist.coverUrl || failed) {
-    return (
-      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-surface-container-high text-outline">
-        <span className="material-symbols-outlined text-base">queue_music</span>
-      </span>
-    )
-  }
-  return (
-    <img
-      src={toHttpsCover(playlist.coverUrl)}
-      alt={playlist.name}
-      loading="lazy"
-      onError={() => setFailed(true)}
-      className="h-8 w-8 shrink-0 rounded-md object-cover"
-    />
-  )
 }
 
 /** 超长文本：默认省略号截断，悬浮时自动来回滚动展示全文。
@@ -232,6 +212,9 @@ export default function PlaylistSection({
   }, [renamingId])
   /** 删除确认弹层目标歌单 */
   const [deleteTarget, setDeleteTarget] = useState<PlatformPlaylist | null>(null)
+  /** 「保存到本地」选择弹层：待保存的平台歌单与可选本地歌单 */
+  const [saveTarget, setSaveTarget] = useState<PlatformPlaylist | null>(null)
+  const [localTargets, setLocalTargets] = useState<LocalPlaylist[]>([])
 
   // 删除确认弹层：Escape 关闭
   useEffect(() => {
@@ -242,6 +225,16 @@ export default function PlaylistSection({
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [deleteTarget])
+
+  // 保存到本地选择弹层：Escape 关闭
+  useEffect(() => {
+    if (!saveTarget) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setSaveTarget(null)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [saveTarget])
   const [managing, setManaging] = useState(false)
   const [removingIds, setRemovingIds] = useState<Set<string>>(new Set())
   /** 移除按钮悬浮即时提示（锚点 = 按钮底边中心，Tooltip 挂 body 显示） */
@@ -733,7 +726,16 @@ export default function PlaylistSection({
         id: 'save-local',
         label: t('playlist.saveToLocal'),
         icon: 'bookmark_add',
-        onSelect: () => void handleSaveToLocal(single),
+        onSelect: () => {
+          setSaveTarget(single)
+          void window.electronAPI.localPlaylists
+            .list()
+            .then(setLocalTargets)
+            .catch((e: unknown) => {
+              log.error('playlist.save-local-list-failed', '读取本地歌单列表失败', e)
+              setLocalTargets([])
+            })
+        },
       })
       entries.push({
         type: 'item',
@@ -791,18 +793,43 @@ export default function PlaylistSection({
 
   // --- 歌单管理操作 ---
 
-  /** 右键整单导出到本地：主进程拉取歌曲并保留平台唯一标识 */
-  const handleSaveToLocal = async (playlist: PlatformPlaylist) => {
+  /** 平台歌单保存到本地：新建或增量合并到已有本地歌单 */
+  const handleSaveToLocal = async (
+    playlist: PlatformPlaylist,
+    targetId?: string,
+  ) => {
     log.info('playlist.save-local', '导出平台歌单到本地', {
       platform: active,
       playlistId: playlist.id,
+      targetId,
     })
     setManaging(true)
     try {
-      const created = await window.electronAPI.localPlaylists.importPlatformPlaylist(active, playlist)
-      if (!created) return
-      log.info('playlist.saved-local', '平台歌单已保存到本地', { id: created.id })
-      notify('success', t('playlist.savedToLocal'), created.name)
+      const result = await window.electronAPI.localPlaylists.importPlatformPlaylist(
+        active,
+        playlist,
+        targetId,
+      )
+      if (!result) return
+      setSaveTarget(null)
+      log.info('playlist.saved-local', '平台歌单已保存到本地', {
+        id: result.playlist.id,
+        created: result.created,
+        added: result.added,
+        updated: result.updated,
+      })
+      if (result.created) {
+        notify('success', t('playlist.savedToLocal'), result.playlist.name)
+      } else {
+        notify(
+          'success',
+          t('playlist.savedToLocalIncremental', {
+            added: result.added,
+            updated: result.updated,
+          }),
+          result.playlist.name,
+        )
+      }
     } catch (e) {
       log.error('playlist.save-local-failed', '保存到本地失败', e, { platform: active })
       notifyError(e, t('playlist.saveToLocalFailed'))
@@ -911,38 +938,42 @@ export default function PlaylistSection({
     }
   }
 
-  const handleRemoveSong = async (songId: string) => {
-    if (!activeId) return
+  /** 批量移除歌曲（行内单曲删除与列表多选删除共用） */
+  const handleRemoveSongs = async (songIds: string[]): Promise<boolean> => {
+    if (!activeId || songIds.length === 0) return false
     log.info('playlist.remove-song', '从歌单移除歌曲', {
       platform: active,
       playlistId: activeId,
-      songId,
+      songIds,
     })
-    setRemovingIds((prev) => new Set(prev).add(songId))
+    setRemovingIds((prev) => new Set([...prev, ...songIds]))
     try {
-      await window.electronAPI.platforms.removeSongsFromPlaylist(active, activeId, [songId])
-      setSongs((prev) => prev.filter((s) => s.id !== songId))
-      setSongTotal((total) => Math.max(0, total - 1))
-      // 歌单列表卡片数字即时 -1（主进程已标记缓存失效，后台重新验证后以平台数据为准）
+      await window.electronAPI.platforms.removeSongsFromPlaylist(active, activeId, songIds)
+      const removed = new Set(songIds)
+      setSongs((prev) => prev.filter((s) => !removed.has(s.id)))
+      setSongTotal((total) => Math.max(0, total - songIds.length))
+      // 歌单列表卡片数字即时扣减（主进程已标记缓存失效，后台重新验证后以平台数据为准）
       setPlaylists((prev) =>
         prev.map((p) =>
           p.id === activeId && p.songCount !== undefined
-            ? { ...p, songCount: Math.max(0, p.songCount - 1) }
+            ? { ...p, songCount: Math.max(0, p.songCount - songIds.length) }
             : p,
         ),
       )
+      return true
     } catch (e) {
       log.error('playlist.remove-song-failed', '移除歌曲失败', e, {
         platform: active,
         playlistId: activeId,
-        songId,
+        songIds,
       })
       // 行内操作失败用右上角 toast 提示，代码性报错不展示给用户
       notifyError(e, t('playlist.removeSongFailed'))
+      return false
     } finally {
       setRemovingIds((prev) => {
         const next = new Set(prev)
-        next.delete(songId)
+        for (const id of songIds) next.delete(id)
         return next
       })
     }
@@ -1241,7 +1272,7 @@ export default function PlaylistSection({
                   >
                     {renamingId === p.id ? (
                       <div className="flex w-full items-center gap-1.5 rounded-lg bg-primary-container/15 px-2 py-1.5 text-primary">
-                        <PlaylistCover playlist={p} />
+                        <CoverImage src={p.coverUrl} alt={p.name} size="sm" fallbackIcon="queue_music" />
                         <input
                           ref={inlineRenameInputRef}
                           autoFocus
@@ -1296,7 +1327,7 @@ export default function PlaylistSection({
                               : 'text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface'
                         }`}
                       >
-                        <PlaylistCover playlist={p} />
+                        <CoverImage src={p.coverUrl} alt={p.name} size="sm" fallbackIcon="queue_music" />
                         <MarqueeText
                           text={p.name}
                           className="min-w-0 flex-1 font-body-md text-body-md"
@@ -1415,10 +1446,15 @@ export default function PlaylistSection({
             )}
             {!loading && activeId && (
               <SongList
+                key={activeId}
                 songs={songs}
                 showHeader
                 flashIds={songFlashIds}
                 onFlashEnd={clearSongFlash}
+                selectable={canManage}
+                onRemoveSelected={handleRemoveSongs}
+                removeDisabled={!canRemoveSong}
+                removeDisabledReason={removeSongReason ?? t('playlist.removeSong')}
                 className="min-h-0 flex-1"
                 renderFooter={
                   songs.length < songTotal
@@ -1431,6 +1467,7 @@ export default function PlaylistSection({
                     // 原生 title 延迟过久改用即时 Tooltip，按钮自身置灰
                     <span
                       className="flex shrink-0 items-center"
+                      onClick={(e) => e.stopPropagation()}
                       onMouseEnter={(e) => {
                         const rect = e.currentTarget.getBoundingClientRect()
                         setRemoveTip({
@@ -1444,7 +1481,7 @@ export default function PlaylistSection({
                       onMouseLeave={() => setRemoveTip(null)}
                     >
                       <button
-                        onClick={() => void handleRemoveSong(s.id)}
+                        onClick={() => void handleRemoveSongs([s.id])}
                         disabled={!canRemoveSong || removingIds.has(s.id)}
                         aria-disabled={!canRemoveSong}
                         className="flex items-center rounded-md p-1 text-on-surface-variant opacity-0 transition-all group-hover:opacity-100 hover:bg-error/10 hover:text-error disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-on-surface-variant"
@@ -1476,6 +1513,95 @@ export default function PlaylistSection({
       )}
 
       {removeTip && <Tooltip x={removeTip.x} y={removeTip.y} text={removeTip.text} />}
+
+      {saveTarget && (
+        <div
+          className="dialog-backdrop-enter fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+          onClick={() => setSaveTarget(null)}
+        >
+          <div
+            className="dialog-panel-enter flex w-[28rem] max-w-full flex-col gap-3 rounded-lg border border-outline-variant bg-surface-container p-5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="font-headline-sm text-headline-sm font-semibold text-on-surface">
+              {t('playlist.saveToLocalTitle')}
+            </h3>
+            <p className="font-body-sm text-body-sm text-on-surface-variant">
+              {t('playlist.saveToLocalHint')}
+            </p>
+            <button
+              onClick={() => void handleSaveToLocal(saveTarget)}
+              disabled={managing}
+              className="flex items-center gap-2 rounded-lg border border-primary px-3 py-2 text-left font-label-md text-label-md text-primary transition-colors hover:bg-primary/10 disabled:opacity-40"
+            >
+              <span className="material-symbols-outlined text-base">add</span>
+              {t('playlist.saveToLocalNew')}
+            </button>
+            <p className="font-label-md text-label-md text-on-surface-variant">
+              {t('playlist.saveToLocalExisting')}
+            </p>
+            <div className="max-h-72 overflow-y-auto rounded-lg border border-outline-variant">
+              {localTargets.length === 0 ? (
+                <p className="px-3 py-4 text-center font-label-md text-label-md text-outline">
+                  {t('localPlaylist.empty')}
+                </p>
+              ) : (
+                localTargets.map((p) => {
+                  const sources = p.sources ?? []
+                  return (
+                    <button
+                      key={p.id}
+                      onClick={() => void handleSaveToLocal(saveTarget, p.id)}
+                      disabled={managing}
+                      className="flex w-full items-center gap-2 border-b border-outline-variant px-3 py-2 text-left transition-colors last:border-b-0 hover:bg-surface-container-high disabled:opacity-40"
+                    >
+                      <CoverImage src={p.coverUrl} alt={p.name} size="sm" fallbackIcon="queue_music" />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate font-label-md text-label-md text-on-surface">
+                          {p.name}
+                        </span>
+                        <span className="flex items-center gap-1 font-label-sm text-label-sm text-on-surface-variant">
+                          {sources.length > 0 ? (
+                            sources.map((s) => {
+                              const meta = platforms.find((m) => m.id === s.platform)
+                              return (
+                                <span
+                                  key={`${s.platform}:${s.playlistId}`}
+                                  title={`${t('playlist.saveToLocalSources')}: ${meta?.name ?? s.platform}`}
+                                >
+                                  <PlatformLogo
+                                    platform={s.platform}
+                                    name={meta?.name ?? s.platform}
+                                    icon={meta?.icon ?? 'cloud'}
+                                    size="h-4 w-4"
+                                    iconSize="text-sm"
+                                  />
+                                </span>
+                              )
+                            })
+                          ) : (
+                            <span className="material-symbols-outlined text-sm">library_music</span>
+                          )}
+                          <span>{p.songCount}</span>
+                        </span>
+                      </span>
+                    </button>
+                  )
+                })
+              )}
+            </div>
+            <div className="flex justify-end">
+              <button
+                onClick={() => setSaveTarget(null)}
+                disabled={managing}
+                className="rounded-lg border border-outline-variant px-3 py-1.5 font-label-md text-label-md text-on-surface-variant transition-colors hover:bg-surface-container-high disabled:opacity-40"
+              >
+                {t('playlist.cancel')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {deleteTarget && (
         <div

@@ -1023,13 +1023,13 @@ ipcMain.handle('local-playlist:create', (_event, name: unknown, songs: unknown) 
 
 ipcMain.handle(
   'local-playlist:import-platform',
-  (_event, platform: unknown, playlist: unknown) =>
+  (_event, platform: unknown, playlist: unknown, targetId?: unknown) =>
     ipcLog.time(
       'local-playlist.import-platform',
       async () => {
-        const created = await importPlatformPlaylistToLocal(platform, playlist)
-        broadcastPlaylistRefresh('local-playlist:changed', { id: created.id })
-        return created
+        const result = await importPlatformPlaylistToLocal(platform, playlist, targetId)
+        broadcastPlaylistRefresh('local-playlist:changed', { id: result.playlist.id })
+        return result
       },
       { platform: String(platform ?? '') },
     ),
