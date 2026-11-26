@@ -20,19 +20,11 @@ import PlatformLogo from './PlatformLogo'
 import { notify } from './toast'
 import { notifyError } from '../utils/notifyError'
 import { operationAllowed } from '../utils/platformCapabilities'
-import CoverImage from './CoverImage'
 import ContextMenu, { type ContextMenuEntry } from './ContextMenu'
-import MarqueeText from './MarqueeText'
-import {
-  playlistCountClass,
-  playlistEmptyClass,
-  playlistListClass,
-  playlistNameClass,
-  playlistRenameInputClass,
-  playlistRenameRowClass,
-  playlistRowAnimationClass,
-  playlistRowClass,
-} from './playlistRowStyles'
+import PlaylistList from './PlaylistList'
+import PlaylistSelectionStatus from './PlaylistSelectionStatus'
+import PlaylistDeleteDialog from './PlaylistDeleteDialog'
+import { buildPlaylistMenuEntries } from './buildPlaylistMenu'
 import { usePlaylistMultiSelect } from '../hooks/usePlaylistMultiSelect'
 
 const log = createRendererLogger('renderer.local-playlist')
@@ -68,16 +60,6 @@ export default function LocalPlaylistPanel({
     handleRowMouseEnter,
     consumeSuppressedClick,
   } = usePlaylistMultiSelect(playlists.map((p) => p.id))
-  /** 已完成入场动画的行：与平台歌单列表共用错峰淡入效果 */
-  const [enteredIds, setEnteredIds] = useState<Set<string>>(new Set())
-  const markEntered = (id: string) => {
-    setEnteredIds((prev) => {
-      if (prev.has(id)) return prev
-      const next = new Set(prev)
-      next.add(id)
-      return next
-    })
-  }
 
   // 新建 / 重命名
   const [creating, setCreating] = useState(false)
@@ -86,14 +68,9 @@ export default function LocalPlaylistPanel({
   const [renameDraft, setRenameDraft] = useState('')
   /** 行内重命名：正在列表中原地编辑的歌单 id（双击行触发） */
   const [renamingId, setRenamingId] = useState<string | null>(null)
-  const inlineRenameInputRef = useRef<HTMLInputElement>(null)
   const renameSubmittingRef = useRef(false)
-  const [confirmDelete, setConfirmDelete] = useState(false)
-
-  // 进入行内编辑时聚焦输入框
-  useEffect(() => {
-    if (renamingId) inlineRenameInputRef.current?.focus()
-  }, [renamingId])
+  /** 删除确认弹层目标歌单（与平台歌单共用同一弹窗） */
+  const [deleteTarget, setDeleteTarget] = useState<LocalPlaylist | null>(null)
 
   // 同步目标平台选择
   const [syncPicker, setSyncPicker] = useState(false)
@@ -260,14 +237,15 @@ export default function LocalPlaylistPanel({
     void handleRename()
   }
 
-  const handleDelete = async () => {
-    if (!activeId) return
+  const handleDelete = async (id: string) => {
     try {
-      await window.electronAPI.localPlaylists.delete(activeId)
-      log.info('local-playlist.deleted', '本地歌单已删除', { id: activeId })
-      setConfirmDelete(false)
-      setActiveId(null)
-      setSongs([])
+      await window.electronAPI.localPlaylists.delete(id)
+      log.info('local-playlist.deleted', '本地歌单已删除', { id })
+      setDeleteTarget(null)
+      if (activeId === id) {
+        setActiveId(null)
+        setSongs([])
+      }
       await fetchPlaylists()
     } catch (e) {
       log.error('local-playlist.delete-failed', '删除失败', e)
@@ -468,74 +446,77 @@ export default function LocalPlaylistPanel({
     }
   }
 
+  const menuLabels = {
+    create: t('playlist.create'),
+    rename: t('localPlaylist.rename'),
+    syncToPlatform: (platform: string) => t('playlist.syncToPlatform', { platform }),
+    exportM3u: t('playlist.exportM3u'),
+    exportCsv: t('playlist.exportCsv'),
+    delete: t('playlist.delete'),
+  }
+  const openCreateForm = () => {
+    setCreating(true)
+    setCreateDraft('')
+  }
+
   /** 右键行：先选中该行（详情与删除确认随之指向目标），再按目标歌单构建菜单 */
   const handleRowContextMenu = (e: ReactMouseEvent, playlist: LocalPlaylist) => {
     e.preventDefault()
+    e.stopPropagation()
     log.debug('local-playlist.context-menu', '打开本地歌单右键菜单', { id: playlist.id })
     if (activeId !== playlist.id) handleSelect(playlist.id)
 
     const hasSongs = playlist.songCount > 0
     const syncBlocked = syncRunning || pendingConfirm !== null
-    const entries: ContextMenuEntry[] = [
-      {
-        type: 'item',
-        id: 'rename',
-        label: t('localPlaylist.rename'),
-        icon: 'edit',
-        onSelect: () => {
-          setRenameDraft(playlist.name)
-          setRenamingId(playlist.id)
-        },
+    const entries = buildPlaylistMenuEntries({
+      playlist,
+      single: true,
+      canRename: true,
+      canDelete: true,
+      syncTargets,
+      syncSelection: new Set([playlist.id]),
+      syncDisabled: !hasSongs || syncBlocked,
+      exportDisabled: !hasSongs,
+      labels: menuLabels,
+      onCreate: openCreateForm,
+      onRename: (target) => {
+        setRenameDraft(target.name)
+        setRenamingId(target.id)
       },
-    ]
-    if (syncTargets.length > 0) {
-      entries.push({ type: 'divider', id: 'divider-sync' })
-      for (const p of syncTargets) {
-        entries.push({
-          type: 'item',
-          id: `sync-${p.id}`,
-          label: t('playlist.syncToPlatform', { platform: p.name }),
-          iconNode: (
-            <PlatformLogo
-              platform={p.id}
-              name={p.name}
-              icon={p.icon}
-              size="h-4 w-4"
-              iconSize="text-sm"
-            />
-          ),
-          disabled: !hasSongs || syncBlocked,
-          onSelect: () => void handleMenuSync(playlist, p.id),
-        })
-      }
-    }
-    entries.push({ type: 'divider', id: 'divider-export' })
-    entries.push({
-      type: 'item',
-      id: 'export-m3u',
-      label: t('playlist.exportM3u'),
-      icon: 'download',
-      disabled: !hasSongs,
-      onSelect: () => void handleMenuExport(playlist, 'm3u'),
+      onSync: (targetId) => void handleMenuSync(playlist, targetId),
+      onExport: (target, format) => void handleMenuExport(target, format),
+      onDelete: (target) => setDeleteTarget(target),
     })
-    entries.push({
-      type: 'item',
-      id: 'export-csv',
-      label: t('playlist.exportCsv'),
-      icon: 'table',
-      disabled: !hasSongs,
-      onSelect: () => void handleMenuExport(playlist, 'csv'),
-    })
-    entries.push({ type: 'divider', id: 'divider-delete' })
-    entries.push({
-      type: 'item',
-      id: 'delete',
-      label: t('localPlaylist.delete'),
-      icon: 'delete_outline',
-      danger: true,
-      onSelect: () => setConfirmDelete(true),
-    })
+    if (!entries.some((entry) => entry.type === 'item')) return
     setContextMenu({ x: e.clientX, y: e.clientY, entries })
+  }
+
+  /** 列表空白区右键：只提供新建歌单 */
+  const handleBlankContextMenu = (e: ReactMouseEvent) => {
+    e.preventDefault()
+    log.debug('local-playlist.context-menu-blank', '打开列表空白区右键菜单')
+    const entries = buildPlaylistMenuEntries({
+      playlist: { id: '', name: '' },
+      single: false,
+      canRename: false,
+      canDelete: false,
+      syncTargets: [],
+      syncSelection: new Set(),
+      showCreate: true,
+      labels: menuLabels,
+      onCreate: openCreateForm,
+    })
+    if (!entries.some((entry) => entry.type === 'item')) return
+    setContextMenu({ x: e.clientX, y: e.clientY, entries })
+  }
+
+  /** 双击本地歌单行进入内联重命名 */
+  const handlePlaylistDoubleClick = (id: string) => {
+    const playlist = playlists.find((p) => p.id === id)
+    if (!playlist) return
+    log.info('local-playlist.rename-inline', '双击行内重命名本地歌单', { id })
+    setRenameDraft(playlist.name)
+    setRenamingId(id)
   }
 
   return (
@@ -548,162 +529,53 @@ export default function LocalPlaylistPanel({
               {t('localPlaylist.listTitle')}
             </span>
             <div className="flex items-center gap-1">
-              {selectedIds.size > 0 ? (
-                <div className="flex items-center gap-1">
-                  <span className="font-label-mono text-label-mono text-primary">
-                    {t('playlist.selectedCount', { count: selectedIds.size })}
-                  </span>
-                  <button
-                    onClick={clearSelection}
-                    title={t('playlist.clearSelection')}
-                    className="flex items-center rounded-md p-0.5 text-outline transition-colors hover:bg-surface-container-highest hover:text-on-surface"
-                  >
-                    <span className="material-symbols-outlined text-sm">close</span>
-                  </button>
-                </div>
-              ) : (
-                <span className="font-label-mono text-label-mono text-outline">
-                  {playlists.length}
-                </span>
-              )}
-              <button
-                onClick={() => {
-                  setCreating(true)
-                  setCreateDraft('')
-                }}
-                disabled={creating}
-                className="flex items-center gap-1 rounded-md px-2 py-1 font-label-sm text-label-sm text-primary transition-colors hover:bg-primary/10 disabled:opacity-50"
-              >
-                <span className="material-symbols-outlined text-sm">add</span>
-                {t('localPlaylist.new')}
-              </button>
+              <PlaylistSelectionStatus
+                count={selectedIds.size}
+                total={playlists.length}
+                onClear={clearSelection}
+              />
             </div>
           </div>
 
-          {creating && (
-            <div className="flex shrink-0 items-center gap-1.5 border-b border-outline-variant px-3 py-2">
-              <input
-                autoFocus
-                value={createDraft}
-                onChange={(e) => setCreateDraft(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') void handleCreate()
-                  if (e.key === 'Escape') setCreating(false)
-                }}
-                placeholder={t('localPlaylist.namePlaceholder')}
-                className="min-w-0 flex-1 rounded-md border border-outline-variant bg-surface px-2 py-1 font-body-md text-body-md text-on-surface outline-none placeholder:text-outline focus:border-primary"
-              />
-              <button
-                onClick={() => void handleCreate()}
-                disabled={!createDraft.trim()}
-                className="rounded-md bg-primary px-2 py-1 font-label-sm text-label-sm font-medium text-on-primary disabled:opacity-40"
-              >
-                {t('localPlaylist.create')}
-              </button>
-              <button
-                onClick={() => setCreating(false)}
-                className="rounded-md px-2 py-1 font-label-sm text-label-sm text-on-surface-variant hover:text-on-surface"
-              >
-                {t('localPlaylist.cancel')}
-              </button>
-            </div>
-          )}
 
-          <ul className={playlistListClass}>
-            {playlists.length === 0 && (
-              <li className={playlistEmptyClass}>{t('localPlaylist.empty')}</li>
-            )}
-            {playlists.map((p, i) => {
-              const entered = enteredIds.has(p.id)
-              return (
-                <li
-                  key={p.id}
-                  className={playlistRowAnimationClass(false, entered)}
-                  style={entered ? undefined : { animationDelay: `${Math.min(i, 15) * 24}ms` }}
-                  onAnimationEnd={(e) => {
-                    if (e.target === e.currentTarget) markEntered(p.id)
-                  }}
-                >
-                  {renamingId === p.id ? (
-                    <div className={playlistRenameRowClass}>
-                      <CoverImage
-                        src={p.coverUrl}
-                        alt={p.name}
-                        size="sm"
-                        fallbackIcon="queue_music"
-                      />
-                      <input
-                        ref={inlineRenameInputRef}
-                        autoFocus
-                        value={renameDraft}
-                        onChange={(e) => setRenameDraft(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') void handleInlineRename()
-                          if (e.key === 'Escape') setRenamingId(null)
-                        }}
-                        onBlur={handleInlineBlur}
-                        placeholder={t('localPlaylist.namePlaceholder')}
-                        className={playlistRenameInputClass}
-                      />
-                    </div>
-                  ) : (
-                    <button
-                      onClick={(e) => {
-                        // 双击的第二次 click（detail=2）交给 onDoubleClick 处理
-                        if (e.detail === 2) return
-                        if (consumeSuppressedClick()) return
-                        if (e.metaKey || e.ctrlKey) {
-                          toggleSelect(p.id)
-                          return
-                        }
-                        clearSelection()
-                        handleSelect(p.id)
-                      }}
-                      onDoubleClick={() => {
-                        log.info('local-playlist.rename-inline', '双击行内重命名本地歌单', {
-                          id: p.id,
-                        })
-                        setRenameDraft(p.name)
-                        setRenamingId(p.id)
-                      }}
-                      onMouseDown={(e) => handleRowMouseDown(e, p.id)}
-                      onMouseEnter={() => handleRowMouseEnter(p.id)}
-                      onContextMenu={(e) => handleRowContextMenu(e, p)}
-                      className={playlistRowClass(activeId === p.id, selectedIds.has(p.id))}
-                    >
-                      <CoverImage
-                        src={p.coverUrl}
-                        alt={p.name}
-                        size="sm"
-                        fallbackIcon="queue_music"
-                      />
-                      <MarqueeText text={p.name} className={playlistNameClass} />
-                      <span className="flex shrink-0 items-center gap-1">
-                        {(p.sources ?? []).map((source) => {
-                          const meta = platforms.find((m) => m.id === source.platform)
-                          return (
-                            <span
-                              key={`${source.platform}:${source.playlistId}`}
-                              title={meta?.name ?? source.platform}
-                            >
-                              <PlatformLogo
-                                platform={source.platform}
-                                name={meta?.name ?? source.platform}
-                                icon={meta?.icon ?? 'cloud'}
-                                size="h-4 w-4"
-                                iconSize="text-sm"
-                              />
-                            </span>
-                          )
-                        })}
-                        <span className={playlistCountClass}>{p.songCount}</span>
-                      </span>
-                    </button>
-                  )}
-                </li>
-              )
-            })}
-          </ul>
+          <PlaylistList
+            items={playlists}
+            platforms={platforms}
+            activeId={activeId}
+            selectedIds={selectedIds}
+            renamingId={renamingId}
+            renameDraft={renameDraft}
+            renamePlaceholder={t('localPlaylist.namePlaceholder')}
+            emptyText={t('localPlaylist.empty')}
+            onOpen={(id) => {
+              clearSelection()
+              handleSelect(id)
+            }}
+            onToggleSelect={toggleSelect}
+            onDoubleClick={handlePlaylistDoubleClick}
+            onMouseDown={handleRowMouseDown}
+            onMouseEnter={handleRowMouseEnter}
+            onContextMenu={handleRowContextMenu}
+            onBlankContextMenu={handleBlankContextMenu}
+            onRenameChange={setRenameDraft}
+            onRenameKeyDown={(e) => {
+              if (e.key === 'Enter') void handleInlineRename()
+              if (e.key === 'Escape') setRenamingId(null)
+            }}
+            onRenameBlur={handleInlineBlur}
+            creating={creating}
+            createDraft={createDraft}
+            createPlaceholder={t('playlist.createPlaceholder')}
+            createLabel={t('playlist.create')}
+            cancelLabel={t('playlist.cancel')}
+            onCreateChange={setCreateDraft}
+            onCreateSubmit={() => void handleCreate()}
+            onCreateCancel={() => {
+              setCreating(false)
+              setCreateDraft('')
+            }}
+            consumeSuppressedClick={consumeSuppressedClick}
+          />
         </div>
       </div>
 
@@ -817,33 +689,13 @@ export default function LocalPlaylistPanel({
                   </div>
                 )}
               </div>
-              {confirmDelete ? (
-                <div className="flex items-center gap-1.5">
-                  <span className="font-label-sm text-label-sm text-error">
-                    {t('localPlaylist.deleteConfirm', { name: activePlaylist.name })}
-                  </span>
-                  <button
-                    onClick={() => void handleDelete()}
-                    className="rounded-md bg-error px-2 py-1 font-label-sm text-label-sm font-medium text-on-error"
-                  >
-                    {t('localPlaylist.delete')}
-                  </button>
-                  <button
-                    onClick={() => setConfirmDelete(false)}
-                    className="rounded-md px-2 py-1 font-label-sm text-label-sm text-on-surface-variant hover:text-on-surface"
-                  >
-                    {t('localPlaylist.cancel')}
-                  </button>
-                </div>
-              ) : (
-                <button
-                  onClick={() => setConfirmDelete(true)}
-                  title={t('localPlaylist.delete')}
-                  className="flex items-center rounded-md p-1.5 text-on-surface-variant transition-colors hover:bg-surface-container-highest hover:text-error"
-                >
-                  <span className="material-symbols-outlined text-base">delete_outline</span>
-                </button>
-              )}
+              <button
+                onClick={() => setDeleteTarget(activePlaylist)}
+                title={t('playlist.delete')}
+                className="flex items-center rounded-md p-1.5 text-on-surface-variant transition-colors hover:bg-surface-container-highest hover:text-error"
+              >
+                <span className="material-symbols-outlined text-base">delete_outline</span>
+              </button>
             </div>
 
             {/* 添加歌曲搜索区 */}
@@ -970,6 +822,14 @@ export default function LocalPlaylistPanel({
           onClose={() => setContextMenu(null)}
         />
       )}
+
+      <PlaylistDeleteDialog
+        name={deleteTarget?.name ?? null}
+        onCancel={() => setDeleteTarget(null)}
+        onConfirm={() => {
+          if (deleteTarget) void handleDelete(deleteTarget.id)
+        }}
+      />
     </div>
   )
 }

@@ -818,6 +818,21 @@ ipcMain.handle(
     ),
 )
 
+ipcMain.handle('platform:playlist-create', (_event, platform: string, name: string) =>
+  ipcLog.time(
+    'platform.playlist-create',
+    async () => {
+      if (typeof name !== 'string' || !name.trim()) throw new Error('歌单名不能为空')
+      const { credential, adapter } = await withPlaylistCredential(platform)
+      const playlistId = await adapter.createPlaylist(credential, name.trim())
+      playlistCacheStore.markStalePlaylists(platform)
+      ipcLog.info('platform.playlist-create', '歌单创建完成', { platform, playlistId })
+      return playlistId
+    },
+    { platform },
+  ),
+)
+
 ipcMain.handle('platform:playlist-delete', (_event, platform: string, playlistId: string) =>
   ipcLog.time(
     'platform.playlist-delete',

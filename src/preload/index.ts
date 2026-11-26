@@ -222,6 +222,8 @@ const api = {
       ipcRenderer.invoke('platform:search-songs', platform, keyword, limit, page),
     renamePlaylist: (platform: string, playlistId: string, name: string): Promise<void> =>
       ipcRenderer.invoke('platform:playlist-rename', platform, playlistId, name),
+    createPlaylist: (platform: string, name: string): Promise<string> =>
+      ipcRenderer.invoke('platform:playlist-create', platform, name),
     deletePlaylist: (platform: string, playlistId: string): Promise<void> =>
       ipcRenderer.invoke('platform:playlist-delete', platform, playlistId),
     addSongsToPlaylist: (platform: string, playlistId: string, songIds: string[]): Promise<void> =>
