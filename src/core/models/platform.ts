@@ -1,3 +1,24 @@
+/**
+ * 平台歌曲的次级唯一标识：主 id 之外，上游可用于交叉校验/定位同一首歌的字段。
+ * 各平台按实际能力填写，缺失字段保持 undefined；不虚构 ISRC（国内平台当前不暴露）。
+ */
+export interface PlatformSongIdentifiers {
+  albumId?: string
+  /** QQ 音乐歌曲 mid */
+  songMid?: string
+  /** QQ 音乐专辑 mid */
+  albumMid?: string
+  /** 酷狗云歌单条目 id（删除歌曲时使用） */
+  fileId?: string
+  /** 酷狗加歌接口所需 id */
+  mixSongId?: string
+  /** 网易云原曲 id（翻唱指向原唱） */
+  originSongId?: string
+  /** Apple Music 资料库条目 id（主 id 为 catalogId 时保留） */
+  librarySongId?: string
+  aliases?: string[]
+}
+
 export interface PlatformSong {
   /** 平台歌曲 ID */
   id: string
@@ -9,6 +30,8 @@ export interface PlatformSong {
   durationMs?: number
   /** 歌曲风格（流派），平台搜索结果提供；缺失时为 undefined */
   genre?: string
+  /** 次级唯一标识（本地歌单导出时持久化，供跨平台匹配使用） */
+  identifiers?: PlatformSongIdentifiers
 }
 
 export interface PlatformPlaylist {
@@ -22,6 +45,10 @@ export interface PlatformPlaylist {
   webUrl?: string
   /** 在平台应用中打开歌单的深链（平台适配器填充） */
   appUrl?: string
+  /** 歌单创建者/账号标识（上游提供时填充） */
+  ownerId?: string
+  /** 平台专有定位字段（如酷狗 gcid / global_collection_id / specialid） */
+  extraIds?: Record<string, string>
 }
 
 export interface PlatformAccount {

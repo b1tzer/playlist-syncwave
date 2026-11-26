@@ -11,7 +11,15 @@ import {
   type LoginStatusRaw,
   type QrCheckRaw,
 } from '../base'
-import { artistNames, asArray, asObject, pickString, toHttps, type JsonObject } from '../json'
+import {
+  artistNames,
+  asArray,
+  asObject,
+  compactIdentifiers,
+  pickString,
+  toHttps,
+  type JsonObject,
+} from '../json'
 
 /** NeteaseCloudMusicApi 的模块函数签名（CJS） */
 export type NcmApiFn = (query?: Record<string, unknown>) => Promise<unknown>
@@ -131,6 +139,7 @@ export class NeteaseAdapter extends BasePlatformAdapter {
           coverUrl: toHttps(pickString(item.coverImgUrl)),
           webUrl: `https://music.163.com/#/playlist?id=${id}`,
           appUrl: `orpheus://playlist/${id}`,
+          ownerId: pickString(asObject(item.creator).userId, item.userId),
         }
       })
   }
@@ -231,6 +240,15 @@ function assertOk(body: JsonObject, action: string, message?: string): void {
 function mapTrack(t: unknown): PlatformSong {
   const item = asObject(t)
   const album = asObject(item.al ?? item.album)
+  const originSong = asObject(item.originSongSimpleData)
+  const aliases = asArray(item.alia)
+    .map((a) => pickString(a))
+    .filter((a): a is string => a !== undefined)
+  const identifiers = {
+    albumId: pickString(album.id),
+    originSongId: pickString(originSong.songId),
+    aliases,
+  }
   return {
     id: String(item.id),
     title: pickString(item.name, item.title) ?? '未知歌曲',
@@ -239,6 +257,7 @@ function mapTrack(t: unknown): PlatformSong {
     coverUrl: toHttps(pickString(album.picUrl)),
     durationMs: typeof item.dt === 'number' ? item.dt : undefined,
     genre: pickString(item.genre),
+    identifiers: compactIdentifiers(identifiers),
   }
 }
 

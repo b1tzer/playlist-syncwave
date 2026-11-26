@@ -1402,3 +1402,35 @@
 6. Apple Music：读接口官方主机可用；写接口（含删除）必须走 `amp-api.music.apple.com`（删除在官方主机固定 401）；官方 API 无「移除歌曲」端点；资料库歌单列表无歌曲数；catalog search limit 上限 25。
 
 **文档边界**：字段表覆盖适配器实际读取与映射的字段，上游响应可能携带更多未使用字段；写入类接口未收录真实响应样例（日志只记录调用元信息，不含完整出入参）。网易云 `trackIds[]` 元素中 `sc`/`f`/`sr`/`dpr`/`tr`/`lr` 为上游未公开文档的内部字段，适配器不读取。
+
+---
+
+## 7. 唯一性标识调研与本地歌单持久化
+
+> 本节说明「如何判定同一首歌/同一个歌单」的字段来源，以及平台歌单导出为本地歌单时实际落库的范围。标注沿用 ✅/📐：✅ 为实测抓取，📐 为 SDK/源码示意（值仅示意，字段层级来自源码）。
+
+### 7.1 歌单机读
+
+| 平台 | 歌单主键（`PlatformPlaylist.id`） | 额外定位字段 | 证据 |
+|---|---|---|---|
+| 网易云 | 歌单 `id`（数字转字符串） | `creator.userId` / `userId` → `ownerId` | 📐 NCM `user_playlist` 源码，见第 2 章 |
+| QQ音乐 | `tid` 优先，回退 `id` | `uin` → `ownerId`；`dirId` 仅用于过滤收藏夹 | 📐 SDK 源码，见第 1 章 |
+| 酷狗 | `listid` 优先，回退 `id` | `encode_gcid`/`gcid`、`list_create_gid`/`global_collection_id`、`from_listid`/`list_create_listid`（specialid）、`type`、`total_ver`、`list_create_userid` | ✅ 分享 URL 与 type 语义实测，见第 3 章 |
+| Apple Music | 资料库条目 `id`（`pl.u-` 自建 / `pl.` 官方） | `webUrl` 按前缀区分；官方 API 无账号资料接口，`userId` 是 storefront 地区码，非歌单归属 id | 📐 社区 Web API 源码，见第 4 章 |
+
+### 7.2 歌曲级
+
+| 平台 | 主 id（`PlatformSong.id`） | 次级唯一标识（`PlatformSong.identifiers`） | 证据 |
+|---|---|---|---|
+| 网易云 | 数字歌曲 `id` | `al.id` → `albumId`；`originSongSimpleData.songId` → `originSongId`；`alia` → `aliases` | 📐 NCM `playlist_detail`/`cloudsearch` 源码 |
+| QQ音乐 | `songid` / `id` / `songmid` 优先序 | `mid`/`songmid` → `songMid`；`album.id` → `albumId`；`album.mid`/`albummid` → `albumMid` | ✅ `/search` 响应实测；歌单详情映射 📐 |
+| 酷狗 | `hash`（统一小写，歌单/搜索来源不同字段名） | 云歌单 `fileid` → `fileId`（删歌必需）；`mixsongid` → `mixSongId`、`album_id` → `albumId`（加歌必需，之前只在内存 `songMeta` 中） | 📐 库模式源码 + ✅ 写接口字段实测 |
+| Apple Music | `playParams.catalogId` 优先，回退条目 `id` | 条目 `id` → `librarySongId`（catalogId 存在时保留）；`playParams.albumId` → `albumId` | 📐 社区 Web API 源码 |
+
+**ISRC**：四个平台的当前适配器/文档都不提供 ISRC，代码注释明确「国内平台 API 不暴露」，因此模型与本地表均不预留该字段；上游一旦提供再按同一路径补入 `identifiers`。
+
+### 7.3 本地歌单落库范围
+
+- `local_playlists`：`source_platform` + `source_playlist_id` 复合定位来源；`source_web_url` / `source_app_url` / `source_owner_id` 保留可跳转/归属信息；平台专有字段以 `extra_ids` JSON 保存（酷狗 gcid/global_collection_id/specialid/type/total_ver）。
+- `local_playlist_songs`：`source_platform` + `source_song_id` 保留平台主 id；`identifiers` JSON 保存上表全部次级标识（白名单字段，未知 key 被丢弃）。
+- 匹配含义：这些字段为**精确记录**而非自动跨平台的全局 id——不同平台的主 id 互不通用，后续同步仍以「标题+歌手归一化」为代理金标准，次级 id 用于同平台回写定位、版本/翻唱区分与候选排序，避免把「歌名相同」当成「同一首歌」。

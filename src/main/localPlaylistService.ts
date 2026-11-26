@@ -1,21 +1,76 @@
 import { randomUUID } from 'node:crypto'
+import type { LocalPlaylistOrigin } from '@core/models/localPlaylist'
+import type { PlatformSongIdentifiers } from '@core/models/platform'
 import { getDatabase } from './appDatabase'
+import type { LocalSongRecordInput } from './localPlaylistStore'
 
-export interface LocalSongInput {
-  title: string
-  artist: string
-  album?: string
-  durationMs?: number
-}
+export type LocalSongInput = LocalSongRecordInput
 
 const MAX_NAME_LENGTH = 100
-const MAX_SONGS_PER_BATCH = 5000
+const MAX_SONGS_PER_BATCH = 10000
+const IDENTIFIER_KEYS = [
+  'albumId',
+  'songMid',
+  'albumMid',
+  'fileId',
+  'mixSongId',
+  'originSongId',
+  'librarySongId',
+] as const
 
 function validateName(name: unknown): string {
   if (typeof name !== 'string' || !name.trim()) throw new Error('歌单名不能为空')
   const trimmed = name.trim()
   if (trimmed.length > MAX_NAME_LENGTH) throw new Error('歌单名过长')
   return trimmed
+}
+
+function normalizeText(value: unknown, max = 200): string | undefined {
+  if (typeof value !== 'string' || !value.trim()) return undefined
+  return value.trim().slice(0, max)
+}
+
+/** 只透传已知唯一性字段，避免渲染层传入任意 JSON 结构 */
+function normalizeIdentifiers(raw: unknown): PlatformSongIdentifiers | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined
+  const source = raw as Record<string, unknown>
+  const result: PlatformSongIdentifiers = {}
+  for (const key of IDENTIFIER_KEYS) {
+    const value = normalizeText(source[key])
+    if (value) result[key] = value
+  }
+  if (Array.isArray(source.aliases)) {
+    const aliases = source.aliases
+      .map((a) => normalizeText(a, 100))
+      .filter((a): a is string => a !== undefined)
+      .slice(0, 10)
+    if (aliases.length > 0) result.aliases = aliases
+  }
+  return Object.keys(result).length > 0 ? result : undefined
+}
+
+function validateOrigin(raw: unknown): LocalPlaylistOrigin | undefined {
+  if (raw === undefined || raw === null) return undefined
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('无效的来源歌单信息')
+  const source = raw as Record<string, unknown>
+  const platform = normalizeText(source.platform, 40)
+  const playlistId = normalizeText(source.playlistId, 200)
+  if (!platform || !playlistId) throw new Error('无效的来源歌单信息')
+  const extraIds: Record<string, string> = {}
+  if (source.extraIds && typeof source.extraIds === 'object' && !Array.isArray(source.extraIds)) {
+    for (const [key, value] of Object.entries(source.extraIds as Record<string, unknown>)) {
+      const text = normalizeText(value)
+      if (key.length <= 40 && text) extraIds[key] = text
+    }
+  }
+  return {
+    platform,
+    playlistId,
+    webUrl: normalizeText(source.webUrl, 500),
+    appUrl: normalizeText(source.appUrl, 500),
+    ownerId: normalizeText(source.ownerId, 200),
+    extraIds: Object.keys(extraIds).length > 0 ? extraIds : undefined,
+  }
 }
 
 function validateSongs(songs: unknown): LocalSongInput[] {
@@ -31,7 +86,15 @@ function validateSongs(songs: unknown): LocalSongInput[] {
       typeof raw.durationMs === 'number' && Number.isFinite(raw.durationMs)
         ? Math.max(0, Math.round(raw.durationMs))
         : undefined
-    return { title: raw.title.trim(), artist, album, durationMs }
+    return {
+      title: raw.title.trim(),
+      artist,
+      album,
+      durationMs,
+      sourcePlatform: normalizeText(raw.sourcePlatform, 40),
+      sourceSongId: normalizeText(raw.sourceSongId, 200),
+      identifiers: normalizeIdentifiers(raw.identifiers),
+    }
   })
 }
 
@@ -44,13 +107,14 @@ export function listLocalPlaylists() {
 }
 
 /** 新建本地歌单并写入歌曲（事务内完成，避免空歌单半成品） */
-export function createLocalPlaylist(name: unknown, songs: unknown) {
+export function createLocalPlaylist(name: unknown, songs: unknown, origin?: unknown) {
   const trimmed = validateName(name)
   const parsed = validateSongs(songs)
+  const parsedOrigin = validateOrigin(origin)
   const store = getDatabase().localPlaylists
   const id = randomUUID()
   const ts = now()
-  store.create(id, trimmed, ts)
+  store.create(id, trimmed, ts, parsedOrigin)
   if (parsed.length > 0) {
     store.replaceSongs(id, parsed, ts)
   }

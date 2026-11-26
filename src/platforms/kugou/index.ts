@@ -11,7 +11,14 @@ import {
   type LoginStatusRaw,
   type QrCheckRaw,
 } from '../base'
-import { artistNames, asArray, asObject, pickString, type JsonObject } from '../json'
+import {
+  artistNames,
+  asArray,
+  asObject,
+  compactIdentifiers,
+  pickString,
+  type JsonObject,
+} from '../json'
 
 /** 酷狗 API 库模式的扁平函数签名（kugoumusicapi main.js 导出） */
 export type KugouApiFn = (params?: Record<string, unknown>) => Promise<KugouResponse>
@@ -36,6 +43,10 @@ export interface KugouDevice {
   dev: string
   /** register_dev 注册返回的真实设备指纹 */
   dfid?: string
+}
+
+function toIdString(value: number | undefined): string | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? String(value) : undefined
 }
 
 /** 加歌/删歌需要的歌曲元数据缓存（搜索与歌单歌曲拉取时顺带填充） */
@@ -507,6 +518,16 @@ export class KugouAdapter extends BasePlatformAdapter {
         (specialId
           ? `https://www.kugou.com/yy/special/single/${specialId}.html`
           : buildOwnPlaylistShareUrl(userId, id)),
+      ownerId: pickString(item.list_create_userid, item.create_userid, userId),
+      extraIds: Object.fromEntries(
+        Object.entries({
+          gcid,
+          globalCollectionId: pickString(item.list_create_gid, item.global_collection_id),
+          specialId,
+          type: item.type === undefined ? undefined : String(Number(item.type)),
+          totalVer: item.total_ver === undefined ? undefined : String(Number(item.total_ver)),
+        }).filter(([, value]) => value !== undefined),
+      ) as Record<string, string>,
     }
   }
 
@@ -654,6 +675,11 @@ export class KugouAdapter extends BasePlatformAdapter {
         typeof item.timelen === 'number'
           ? normalizeKgTimelen(item.timelen)
           : saneDuration(typeof item.duration === 'number' ? item.duration * 1000 : Number.NaN),
+      identifiers: compactIdentifiers({
+        fileId: this.songMeta.get(hash)?.fileId,
+        mixSongId: toIdString(this.songMeta.get(hash)?.mixSongId),
+        albumId: toIdString(this.songMeta.get(hash)?.albumId),
+      }),
     }
   }
 
@@ -715,6 +741,10 @@ export class KugouAdapter extends BasePlatformAdapter {
       durationMs: saneDuration(
         typeof item.Duration === 'number' ? item.Duration * 1000 : Number.NaN,
       ),
+      identifiers: compactIdentifiers({
+        mixSongId: toIdString(this.songMeta.get(hash)?.mixSongId),
+        albumId: toIdString(this.songMeta.get(hash)?.albumId),
+      }),
     }
   }
 

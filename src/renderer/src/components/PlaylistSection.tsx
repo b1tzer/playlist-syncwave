@@ -730,6 +730,13 @@ export default function PlaylistSection({
       pushDivider()
       entries.push({
         type: 'item',
+        id: 'save-local',
+        label: t('playlist.saveToLocal'),
+        icon: 'bookmark_add',
+        onSelect: () => void handleSaveToLocal(single),
+      })
+      entries.push({
+        type: 'item',
         id: 'export-m3u',
         label: t('playlist.exportM3u'),
         icon: 'download',
@@ -783,6 +790,26 @@ export default function PlaylistSection({
   }
 
   // --- 歌单管理操作 ---
+
+  /** 右键整单导出到本地：主进程拉取歌曲并保留平台唯一标识 */
+  const handleSaveToLocal = async (playlist: PlatformPlaylist) => {
+    log.info('playlist.save-local', '导出平台歌单到本地', {
+      platform: active,
+      playlistId: playlist.id,
+    })
+    setManaging(true)
+    try {
+      const created = await window.electronAPI.localPlaylists.importPlatformPlaylist(active, playlist)
+      if (!created) return
+      log.info('playlist.saved-local', '平台歌单已保存到本地', { id: created.id })
+      notify('success', t('playlist.savedToLocal'), created.name)
+    } catch (e) {
+      log.error('playlist.save-local-failed', '保存到本地失败', e, { platform: active })
+      notifyError(e, t('playlist.saveToLocalFailed'))
+    } finally {
+      setManaging(false)
+    }
+  }
 
   /** 右键导出歌单为 m3u/csv 文件（按需拉取该歌单歌曲） */
   const handleMenuExport = async (playlist: PlatformPlaylist, format: 'm3u' | 'csv') => {

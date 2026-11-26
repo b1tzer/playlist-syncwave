@@ -2,6 +2,16 @@
 
 本项目遵循语义化版本（SemVer）。首个正式版本为 `v0.1.0`。
 
+## [0.2.0] - 2026-11-26
+
+### 新增
+- 平台歌单「保存到本地歌单」：右键任一平台歌单即可整单导出为本地歌单，主进程拉取全量歌曲并保留来源平台、歌单 id、链接/创建者及平台专有定位字段
+- 本地歌单保留跨平台唯一性数据：歌曲表新增 `source_platform` / `source_song_id` 与 `identifiers` JSON（网易云专辑与原曲 id、QQ 歌曲/专辑 mid、酷狗 fileid/mixsongid/album_id、Apple Music catalog/library id 与别名）；四平台适配器同步填充这些字段，来源歌单定位写入 `local_playlists`（迁移 v7，幂等且对全新库安全）
+
+### 变更
+- 开发模式数据目录独立到 `userData/dev`，正式版保持默认 `userData`；可用 `PLAYLIST_USER_DATA_DIR` 覆盖
+- `docs/platform-api-fields.md` 新增「唯一性标识调研与本地歌单持久化」章节：逐平台列出歌单/歌曲主键与次级 id 的上游来源，明确 ISRC 当前四平台均不提供、不做虚构映射
+
 ## [0.1.2] - 2026-11-26
 
 ### 变更
@@ -49,6 +59,7 @@
 - Apple Music 写接口 401：写操作改走 `amp-api.music.apple.com`
 - 歌单列表混入收藏的他人歌单：酷狗按 `type≠1`、网易云过滤 `specialType=5` 与 `subscribed=true`
 
+[0.2.0]: https://github.com/b1tzer/playlist-syncwave/releases/tag/v0.2.0
 [0.1.2]: https://github.com/b1tzer/playlist-syncwave/releases/tag/v0.1.2
 [0.1.1]: https://github.com/b1tzer/playlist-syncwave/releases/tag/v0.1.1
 [0.1.0]: https://github.com/b1tzer/playlist-syncwave/releases/tag/v0.1.0

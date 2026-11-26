@@ -42,7 +42,7 @@
 要点：
 - `planning.md` 以**当前状态**为准：只描述现行技术约定、已交付能力与发布前人工验收清单；过程叙事（原计划/已变更/修复迭代/历史测试数）不进正文，需要追溯时查 git 历史。
 - `docs/platform-api-fields.md` 是上游接口契约：字段表须标注来源（✅ 实测抓取 / 📐 SDK·NCM·适配器源码），未实测不得冒充实测。
-- 版本号表、测试数等易腐化数字，改完顺手核对一次。当前基线：四平台、十张 SQLite 表（含 `schema_migrations`）、迁移基线 v6、缓存 schema v6、392 项测试、TypeScript 6.0.3 / Vite 8 / Vitest 5 / Electron 45。
+- 版本号表、测试数等易腐化数字，改完顺手核对一次。当前基线：四平台、十张 SQLite 表（含 `schema_migrations`）、迁移至 v7、缓存 schema v6、404 项测试、TypeScript 6.0.3 / Vite 8 / Vitest 5 / Electron 45。
 - 发布前自动化门禁：`npm run typecheck && npm run lint && npm run test && npm run build` 全绿；人工验收清单见 `planning.md` 第 5 节（2026-11-25 已完成）。
 - 发布相关变更（版本、流程、更新源）同步更新 `CHANGELOG.md`，并在 `README.md`「发布流程」与 `planning.md` 第 8 节保持一致。
 
@@ -53,7 +53,7 @@
 - 依赖版本以 package.json 为准，不臆造不存在的包名或版本。
 
 ## 当前状态
-- V0.1（MVP，package.json version 0.1.2）。已交付：文本快速创建、匹配与单向同步、歌单管理（含本地歌单库）、歌单缓存、同步中心、设置中心与桌面基础能力。接入四平台：网易云、QQ音乐、酷狗、Apple Music。
+- 当前版本 0.2.0（V0.2）。V0.1 已交付：文本快速创建、匹配与单向同步、歌单管理（含本地歌单库）、歌单缓存、同步中心、设置中心与桌面基础能力；V0.2 新增平台歌单整单导出到本地歌单与跨平台唯一性标识持久化。接入四平台：网易云、QQ音乐、酷狗、Apple Music。
 - 当前行为：网易云扫码登录可用；搜索限速 + 指数退避重试；主进程吞掉 EPIPE；npm 11 安装脚本需 `npm install-scripts approve <pkg>` 放行。异常提示统一走右上角 toast（`renderer/src/utils/notifyError.ts`），代码性报错过滤为通用标题；主进程歌单拉取（列表/歌曲）带 30s 超时；慢加载超 3s 文案切为「网络较慢，正在获取中…」并保持转圈。平台封面 URL 统一 https（打包版 CSP 只放行 https 图片）：适配器 `toHttps` 源头升级 + 渲染层 `utils/coverUrl.ts` 兜底，缓存 schema v6 触发旧 http 缓存重验。
 - 同步匹配：受控并发池（`searchConcurrency` 默认 3）+ 双关键词并行预取 + 任务内关键词缓存（normalize key，含在途去重）+ 全局相邻搜索最小间隔（`searchIntervalMs`，预约式限速器）+ rateLimited 全局冷却 4s + 搜索超时 15s（建单/加歌 60s）；同歌不同作者走 choice-needed 两阶段确认；运行中任务可停止/跳过当前歌，逐首明细持久化。
 - 歌单添加歌曲搜索：`page` 参数贯通 IPC/适配器，单页 20 条 + 哨兵提前 200px 预取，`SongSearchResults` 两处复用；歌单卡片歌曲数增删后就地同步。同步中心任务卡片展示「来源 → 目标平台」及品牌 logo、状态徽标置于时间前、状态多选筛选（空集合＝全部）；歌曲列表带「# / 歌名 / 歌手 / 专辑 / 时长」固定表头。
@@ -66,7 +66,8 @@
 - ESM 下不要用 `const require = createRequire()` —— 与 electron-vite 注入的 require 冲突；用内联 `createRequire(import.meta.url)(...)`。
 - QQ音乐 Node 模式的 `/login/qr/*`（key/create/check）路由是 **GET**，不是 POST（serverless 模式可以 POST，Node 模式会 405）。
 - 主进程必须吞掉 stdout/stderr 的 EPIPE（NCM logger 写 console 会触发崩溃）。
-- 统一应用数据库为 better-sqlite3@13.2.0（`userData/app.db`，WAL 模式），含十张表：`sync_tasks`（同步历史，逐首明细存 `detail`）、`app_settings`（应用设置 key-value）、`song_mappings`（跨平台歌曲映射缓存，人工确认优先）、`playlist_cache`（歌单列表缓存）、`playlist_song_cache`（歌单歌曲缓存）、`playlist_song_meta`（每单歌曲缓存时间戳）、`playlist_cache_schema`（缓存 schema 版本表，按 platform 隔离 scope）、`local_playlists`/`local_playlist_songs`（本地歌单库）、`schema_migrations`（版本化迁移记录）。唯一迁移为发布前基线 `version=6`（幂等），启动时 `runMigrations` 先于各 Store 建表；正式发布后 `MIGRATIONS` 只追加（version ≥ 7）、不修改、不删除。
+- 统一应用数据库为 better-sqlite3@13.2.0（正式版 `userData/app.db`、开发版 `userData/dev/app.db`，由 `src/main/appPaths.ts` 在 ready 前隔离，`PLAYLIST_USER_DATA_DIR` 可覆盖；WAL 模式），含十张表：`sync_tasks`（同步历史，逐首明细存 `detail`）、`app_settings`（应用设置 key-value）、`song_mappings`（跨平台歌曲映射缓存，人工确认优先）、`playlist_cache`（歌单列表缓存）、`playlist_song_cache`（歌单歌曲缓存）、`playlist_song_meta`（每单歌曲缓存时间戳）、`playlist_cache_schema`（缓存 schema 版本表，按 platform 隔离 scope）、`local_playlists`/`local_playlist_songs`（本地歌单库）、`schema_migrations`（版本化迁移记录）。迁移为发布前基线 `version=6` + v7（`local_playlists` 来源定位列 / `local_playlist_songs` 次级唯一标识列 + 索引，幂等且对全新库安全），启动时 `runMigrations` 先于各 Store 建表；后续 `MIGRATIONS` 只追加（version ≥ 8）、不修改、不删除。
+- 唯一性标识：`PlatformSong.identifiers` 白名单字段由四平台适配器填充（网易云 albumId/originSongId/aliases、QQ songMid/albumId/albumMid、酷狗 fileId/mixSongId/albumId、Apple librarySongId/albumId）；平台歌单经 `local-playlist:import-platform` 整单导出时，来源定位写 `local_playlists`（source_platform/source_playlist_id/链接/ownerId/extra_ids JSON），歌曲写 `local_playlist_songs`（source_platform/source_song_id/identifiers JSON）。ISRC 四平台均不提供，不虚构；匹配仍以标题+歌手归一化为代理金标准，次级 id 只做同平台回写定位/版本区分。字段来源与标注见 `docs/platform-api-fields.md` 第 7 节。
 - 歌单缓存策略（`core/cachePolicy.ts` 常量 + `playlistCacheService` 单飞去重/限流 + `playlistCacheStore` 存储）：列表 TTL 10min、歌曲 TTL 30min；手动强制刷新限流用**令牌桶**（容量 3、每 10s 补 1 令牌，`REFRESH_BUCKET_*` 常量），令牌不足时静默降级返回缓存；渲染层手动刷新按钮同步冷却；重命名/删除/增删歌曲/同步建单后主进程联动失效对应缓存。`PLAYLIST_CACHE_SCHEMA_VERSION=6`，平台字段映射/过滤规则变更需 bump。封面 URL 一律 https（打包版 CSP `img-src` 只放行 https）：平台适配器源头 `toHttps` 升级 + 渲染层 `utils/coverUrl.ts` 兜底。
 - 凭证与 QQ 会话文件（credentials.json / qq-session*.json / qq-device.json）保持文件存储，不进 SQLite（凭证安全隔离）。
 - 登录态内存缓存（`main/loginStatusCache.ts`）：`platform:login-status` 命中缓存直接返回（渲染层 reload 后秒回，不重复网络查询），首次查询写入；扫码登录成功/登出/保活失效清除，网页登录 cookie 到手先写 `pending` 临时态、后台校验/资料补全后覆盖为正式账号。

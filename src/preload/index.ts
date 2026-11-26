@@ -332,6 +332,18 @@ const api = {
     ): Promise<void> => ipcRenderer.invoke('local-playlist:add-songs', id, songs),
     removeSongs: (id: string, positions: number[]): Promise<void> =>
       ipcRenderer.invoke('local-playlist:remove-songs', id, positions),
+    /** 平台歌单整单导出为本地歌单（保留平台 id 与次级唯一标识） */
+    importPlatformPlaylist: (
+      platform: string,
+      playlist: PlatformPlaylist,
+    ): Promise<LocalPlaylist | null> =>
+      ipcRenderer.invoke('local-playlist:import-platform', platform, playlist),
+    /** 主进程写入本地歌单后广播，渲染层据此刷新列表 */
+    onChanged: (callback: () => void): (() => void) => {
+      const listener = () => callback()
+      ipcRenderer.on('local-playlist:changed', listener)
+      return () => ipcRenderer.removeListener('local-playlist:changed', listener)
+    },
   },
 }
 

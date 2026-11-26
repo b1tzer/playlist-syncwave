@@ -102,6 +102,9 @@ export default function LocalPlaylistPanel({
 
   useEffect(() => {
     void fetchPlaylists()
+    return window.electronAPI.localPlaylists.onChanged(() => {
+      void fetchPlaylists()
+    })
   }, [])
 
   const loadSongs = async (id: string) => {

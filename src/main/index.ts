@@ -1,3 +1,4 @@
+import './appPaths'
 import {
   app,
   BrowserWindow,
@@ -59,6 +60,7 @@ import {
   addLocalPlaylistSongs,
   removeLocalPlaylistSongs,
 } from './localPlaylistService'
+import { importPlatformPlaylistToLocal } from './localPlaylistImportService'
 import { loadWindowState, trackWindowState } from './windowState'
 import { beginWebLogin } from './webLoginService'
 import { buildApplicationMenu, installWindowShortcuts } from './menu'
@@ -416,9 +418,11 @@ ipcMain.handle('platform:create-qr', (_event, platform: string, channel?: string
     'platform.create-qr',
     async () => {
       const adapter = await resolveAdapter(platform)
-      return adapter.createQrLogin(channel)
+      // 空字符串不是有效渠道（渲染层历史 bug 曾传空串给 QQ音乐 API 导致 400）
+      const normalized = channel?.trim() || undefined
+      return adapter.createQrLogin(normalized)
     },
-    { platform, channel: channel ?? 'default' },
+    { platform, channel: channel?.trim() || 'default' },
   ),
 )
 
@@ -1015,6 +1019,20 @@ ipcMain.handle('local-playlist:create', (_event, name: unknown, songs: unknown) 
     async () => createLocalPlaylist(name, songs),
     { songCount: Array.isArray(songs) ? songs.length : 0 },
   ),
+)
+
+ipcMain.handle(
+  'local-playlist:import-platform',
+  (_event, platform: unknown, playlist: unknown) =>
+    ipcLog.time(
+      'local-playlist.import-platform',
+      async () => {
+        const created = await importPlatformPlaylistToLocal(platform, playlist)
+        broadcastPlaylistRefresh('local-playlist:changed', { id: created.id })
+        return created
+      },
+      { platform: String(platform ?? '') },
+    ),
 )
 
 ipcMain.handle('local-playlist:rename', (_event, id: unknown, name: unknown) =>

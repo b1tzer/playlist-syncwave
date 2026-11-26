@@ -12,7 +12,15 @@ import { createLogger } from '@core/logging'
 import type { PlatformModule } from '../meta'
 import type { HttpHandler } from '../httpHandler'
 import { BasePlatformAdapter, type LoginStatusRaw, type QrCheckRaw } from '../base'
-import { artistNames, asArray, asObject, pickString, toHttps, type JsonObject } from '../json'
+import {
+  artistNames,
+  asArray,
+  asObject,
+  compactIdentifiers,
+  pickString,
+  toHttps,
+  type JsonObject,
+} from '../json'
 
 const log = createLogger({ module: 'platform.qqmusic' })
 
@@ -105,10 +113,12 @@ export class QqMusicAdapter extends BasePlatformAdapter {
 
   // --- 读原语 ---
 
-  protected async qrCreateKey(channel: string = 'qqmusic'): Promise<string> {
+  protected async qrCreateKey(channel?: string): Promise<string> {
+    // 空字符串不是有效渠道（QQ音乐 API 只接受 qq/wechat/qqmusic），回退到默认
+    const selected = channel?.trim() || 'qqmusic'
     const keyRes = await this.call(
       'GET',
-      `/login/qr/key?channel=${encodeURIComponent(channel)}`,
+      `/login/qr/key?channel=${encodeURIComponent(selected)}`,
       '',
     )
     const key = pickString(asObject(keyRes.data).unikey)
@@ -165,6 +175,7 @@ export class QqMusicAdapter extends BasePlatformAdapter {
           coverUrl: toHttps(pickString(item.picUrl, item.coverUrl, item.pic)),
           webUrl: `https://y.qq.com/n/ryqq/playlist/${id}`,
           appUrl: `qqmusic://qq.com/media/playSonglist?p=${id}`,
+          ownerId: pickString(item.uin),
         }
       })
   }
@@ -196,13 +207,20 @@ export class QqMusicAdapter extends BasePlatformAdapter {
   }
 
   private mapSong(item: JsonObject): PlatformSong {
+    const album = asObject(item.album)
+    const identifiers = {
+      songMid: pickString(item.songmid, item.mid),
+      albumId: pickString(album.id, item.albumid),
+      albumMid: pickString(album.mid, item.albummid),
+    }
     return {
       id: pickString(item.songid, item.id, item.songmid) ?? '',
       title: pickString(item.songname, item.name, item.title) ?? '未知歌曲',
       artist: artistNames(asArray(item.singer ?? item.singers)),
-      album: pickString(item.albumname, asObject(item.album).name),
-      coverUrl: coverOf(item, asObject(item.album)),
+      album: pickString(item.albumname, album.name),
+      coverUrl: coverOf(item, album),
       durationMs: typeof item.interval === 'number' ? item.interval * 1000 : undefined,
+      identifiers: compactIdentifiers(identifiers),
     }
   }
 

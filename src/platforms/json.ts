@@ -24,6 +24,16 @@ export function asArray(v: unknown): unknown[] {
   return Array.isArray(v) ? v : []
 }
 
+/** 次级标识对象：去掉 undefined 与空数组，空对象归一为 undefined（避免落库无意义 JSON） */
+export function compactIdentifiers<T extends Record<string, string | string[] | undefined>>(
+  ids: T,
+): Partial<T> | undefined {
+  const entries = Object.entries(ids).filter(
+    ([, value]) => value !== undefined && !(Array.isArray(value) && value.length === 0),
+  )
+  return entries.length > 0 ? (Object.fromEntries(entries) as Partial<T>) : undefined
+}
+
 /** 封面等图片 URL 强制 https（打包版渲染层 CSP 只放行 https 图片） */
 export function toHttps(url: string | undefined): string | undefined {
   if (!url) return url

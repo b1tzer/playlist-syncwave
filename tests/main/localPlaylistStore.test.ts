@@ -75,4 +75,45 @@ describe('localPlaylistStore — 本地歌单存储', () => {
     expect(s.album).toBe('叶惠美')
     expect(s.durationMs).toBe(269000)
   })
+
+  it('平台导出歌单：来源定位与歌曲唯一标识完整往返', () => {
+    store.create(
+      'x',
+      '网易云歌单',
+      '2024-01-01T00:00:00.000Z',
+      {
+        platform: 'netease',
+        playlistId: '12345',
+        webUrl: 'https://music.163.com/#/playlist?id=12345',
+        ownerId: 'u-1',
+        extraIds: { sourceType: 'created' },
+      },
+    )
+    store.replaceSongs(
+      'x',
+      [
+        {
+          title: '晴天',
+          artist: '周杰伦',
+          sourcePlatform: 'netease',
+          sourceSongId: '186016',
+          identifiers: { albumId: '14415', aliases: ['晴天（Live）'] },
+        },
+      ],
+      '2024-01-02T00:00:00.000Z',
+    )
+    expect(store.get('x')?.origin).toEqual({
+      platform: 'netease',
+      playlistId: '12345',
+      webUrl: 'https://music.163.com/#/playlist?id=12345',
+      appUrl: undefined,
+      ownerId: 'u-1',
+      extraIds: { sourceType: 'created' },
+    })
+    expect(store.songs('x')[0]).toMatchObject({
+      sourcePlatform: 'netease',
+      sourceSongId: '186016',
+      identifiers: { albumId: '14415', aliases: ['晴天（Live）'] },
+    })
+  })
 })

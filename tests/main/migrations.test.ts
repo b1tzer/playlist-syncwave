@@ -101,15 +101,71 @@ describe('runMigrations — 版本化迁移', () => {
   it('全新库（无任何业务表）执行迁移不报错：补丁跳过，由 Store 建最新表', () => {
     const fresh = new Database(':memory:')
     expect(() => runMigrations(fresh)).not.toThrow()
-    // 记录基线版本，未来 v7+ 正常追加执行
-    const row = fresh
-      .prepare('SELECT COALESCE(MAX(version), 0) AS v FROM schema_migrations')
+    const version = fresh
+      .prepare('SELECT MAX(version) AS v FROM schema_migrations')
       .get() as { v: number }
-    expect(row.v).toBe(6)
+    expect(version.v).toBe(7)
     // 迁移不建业务表：建表仍由各 Store 负责
     const tables = fresh
       .prepare(`SELECT name FROM sqlite_master WHERE type = 'table'`)
       .all() as Array<{ name: string }>
     expect(tables.map((t) => t.name)).not.toContain('sync_tasks')
+  })
+
+  it('v7：存量本地歌单表补齐来源/唯一标识列，索引存在且幂等', () => {
+    const legacy = new Database(':memory:')
+    legacy.exec(`
+CREATE TABLE local_playlists (
+  id TEXT PRIMARY KEY, name TEXT NOT NULL,
+  created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE TABLE local_playlist_songs (
+  playlist_id TEXT NOT NULL REFERENCES local_playlists(id) ON DELETE CASCADE,
+  position INTEGER NOT NULL, title TEXT NOT NULL,
+  artist TEXT NOT NULL DEFAULT '', album TEXT, duration_ms INTEGER,
+  PRIMARY KEY (playlist_id, position)
+);
+INSERT INTO local_playlists (id, name, created_at, updated_at)
+  VALUES ('p1', '旧歌单', '2024-01-01', '2024-01-01');
+INSERT INTO local_playlist_songs (playlist_id, position, title, artist)
+  VALUES ('p1', 0, '晴天', '周杰伦');
+`)
+    runMigrations(legacy)
+    const playlistCols = (legacy.pragma('table_info(local_playlists)') as Array<{ name: string }>).map(
+      (c) => c.name,
+    )
+    const songCols = (
+      legacy.pragma('table_info(local_playlist_songs)') as Array<{ name: string }>
+    ).map((c) => c.name)
+    expect(playlistCols).toEqual(
+      expect.arrayContaining([
+        'source_platform',
+        'source_playlist_id',
+        'source_web_url',
+        'source_app_url',
+        'source_owner_id',
+        'extra_ids',
+      ]),
+    )
+    expect(songCols).toEqual(
+      expect.arrayContaining(['source_platform', 'source_song_id', 'identifiers']),
+    )
+    const indexes = (
+      legacy.prepare(`SELECT name FROM sqlite_master WHERE type = 'index'`).all() as Array<{
+        name: string
+      }>
+    ).map((r) => r.name)
+    expect(indexes).toContain('idx_local_playlists_source')
+    expect(indexes).toContain('idx_local_playlist_songs_source')
+    const song = legacy
+      .prepare('SELECT title FROM local_playlist_songs WHERE playlist_id = ?')
+      .get('p1') as { title: string }
+    expect(song.title).toBe('晴天')
+    expect(() => runMigrations(legacy)).not.toThrow()
+    const versions = (
+      legacy.prepare('SELECT version FROM schema_migrations').all() as Array<{ version: number }>
+    ).map((r) => r.version)
+    expect(versions.filter((v) => v === 7)).toHaveLength(1)
+    legacy.close()
   })
 })

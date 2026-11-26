@@ -170,6 +170,12 @@ describe('KugouAdapter — 映射契约', () => {
         songCount: 42,
         coverUrl: 'https://c1.kgimg.com/stdmusic/300/20190626/a.jpg',
         webUrl: 'https://www.kugou.com/yy/special/single/12345.html',
+        ownerId: '1',
+        extraIds: {
+          globalCollectionId: 'collection_3_1_4_0',
+          specialId: '12345',
+          type: '0',
+        },
       },
     ])
   })
@@ -282,6 +288,8 @@ describe('KugouAdapter — 映射契约', () => {
           '&specialid=-2147483648' +
           '&global_specialid=5' +
           '&cType=0',
+        ownerId: '1',
+        extraIds: { type: '0' },
       },
     ])
   })
@@ -328,6 +336,7 @@ describe('KugouAdapter — 映射契约', () => {
         album: '叶惠美',
         coverUrl: 'https://img.example/240/a.jpg',
         durationMs: 269000,
+        identifiers: { albumId: '77', fileId: '1001', mixSongId: '88' },
       },
     ])
     // fileid 缓存生效：删歌直接映射，不再拉取歌单歌曲
@@ -510,6 +519,7 @@ describe('KugouAdapter — 映射契约', () => {
         album: '叶惠美',
         coverUrl: 'https://img.example/240/a.jpg',
         durationMs: 269000,
+        identifiers: { albumId: '77', mixSongId: '88' },
       },
     ])
     // 分页参数透传平台接口（page 从 1 起）

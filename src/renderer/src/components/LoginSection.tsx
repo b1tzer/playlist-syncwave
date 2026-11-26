@@ -64,7 +64,8 @@ export default function LoginSection({ platforms, accounts, onAccountChange }: L
       return startWebLogin(platform)
     }
     const channels = platforms.find((p) => p.id === platform)?.loginChannels ?? []
-    const activeChannel = channels.length > 0 ? (channel ?? qrChannel ?? channels[0]?.id) : undefined
+    // 空字符串（qrChannel 初始值）不是有效渠道，必须用 || 而非 ?? 回退到默认渠道
+    const activeChannel = channels.length > 0 ? (channel || qrChannel || channels[0]?.id) : undefined
     log.info('login.qr.start', '发起扫码登录', {
       platform,
       channel: activeChannel ?? 'default',

@@ -12,7 +12,7 @@ import {
   type LoginStatusRaw,
   type QrCheckRaw,
 } from '../base'
-import { asArray, asObject, pickString, type JsonObject } from '../json'
+import { asArray, asObject, compactIdentifiers, pickString, type JsonObject } from '../json'
 
 /** 读接口根地址（官方主机） */
 const API_HOST = 'https://api.music.apple.com'
@@ -552,9 +552,15 @@ export class AppleMusicAdapter extends BasePlatformAdapter {
 function mapSong(item: JsonObject): PlatformSong {
   const attrs = asObject(item.attributes)
   const playParams = asObject(attrs.playParams)
+  const catalogId = pickString(playParams.catalogId)
+  const librarySongId = catalogId ? pickString(item.id) : undefined
+  const identifiers = {
+    librarySongId,
+    albumId: pickString(playParams.albumId),
+  }
   return {
     // 歌单内条目优先用 catalog id（可跨端写入）；无 catalog id 时退回条目 id
-    id: pickString(playParams.catalogId, item.id) ?? '',
+    id: catalogId ?? librarySongId ?? '',
     title: pickString(attrs.name) ?? '未知歌曲',
     artist: pickString(attrs.artistName) ?? '',
     album: pickString(attrs.albumName),
@@ -562,6 +568,7 @@ function mapSong(item: JsonObject): PlatformSong {
     durationMs:
       typeof attrs.durationInMillis === 'number' ? attrs.durationInMillis : undefined,
     genre: pickString(asArray(attrs.genreNames)[0]),
+    identifiers: compactIdentifiers(identifiers),
   }
 }
 

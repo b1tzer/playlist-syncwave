@@ -250,6 +250,7 @@ describe('AppleMusicAdapter — 社区路径 HTTP 映射', () => {
         coverUrl: 'https://x/300x300bb.jpg',
         durationMs: 269000,
         genre: 'Mandopop',
+        identifiers: { librarySongId: 'i.LIB1' },
       },
     ])
   })

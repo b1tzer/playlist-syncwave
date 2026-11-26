@@ -70,6 +70,33 @@ const MIGRATIONS: Migration[] = [
       db.exec('DROP TABLE IF EXISTS playlist_cache')
     },
   },
+  {
+    version: 7,
+    name: '本地歌单保留平台唯一标识（来源歌单定位 + 歌曲次级 id）',
+    up: (db) => {
+      if (tableExists(db, 'local_playlists')) {
+        addColumnIfMissing(db, 'local_playlists', 'source_platform', 'source_platform TEXT')
+        addColumnIfMissing(db, 'local_playlists', 'source_playlist_id', 'source_playlist_id TEXT')
+        addColumnIfMissing(db, 'local_playlists', 'source_web_url', 'source_web_url TEXT')
+        addColumnIfMissing(db, 'local_playlists', 'source_app_url', 'source_app_url TEXT')
+        addColumnIfMissing(db, 'local_playlists', 'source_owner_id', 'source_owner_id TEXT')
+        addColumnIfMissing(db, 'local_playlists', 'extra_ids', 'extra_ids TEXT')
+        db.exec(
+          `CREATE INDEX IF NOT EXISTS idx_local_playlists_source
+             ON local_playlists (source_platform, source_playlist_id)`,
+        )
+      }
+      if (tableExists(db, 'local_playlist_songs')) {
+        addColumnIfMissing(db, 'local_playlist_songs', 'source_platform', 'source_platform TEXT')
+        addColumnIfMissing(db, 'local_playlist_songs', 'source_song_id', 'source_song_id TEXT')
+        addColumnIfMissing(db, 'local_playlist_songs', 'identifiers', 'identifiers TEXT')
+        db.exec(
+          `CREATE INDEX IF NOT EXISTS idx_local_playlist_songs_source
+             ON local_playlist_songs (playlist_id, source_platform, source_song_id)`,
+        )
+      }
+    },
+  },
 ]
 
 /** 应用所有未执行的迁移（按版本序，每个迁移独立事务并记录版本） */

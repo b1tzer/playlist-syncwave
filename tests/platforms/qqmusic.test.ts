@@ -131,6 +131,19 @@ describe('QqMusicAdapter — serverless HTTP 映射', () => {
     expect(calls[0].url.searchParams.get('channel')).toBe('wechat')
   })
 
+  it('二维码登录：空字符串通道回退到默认 qqmusic（生产版 400 回归）', async () => {
+    const { handler, calls } = makeHandler((_method, url) => {
+      if (url.pathname === '/login/qr/key') {
+        return json({ code: 200, data: { unikey: 'uk-empty' } })
+      }
+      return json({ code: 200, data: { qrimg: 'data:image/png;base64,EMPTY' } })
+    })
+    const adapter = new QqMusicAdapter(handler, env)
+    const ticket = await adapter.createQrLogin('')
+    expect(ticket.key).toBe('uk-empty')
+    expect(calls[0].url.searchParams.get('channel')).toBe('qqmusic')
+  })
+
   it('二维码轮询：800→expired、801→waiting、802→scanned、803→success', async () => {
     for (const [code, status] of [
       [800, 'expired'],
@@ -249,6 +262,7 @@ describe('QqMusicAdapter — serverless HTTP 映射', () => {
         album: '叶惠美',
         coverUrl: 'https://y.gtimg.cn/music/photo_new/T002R500x500M000000MkMni19ClKG.jpg',
         durationMs: 269000,
+        identifiers: { albumMid: '000MkMni19ClKG' },
       },
     ])
     expect(calls[0].headers.get('x-qq-session')).toBe('tok')
