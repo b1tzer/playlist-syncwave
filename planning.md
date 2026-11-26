@@ -102,6 +102,11 @@ tests/             # Vitest 单元测试（core/main/platforms/renderer）
 - 视图切换：已访问视图保持挂载、`display:none` 隐藏，切回不重新挂载、不重复 IPC；歌单页 `visible` prop 在隐藏时暂停轮询；去掉 0.3s 整页入场动画。拉伸窗口原生底色与 CSS 表面色一致，长列表行改为悬浮时测量一次（不再每行常驻 `ResizeObserver`）
 - 安全：渲染层 `sandbox: true`、`contextIsolation: true`，通信仅走 preload 白名单；打包环境由 `main/security.ts` 注入 CSP 与 nosniff；`core/logging/redact.ts` 递归脱敏
 
+### 3.6 产品介绍页
+- `site/` 为零依赖静态站点（HTML / CSS / JS + `assets/` 平台 logo 与真实截图），介绍产品定位、六项能力、三步流程、四平台矩阵、下载与常见问题；产品截图来自 v0.1.1 实际运行界面（`site/assets/screenshots/`，示例歌单为本地演示数据），不使用设计稿；favicon 与页头页脚品牌标记复用 `build/icon.svg` 的应用图标，不另设站点标识；页面下载入口固定指向 `releases/latest`，不随版本改动
+- `/.github/workflows/pages.yml` 在 `main` 分支的 `site/**` 或工作流文件变更时上传站点并部署（也可 `workflow_dispatch` 手动触发）；权限仅 `contents: read` + `pages: write` + `id-token: write`；`eslint.config.mjs` 为 `site/**/*.js` 声明浏览器全局，站点脚本仍纳入 lint 门禁
+- 发布地址 <https://b1tzer.github.io/playlist-syncwave/>；首次需在仓库 Settings → Pages → Build and deployment 将 Source 设为 GitHub Actions（此设置不在仓库文件内，需人工完成）
+
 ---
 
 ## 4. 发布前自动化检查（已执行，2026-11-25）

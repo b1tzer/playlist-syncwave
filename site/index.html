@@ -1,0 +1,365 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0b0d16" />
+    <meta
+      name="description"
+      content="SyncWave 是一款本地优先的跨平台歌单同步桌面应用：粘贴文本即可创建歌单，在网易云音乐、QQ 音乐、酷狗音乐与 Apple Music 之间智能匹配并同步。"
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="SyncWave · 让歌单自由流动" />
+    <meta
+      property="og:description"
+      content="粘贴文本创建歌单，在网易云、QQ 音乐、酷狗与 Apple Music 之间一键同步。本地优先，凭证加密。"
+    />
+    <meta property="og:url" content="https://b1tzer.github.io/playlist-syncwave/" />
+    <link rel="icon" type="image/svg+xml" href="./assets/app-icon.svg" />
+    <link rel="stylesheet" href="./styles.css" />
+    <title>SyncWave · 让歌单自由流动</title>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">跳到主要内容</a>
+
+    <svg class="svg-sprite" aria-hidden="true" focusable="false">
+      <symbol id="i-wand" viewBox="0 0 24 24">
+        <path d="m15 4 5 5L8 21l-5-5L15 4Z" />
+        <path d="m13.5 5.5 5 5M5 4v3M3.5 5.5h3M19 15v3M17.5 16.5h3" />
+      </symbol>
+      <symbol id="i-sync" viewBox="0 0 24 24">
+        <path d="M20 7h-5a4 4 0 0 0-4 4v1M4 17h5a4 4 0 0 0 4-4v-1" />
+        <path d="m17 4 3 3-3 3M7 20l-3-3 3-3" />
+      </symbol>
+      <symbol id="i-target" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="8" />
+        <circle cx="12" cy="12" r="3.5" />
+        <path d="M12 2v2M12 20v2M2 12h2M20 12h2" />
+      </symbol>
+      <symbol id="i-list" viewBox="0 0 24 24">
+        <path d="M9 6h11M9 12h11M9 18h11" />
+        <path d="M4 6h.01M4 12h.01M4 18h.01" />
+      </symbol>
+      <symbol id="i-history" viewBox="0 0 24 24">
+        <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
+        <path d="M3 3v5h5M12 7v5l3.5 2" />
+      </symbol>
+      <symbol id="i-shield" viewBox="0 0 24 24">
+        <path d="M12 3 5 6v5c0 4.5 2.9 8.4 7 10 4.1-1.6 7-5.5 7-10V6l-7-3Z" />
+        <path d="m9 12 2 2 4-4" />
+      </symbol>
+      <symbol id="i-download" viewBox="0 0 24 24">
+        <path d="M12 3v12M7.5 10.5 12 15l4.5-4.5M4 17v3h16v-3" />
+      </symbol>
+      <symbol id="i-arrow" viewBox="0 0 24 24">
+        <path d="M4 12h15M13 6l6 6-6 6" />
+      </symbol>
+      <symbol id="i-github" viewBox="0 0 24 24">
+        <path
+          d="M9 19c-4.3 1.3-4.3-2.2-6-2.6m12 5.1v-3.4a3 3 0 0 0-.8-2.3c2.7-.3 5.5-1.3 5.5-6a4.7 4.7 0 0 0-1.3-3.2 4.3 4.3 0 0 0-.1-3.2s-1-.3-3.4 1.2a11.7 11.7 0 0 0-6 0C6.5 2.5 5.5 2.8 5.5 2.8a4.3 4.3 0 0 0-.1 3.2A4.7 4.7 0 0 0 4.1 9.2c0 4.7 2.8 5.7 5.5 6a3 3 0 0 0-.8 2.3V21"
+        />
+      </symbol>
+      <symbol id="i-windows" viewBox="0 0 24 24">
+        <path fill="currentColor" stroke="none" d="M3 5.5 10.5 4.5v6.8H3V5.5ZM12 4.3 21 3v8.3h-9V4.3ZM3 12.7h7.5v6.8L3 18.5v-5.8ZM12 12.7h9V21l-9-1.3v-7Z" />
+      </symbol>
+      <symbol id="i-apple" viewBox="0 0 24 24">
+        <path fill="currentColor" stroke="none" d="M16.4 12.7c0-2.4 2-3.6 2.1-3.6a4.5 4.5 0 0 0-3.6-1.9c-1.5-.2-3 .9-3.7.9-.8 0-1.9-.9-3.1-.8a4.8 4.8 0 0 0-4 2.4c-1.8 3-.4 7.4 1.2 9.8.8 1.2 1.8 2.5 3.2 2.4 1.3 0 1.8-.8 3.3-.8s1.9.8 3.2.8c1.4 0 2.2-1.2 3-2.4a10 10 0 0 0 1.4-2.8 4.3 4.3 0 0 1-2.9-4Z" />
+        <path fill="currentColor" stroke="none" d="M14.3 5.9A4.4 4.4 0 0 0 15.4 3a4.4 4.4 0 0 0-2.9 1.5 4.1 4.1 0 0 0-1 2.8 3.7 3.7 0 0 0 2.8 1.5" />
+      </symbol>
+      <symbol id="i-linux" viewBox="0 0 24 24">
+        <path d="M12 3c-2.6 0-4 2.2-4 5 0 1.7-.9 3.2-1.8 4.6-.8 1.3-1.2 2.6-.7 4 .6 1.7 2.5 2.9 6.5 2.9s5.9-1.2 6.5-2.9c.5-1.4.1-2.7-.7-4C16.9 11.2 16 9.7 16 8c0-2.8-1.4-5-4-5Z" />
+        <path d="M9.4 7.2h.01M14.6 7.2h.01M10.5 11.5c.9.7 2.1.7 3 0M7.5 15.5h.01M16.5 15.5h.01" />
+      </symbol>
+      <symbol id="i-menu" viewBox="0 0 24 24">
+        <path d="M4 7h16M4 12h16M4 17h16" />
+      </symbol>
+      <symbol id="i-close" viewBox="0 0 24 24">
+        <path d="M6 6l12 12M18 6 6 18" />
+      </symbol>
+    </svg>
+
+    <header class="site-header" id="siteHeader">
+      <div class="container header-inner">
+        <a class="brand" href="#top" aria-label="SyncWave 首页">
+          <img src="./assets/app-icon.svg" alt="" class="brand-mark" />
+          <span>SyncWave</span>
+        </a>
+
+        <button
+          class="nav-toggle"
+          id="navToggle"
+          type="button"
+          aria-label="打开导航菜单"
+          aria-controls="siteNav"
+          aria-expanded="false"
+        >
+          <svg class="icon" aria-hidden="true"><use href="#i-menu" /></svg>
+        </button>
+
+        <nav class="site-nav" id="siteNav" aria-label="主导航">
+          <a href="#features">功能特性</a>
+          <a href="#how">工作方式</a>
+          <a href="#platforms">支持平台</a>
+          <a href="#download">下载</a>
+          <a href="#faq">常见问题</a>
+          <a
+            class="nav-github"
+            href="https://github.com/b1tzer/playlist-syncwave"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            <svg class="icon" aria-hidden="true"><use href="#i-github" /></svg>
+            <span>GitHub</span>
+          </a>
+        </nav>
+      </div>
+    </header>
+
+    <main id="main">
+      <section class="hero" id="top">
+        <div class="hero-glow" aria-hidden="true"></div>
+        <div class="container hero-inner">
+          <div class="hero-copy">
+            <span class="eyebrow"><span class="pulse-dot"></span> v0.1.1 · 跨平台歌单同步桌面应用</span>
+            <h1>让歌单<br /><span class="gradient-text">自由流动。</span></h1>
+            <p class="hero-lead">
+              粘贴一段文本就能建好歌单，在网易云音乐、QQ 音乐、酷狗音乐与 Apple Music 之间智能匹配、一键同步。
+              数据留在本地，凭证安心加密。
+            </p>
+            <div class="hero-actions">
+              <a class="btn btn-primary" href="#download">
+                <svg class="icon" aria-hidden="true"><use href="#i-download" /></svg>
+                下载桌面版
+              </a>
+              <a class="btn btn-ghost" href="#how">
+                了解工作方式
+                <svg class="icon" aria-hidden="true"><use href="#i-arrow" /></svg>
+              </a>
+            </div>
+            <p class="hero-note">支持 Windows 10+ · macOS 11+ · Linux（AppImage）</p>
+          </div>
+
+          <div class="hero-visual">
+            <div class="visual-glow" aria-hidden="true"></div>
+            <figure class="screenshot-frame">
+              <img
+                src="./assets/screenshots/quick-create.png"
+                alt="SyncWave 文本快速创建界面：粘贴歌曲清单后自动解析为可编辑标签"
+                width="1200"
+                height="820"
+              />
+            </figure>
+          </div>
+        </div>
+
+        <div class="container platform-strip reveal">
+          <span class="strip-label">已接入平台</span>
+          <div class="strip-items">
+            <span><img src="./assets/netease.svg" alt="" /> 网易云音乐</span>
+            <span><img src="./assets/qqmusic.svg" alt="" /> QQ 音乐</span>
+            <span><img src="./assets/kugou.png" alt="" /> 酷狗音乐</span>
+            <span><img src="./assets/applemusic.svg" alt="" /> Apple Music</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="features">
+        <div class="container">
+          <div class="section-head reveal">
+            <span class="section-kicker">为什么是 SyncWave</span>
+            <h2>把麻烦的步骤，交给它。</h2>
+            <p>从一段文本到一个完整歌单，从一个平台到另一个平台，流程尽量只保留「确认」这一步。</p>
+          </div>
+
+          <div class="feature-grid">
+            <article class="feature-card reveal">
+              <span class="feature-icon"><svg class="icon" aria-hidden="true"><use href="#i-wand" /></svg></span>
+              <h3>粘贴即建单</h3>
+              <p>歌名 - 歌手、分享文本、m3u / csv / txt / lrc / json 文件，自动探测格式并解析，逐条预览、可编辑。</p>
+            </article>
+            <article class="feature-card reveal">
+              <span class="feature-icon"><svg class="icon" aria-hidden="true"><use href="#i-sync" /></svg></span>
+              <h3>跨平台同步</h3>
+              <p>四个平台均可作为来源与目标，多选来源歌单，增量写入目标平台，差异先预览再执行。</p>
+            </article>
+            <article class="feature-card reveal">
+              <span class="feature-icon"><svg class="icon" aria-hidden="true"><use href="#i-target" /></svg></span>
+              <h3>智能匹配</h3>
+              <p>标题 + 歌手归一化精确相等自动选定；同歌不同作者进入候选面板由你裁决，匹配结果缓存复用。</p>
+            </article>
+            <article class="feature-card reveal">
+              <span class="feature-icon"><svg class="icon" aria-hidden="true"><use href="#i-list" /></svg></span>
+              <h3>歌单管理</h3>
+              <p>创建、重命名、删除、增删歌曲；本地歌单库无需登录，平台歌单支持导入导出与搜索添加。</p>
+            </article>
+            <article class="feature-card reveal">
+              <span class="feature-icon"><svg class="icon" aria-hidden="true"><use href="#i-history" /></svg></span>
+              <h3>任务可掌控</h3>
+              <p>受控并发与限流冷却避免触发风控；同步进度、逐首明细与失败原因持久保存，随时停止或跳过。</p>
+            </article>
+            <article class="feature-card reveal">
+              <span class="feature-icon"><svg class="icon" aria-hidden="true"><use href="#i-shield" /></svg></span>
+              <h3>本地优先</h3>
+              <p>歌单数据默认不上传云端；凭证经 Electron safeStorage 系统级加密，日志全量脱敏。</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="section section-alt" id="how">
+        <div class="container">
+          <div class="section-head reveal">
+            <span class="section-kicker">工作方式</span>
+            <h2>三步，把歌单搬过去。</h2>
+            <p>不需要懂格式、不需要手动对齐两首歌，也不需要在平台之间来回复制粘贴。</p>
+          </div>
+
+          <div class="steps">
+            <article class="step reveal">
+              <span class="step-num">01</span>
+              <h3>给我一段文本</h3>
+              <p>粘贴歌名列表、歌词、聊天记录或平台分享文本，也可以直接导入文件、从已登录账号拉取歌单。</p>
+              <div class="step-code">
+                <span>周杰伦 - 晴天</span>
+                <span>《起风了》- 买辣椒也用券</span>
+                <span>五月天《倔强》</span>
+              </div>
+            </article>
+            <article class="step reveal">
+              <span class="step-num">02</span>
+              <h3>确认匹配结果</h3>
+              <p>自动探测格式、辨别字段顺序，再到目标平台搜索验证。拿不准的同名歌曲会列成候选，由你点选。</p>
+              <div class="step-tags"><span>格式自动探测</span><span>搜索验证</span><span>候选确认</span></div>
+            </article>
+            <article class="step reveal">
+              <span class="step-num">03</span>
+              <h3>一键同步</h3>
+              <p>选择目标平台与歌单，查看待新增 / 已存在 / 未匹配清单后执行。进度实时可见，结果有完整报告。</p>
+              <div class="step-tags"><span>差异预览</span><span>批量写入</span><span>结果报告</span></div>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="platforms">
+        <div class="container">
+          <div class="section-head reveal">
+            <span class="section-kicker">支持平台</span>
+            <h2>四处收藏，一个入口。</h2>
+            <p>网易云音乐、QQ 音乐、酷狗音乐与 Apple Music 都支持读取与写入，账号可同时登录、独立管理。</p>
+          </div>
+
+          <div class="platform-grid">
+            <article class="platform-card reveal">
+              <div class="platform-top"><img src="./assets/netease.svg" alt="" /><div><h3>网易云音乐</h3><span>二维码扫码登录</span></div></div>
+              <p>拉取自有歌单与歌曲，支持建单、改名、删除与增删曲目。</p>
+              <div class="platform-tags"><span>来源 + 目标</span><span>扫码登录</span></div>
+            </article>
+            <article class="platform-card reveal">
+              <div class="platform-top"><img src="./assets/qqmusic.svg" alt="" /><div><h3>QQ 音乐</h3><span>二维码扫码登录</span></div></div>
+              <p>App / 微信 / 手机 QQ 三通道扫码，支持歌单读写与批量加歌。</p>
+              <div class="platform-tags"><span>来源 + 目标</span><span>三通道扫码</span></div>
+            </article>
+            <article class="platform-card reveal">
+              <div class="platform-top"><img src="./assets/kugou.png" alt="" /><div><h3>酷狗音乐</h3><span>二维码扫码登录</span></div></div>
+              <p>仅展示自建与系统歌单；登录凭证与设备指纹绑定，请勿随意删除本地指纹文件。</p>
+              <div class="platform-tags"><span>来源 + 目标</span><span>自有歌单</span></div>
+            </article>
+            <article class="platform-card reveal">
+              <div class="platform-top"><img src="./assets/applemusic.svg" alt="" /><div><h3>Apple Music</h3><span>应用内网页登录</span></div></div>
+              <p>支持建单、加曲与改名；官方 API 未提供移除歌曲端点，该操作暂不可用。</p>
+              <div class="platform-tags"><span>来源 + 目标</span><span>无需开发者账号</span></div>
+            </article>
+          </div>
+          <p class="platform-footnote reveal">同步仅操作你自己账号下的歌单元数据，不绕过平台版权限制。</p>
+        </div>
+      </section>
+
+      <section class="section download-section" id="download">
+        <div class="container">
+          <div class="section-head reveal">
+            <span class="section-kicker">开始使用</span>
+            <h2>下载到你的桌面。</h2>
+            <p>安装包由 GitHub Releases 提供，应用内可检查更新。选择对应平台即可开始。</p>
+          </div>
+          <div class="download-grid">
+            <a class="download-card reveal" href="https://github.com/b1tzer/playlist-syncwave/releases/latest" target="_blank" rel="noopener noreferrer">
+              <svg class="icon" aria-hidden="true"><use href="#i-apple" /></svg>
+              <h3>macOS</h3>
+              <p>dmg / zip · macOS 11+</p>
+              <span class="download-link">前往下载 <svg class="icon" aria-hidden="true"><use href="#i-arrow" /></svg></span>
+            </a>
+            <a class="download-card reveal" href="https://github.com/b1tzer/playlist-syncwave/releases/latest" target="_blank" rel="noopener noreferrer">
+              <svg class="icon" aria-hidden="true"><use href="#i-windows" /></svg>
+              <h3>Windows</h3>
+              <p>NSIS 安装包 · Windows 10+</p>
+              <span class="download-link">前往下载 <svg class="icon" aria-hidden="true"><use href="#i-arrow" /></svg></span>
+            </a>
+            <a class="download-card reveal" href="https://github.com/b1tzer/playlist-syncwave/releases/latest" target="_blank" rel="noopener noreferrer">
+              <svg class="icon" aria-hidden="true"><use href="#i-linux" /></svg>
+              <h3>Linux</h3>
+              <p>AppImage</p>
+              <span class="download-link">前往下载 <svg class="icon" aria-hidden="true"><use href="#i-arrow" /></svg></span>
+            </a>
+          </div>
+          <p class="download-note reveal">
+            当前为未签名安装包：macOS 若被拦截，右键安装包选择「打开」；Windows 提示 SmartScreen 时选择「更多信息」→「仍要运行」。
+            <a href="https://github.com/b1tzer/playlist-syncwave/blob/main/CHANGELOG.md" target="_blank" rel="noopener noreferrer">查看版本记录</a>
+          </p>
+        </div>
+      </section>
+
+      <section class="section section-alt" id="faq">
+        <div class="container faq-layout">
+          <div class="section-head reveal faq-intro">
+            <span class="section-kicker">常见问题</span>
+            <h2>可能还想知道。</h2>
+            <p>还有其他疑问？<a href="https://github.com/b1tzer/playlist-syncwave/issues" target="_blank" rel="noopener noreferrer">在 GitHub 提个问题</a>。</p>
+          </div>
+          <div class="faq-list reveal">
+            <details open>
+              <summary>歌单和账号数据会上传到云端吗？</summary>
+              <p>不会。歌单与匹配映射保存在本地 SQLite；登录凭证经 Electron safeStorage 使用系统级加密落盘，仅主进程读写，日志中的敏感信息会被递归脱敏。</p>
+            </details>
+            <details>
+              <summary>匹配不准或同名歌曲太多怎么办？</summary>
+              <p>标题 + 歌手归一化精确相等会自动选定；同歌不同作者会进入候选确认面板由你选择。匹配阈值可在设置中按宽松 / 平衡 / 严格预设调整，人工确认的结果会缓存下来优先复用。</p>
+            </details>
+            <details>
+              <summary>可以从文件或其他平台导入吗？</summary>
+              <p>可以。支持 m3u、csv、txt、lrc、json 文件导入，也能粘贴平台分享文本；已登录账号的歌单可直接拉取。导出支持 m3u 与 csv。</p>
+            </details>
+            <details>
+              <summary>为什么 Apple Music 不能移除歌曲？</summary>
+              <p>Apple Music 官方 API 没有提供从歌单移除曲目的端点，因此应用内不展示该操作。建单、加曲与改名都可以正常使用，写入会按平台限制分批进行。</p>
+            </details>
+            <details>
+              <summary>怎么更新到新版本？</summary>
+              <p>应用内「检查更新」以 GitHub Releases 为唯一更新源；也可以直接到 releases 页面下载最新版本。已发布版本不覆盖重发，回滚需发布更高版本。</p>
+            </details>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container footer-inner">
+        <div class="footer-brand">
+          <a class="brand" href="#top">
+            <img src="./assets/app-icon.svg" alt="" class="brand-mark" />
+            <span>SyncWave</span>
+          </a>
+          <p>让歌单自由流动。仅同步你自己的歌单元数据，不提供音乐下载与版权内容分发。</p>
+        </div>
+        <nav class="footer-links" aria-label="页脚导航">
+          <a href="https://github.com/b1tzer/playlist-syncwave" target="_blank" rel="noopener noreferrer">源码</a>
+          <a href="https://github.com/b1tzer/playlist-syncwave/releases/latest" target="_blank" rel="noopener noreferrer">下载</a>
+          <a href="https://github.com/b1tzer/playlist-syncwave/blob/main/README.md" target="_blank" rel="noopener noreferrer">使用说明</a>
+          <a href="#top">回到顶部 ↑</a>
+        </nav>
+      </div>
+    </footer>
+
+    <script src="./app.js" defer></script>
+  </body>
+</html>

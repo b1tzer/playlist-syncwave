@@ -2,6 +2,8 @@
 
 > 跨平台歌单同步桌面应用 —— 一款本地优先的桌面工具，帮你把任意国内音乐平台的歌单，快速创建并同步到目标平台。
 
+**产品介绍页**：[https://b1tzer.github.io/playlist-syncwave/](https://b1tzer.github.io/playlist-syncwave/)
+
 ## 功能特性
 
 - **快速建歌单**：粘贴文本 / 导入文件（m3u、csv、txt）/ 平台分享链接，自动探测格式并解析「歌名 - 歌手」批量创建歌单，全程无需手动选择格式
@@ -70,6 +72,12 @@ npm run dist:linux  # Linux：AppImage
 `workflow_dispatch` 仅用于构建预演：产出三平台 Artifacts，不发布。本地临时打包可直接用上面的 `npm run dist*`，但不会上传更新元数据。
 
 更新源为 GitHub Releases（`electron-builder.yml` 的 `publish` 配置），无备用源。版本变更记录见 `CHANGELOG.md`。
+
+## 产品介绍页
+
+介绍页源码位于 `site/`，是零依赖的纯静态页面（HTML / CSS / JS + 平台 logo），直接打开 `site/index.html` 即可本地预览。页面产品截图取自应用实际运行界面，存放在 `site/assets/screenshots/`，示例歌单为本地演示数据。推送 `main` 分支上的 `site/` 或 `.github/workflows/pages.yml` 变更时，`.github/workflows/pages.yml` 会自动发布到 GitHub Pages；也可在 Actions 中手动触发 `pages` 工作流。
+
+首次部署前需在仓库 **Settings → Pages → Build and deployment** 将 **Source** 设为 **GitHub Actions**；发布地址为 <https://b1tzer.github.io/playlist-syncwave/>。页面中的下载入口始终指向 GitHub Releases 的最新版本，不需要随应用版本手动改链接。
 
 ## 技术栈
 
