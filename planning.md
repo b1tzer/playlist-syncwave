@@ -220,7 +220,7 @@ tests/             # Vitest 单元测试（core/main/platforms/renderer）
 - **触发**：`git tag v<version>` 推送后触发 `.github/workflows/release.yml`；`workflow_dispatch` 仅做构建预演（不发布）
 - **校验**：tag 必须与 `package.json` 的 `version` 一致；不校验签名凭据（本项目不购买签名/公证证书，构建不提示）
 - **构建**：mac（dmg/zip）、win（nsis）、linux（AppImage）三平台独立 job，均执行 lint/typecheck/test/build 后 `electron-builder --<target> --publish never`（`CSC_IDENTITY_AUTO_DISCOVERY: 'false'`），上传安装包与 `latest*.yml` 到 Artifacts
-- **draft release**：汇总 Artifacts、校验 `latest.yml`/`latest-mac.yml`/`latest-linux.yml` 三份更新元数据齐全，创建 GitHub draft release；人工复核安装包与元数据后转正式
+- **draft release**：汇总 Artifacts、校验 `latest.yml`/`latest-mac.yml`/`latest-linux.yml` 三份更新元数据齐全，创建 GitHub draft release；release notes 从 `CHANGELOG.md` 对应版本章节自动提取（前缀未签名安装提示；不用 `--generate-notes`，本项目直推 main 无 PR 元数据会生成空文本）；人工复核安装包与元数据后转正式
 - **更新源**：仅 GitHub Releases（`electron-builder.yml` 的 `publish`），未配置备用源（Gitee 单文件 100MB 配额无法托管安装包）；客户端按 `v<version>/<asset>` 固定地址下载对应平台安装包，不调用 GitHub API `/releases/latest`（未认证限流 60 次/小时）
 - **用户安装**：未签名包在 macOS 需右键打开，在 Windows 需选择「仍要运行」（见 `README.md`「发布流程」）
 - **版本记录**：`CHANGELOG.md` 随版本更新；回滚只发更高版本，不重发同版本

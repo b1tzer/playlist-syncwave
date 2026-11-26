@@ -107,6 +107,18 @@ jobs:
         run: |
           set -euo pipefail
           tag="${GITHUB_REF_NAME}"
+          version="${tag#v}"
+          # 从 CHANGELOG.md 提取本版本章节作为 release notes（--generate-notes 依赖 PR 元数据，本项目直推 main 会生成空文本）
+          awk -v v="${version}" '
+            /^## \[/ { if (found) exit; if (index($0, "## [" v "]") == 1) { found = 1; next } }
+            found
+          ' CHANGELOG.md > release-notes.md
+          {
+            echo "> **未签名安装包**：macOS 若被 Gatekeeper 拦截，右键安装包 →「打开」；Windows SmartScreen 提示时选「更多信息」→「仍要运行」。本项目不购买代码签名/公证证书。"
+            echo ""
+            cat release-notes.md
+          } > release-notes.tmp
+          mv release-notes.tmp release-notes.md
           mapfile -t assets < <(find dist -maxdepth 1 -type f -print)
           if [ "${#assets[@]}" -eq 0 ]; then
             echo "::error::dist 中没有可上传的文件"
@@ -114,7 +126,8 @@ jobs:
           fi
           if gh release view "$tag" >/dev/null 2>&1; then
             gh release upload "$tag" "${assets[@]}" --clobber
+            gh release edit "$tag" --notes-file release-notes.md
           else
-            gh release create "$tag" "${assets[@]}" --draft --title "SyncWave $tag" --generate-notes
+            gh release create "$tag" "${assets[@]}" --draft --title "SyncWave $tag" --notes-file release-notes.md
           fi
           echo "已生成 draft release: ${tag}（人工复核安装包与更新元数据后转正式发布）"
