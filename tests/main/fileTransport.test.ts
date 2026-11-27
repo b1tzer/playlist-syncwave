@@ -173,6 +173,37 @@ describe('主进程文件日志传输', () => {
     expect(files).toContain('app-2020-01-01.log')
   })
 
+  it('levels 过滤：error 文件只写 error，app 文件排除 error', () => {
+    const errorTransport = new FileLogTransport(dir, { prefix: 'error', levels: ['error'] })
+    const appTransport = new FileLogTransport(dir, { levels: ['debug', 'info', 'warn'] })
+    errorTransport.init()
+    appTransport.init()
+
+    errorTransport.write(makeEntry({ level: 'info', message: '不应落入 error 文件' }))
+    errorTransport.write(makeEntry({ level: 'error', message: '错误日志' }))
+    appTransport.write(makeEntry({ level: 'info', message: 'info 日志' }))
+    appTransport.write(makeEntry({ level: 'warn', message: 'warn 日志' }))
+    appTransport.write(makeEntry({ level: 'error', message: '不应落入 app 文件' }))
+
+    const files = readdirSync(dir)
+    const errorFile = files.find((f) => /^error-\d{4}-\d{2}-\d{2}\.log$/.test(f))
+    const appFile = files.find((f) => /^app-\d{4}-\d{2}-\d{2}\.log$/.test(f))
+    expect(errorFile).toBeDefined()
+    expect(appFile).toBeDefined()
+
+    const errorLines = readFileSync(join(dir, errorFile!), 'utf-8').trim().split('\n')
+    expect(errorLines).toHaveLength(1)
+    expect(errorLines[0]).toContain('错误日志')
+    expect(errorLines[0]).not.toContain('不应落入 error 文件')
+
+    const appLines = readFileSync(join(dir, appFile!), 'utf-8').trim().split('\n')
+    expect(appLines).toHaveLength(2)
+    const appContent = appLines.join('\n')
+    expect(appContent).toContain('info 日志')
+    expect(appContent).toContain('warn 日志')
+    expect(appContent).not.toContain('不应落入 app 文件')
+  })
+
   it('目标文件不可写时写入静默，不抛异常', () => {
     const transport = new FileLogTransport(dir)
     transport.init()

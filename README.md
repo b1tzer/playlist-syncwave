@@ -116,4 +116,4 @@ tests/           # Vitest 单元测试
 
 - 凭证仅经主进程读写，Electron `safeStorage` 加密落盘，渲染进程永不接触原始凭证
 - 渲染层 `sandbox: true` + `contextIsolation: true`，通信仅走 preload 白名单 IPC
-- 凭证 / token / 会话绝不写入日志（`src/core/logging/redact.ts` 递归脱敏）
+- 凭证 / token / 会话绝不写入日志（`src/core/logging/redact.ts` 递归脱敏）；日志按天落盘 `userData/logs/`，error 级别单独写 `error-YYYY-MM-DD.log`，开发模式下请求失败会记录完整出入参（敏感字段已脱敏）

@@ -88,9 +88,12 @@ class LogCenter {
   init(): void {
     if (this.initialized) return
     const logDir = join(app.getPath('userData'), 'logs')
-    const file = new FileLogTransport(logDir)
-    file.init()
-    this.transports = [new ConsoleTransport(), file]
+    // app 文件排除 error（error 独立成文件），error 文件只写 error
+    const appFile = new FileLogTransport(logDir, { levels: ['debug', 'info', 'warn'] })
+    const errorFile = new FileLogTransport(logDir, { prefix: 'error', levels: ['error'] })
+    appFile.init()
+    errorFile.init()
+    this.transports = [new ConsoleTransport(), appFile, errorFile]
     setDefaultTransports(this.transports)
     // 日志消息语言跟随应用设置（数据库未就绪时回退默认中文）
     try {

@@ -1,5 +1,6 @@
 import { createRequire } from 'node:module'
 import { session } from 'electron'
+import { logHttpError } from '@core/logging'
 import { getSetting, setSetting } from './settingsService'
 import { logCenter } from './logging/logCenter'
 
@@ -114,6 +115,13 @@ export async function testProxy(url: string): Promise<ProxyTestResult> {
     await client.get('https://cp.cloudflare.com/generate_204')
     return { ok: true, latencyMs: Date.now() - started }
   } catch (e) {
+    logHttpError(log, 'proxy.test-failed', '代理连通性测试失败', e, {
+      method: 'GET',
+      url: 'https://cp.cloudflare.com/generate_204',
+      requestBody: { protocol, proxyHost: host, proxyPort: port },
+      status: (e as { response?: { status?: number } }).response?.status,
+      durationMs: Date.now() - started,
+    })
     return { ok: false, error: e instanceof Error ? e.message : String(e) }
   }
 }

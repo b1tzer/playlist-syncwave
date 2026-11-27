@@ -1,7 +1,22 @@
-import { describe, it, expect } from 'vitest'
+import { afterEach, describe, it, expect, vi } from 'vitest'
+import { setDefaultTransports, type LogEntry, type LogTransport } from '@core/logging'
 import { AppleMusicAdapter } from '../../src/platforms/applemusic'
 import type { HttpHandler } from '../../src/platforms/httpHandler'
 import { SearchError } from '../../src/core/models/sync'
+
+/** 收集日志的内存传输 */
+class MemoryTransport implements LogTransport {
+  readonly name = 'memory'
+  entries: LogEntry[] = []
+  write(entry: LogEntry): void {
+    this.entries.push(entry)
+  }
+}
+
+afterEach(() => {
+  vi.unstubAllEnvs()
+  setDefaultTransports([])
+})
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), { status })
@@ -297,6 +312,40 @@ describe('AppleMusicAdapter — 社区路径 HTTP 映射', () => {
       expect((e as SearchError).rateLimited).toBe(false)
       expect((e as SearchError).message).toContain('(400)')
     })
+  })
+
+  it('请求失败落 error 日志：开发模式含完整出入参，authorization 脱敏', async () => {
+    vi.stubEnv('NODE_ENV', 'development')
+    const memory = new MemoryTransport()
+    setDefaultTransports([memory])
+
+    const { handler } = makeHandler((_method, url) => {
+      if (url.pathname === '/v1/me/storefront') return json(STOREFRONT)
+      return json({ errors: [{ code: '40307', title: 'Invalid Parameter Value' }] }, 400)
+    })
+    const adapter = new AppleMusicAdapter(handler, {})
+    await expect(adapter.searchSongs(cred(), 'hello', 25)).rejects.toThrow()
+
+    const entry = memory.entries.find((e) => e.event === 'http.call' && e.level === 'error')
+    expect(entry).toBeDefined()
+    expect(entry!.module).toBe('platform.applemusic')
+    expect(entry!.context).toMatchObject({
+      method: 'GET',
+      url: expect.stringContaining('/v1/catalog/cn/search'),
+      status: 400,
+    })
+
+    const requestHeaders = JSON.parse(entry!.context!.requestHeaders as string) as Record<
+      string,
+      unknown
+    >
+    expect(requestHeaders.authorization).not.toContain('dev-tok')
+
+    const responseBody = JSON.parse(entry!.context!.responseBody as string) as Record<
+      string,
+      unknown
+    >
+    expect(((responseBody.errors as unknown[])[0] as Record<string, unknown>).code).toBe('40307')
   })
 
   it('搜索：429 限流归类为不可重试的限流错误', async () => {

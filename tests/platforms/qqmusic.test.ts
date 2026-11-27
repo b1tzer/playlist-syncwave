@@ -1,6 +1,21 @@
-import { describe, it, expect } from 'vitest'
+import { afterEach, describe, it, expect, vi } from 'vitest'
+import { setDefaultTransports, type LogEntry, type LogTransport } from '@core/logging'
 import { QqMusicAdapter } from '../../src/platforms/qqmusic'
 import type { HttpHandler } from '../../src/platforms/httpHandler'
+
+/** 收集日志的内存传输 */
+class MemoryTransport implements LogTransport {
+  readonly name = 'memory'
+  entries: LogEntry[] = []
+  write(entry: LogEntry): void {
+    this.entries.push(entry)
+  }
+}
+
+afterEach(() => {
+  vi.unstubAllEnvs()
+  setDefaultTransports([])
+})
 
 function json(data: unknown, status = 200, headers: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(data), { status, headers })
@@ -333,6 +348,36 @@ describe('QqMusicAdapter — serverless HTTP 映射', () => {
     )
     const adapter = new QqMusicAdapter(handler, env)
     await expect(adapter.getUserPlaylists('bad', '1')).rejects.toThrow()
+  })
+
+  it('请求失败落 error 日志：开发模式含完整出入参，敏感字段脱敏', async () => {
+    vi.stubEnv('NODE_ENV', 'development')
+    const memory = new MemoryTransport()
+    setDefaultTransports([memory])
+
+    const { handler } = makeHandler(() =>
+      json({ code: 401, message: 'Login required' }, 401),
+    )
+    const adapter = new QqMusicAdapter(handler, env)
+    await expect(adapter.getUserPlaylists('bad', '1')).rejects.toThrow()
+
+    const entry = memory.entries.find((e) => e.event === 'http.call' && e.level === 'error')
+    expect(entry).toBeDefined()
+    expect(entry!.module).toBe('platform.qqmusic')
+    expect(entry!.context).toMatchObject({ method: 'GET', status: 401 })
+
+    const requestHeaders = JSON.parse(entry!.context!.requestHeaders as string) as Record<
+      string,
+      unknown
+    >
+    expect(requestHeaders['x-qq-session']).not.toContain('bad')
+
+    const responseBody = JSON.parse(entry!.context!.responseBody as string) as Record<
+      string,
+      unknown
+    >
+    expect(responseBody.code).toBe(401)
+    expect(responseBody.message).toBe('Login required')
   })
 
   it('重命名歌单：POST /user/playlist/rename，body { tid, name }', async () => {

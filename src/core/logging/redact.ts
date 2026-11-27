@@ -92,3 +92,19 @@ export function sanitizeContext(context: Record<string, unknown> | undefined): R
     }
   }
 }
+
+/**
+ * 对任意值做安全处理（保留数组结构）：对象按 key 脱敏、数组逐项递归，
+ * 供请求出入参等非上下文形态的数据脱敏复用。
+ */
+export function sanitizeValue(value: unknown): unknown {
+  try {
+    return safeValue(value, 0)
+  } catch {
+    try {
+      return String(value).slice(0, 200)
+    } catch {
+      return '[unserializable value]'
+    }
+  }
+}

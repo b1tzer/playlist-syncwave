@@ -13,6 +13,7 @@ import {
   type QrCheckRaw,
 } from '../base'
 import { asArray, asObject, compactIdentifiers, pickString, type JsonObject } from '../json'
+import { logHttpError } from '@core/logging'
 
 /** 读接口根地址（官方主机） */
 const API_HOST = 'https://api.music.apple.com'
@@ -188,8 +189,8 @@ export class AppleMusicAdapter extends BasePlatformAdapter {
     body?: unknown,
   ): Promise<JsonObject> {
     let current = await this.ensureDeveloperToken(credential)
-    let res = await this.rawCall(method, host, path, current, body)
-    if (res.status === 401) {
+    let attempt = await this.rawCall(method, host, path, current, body)
+    if (attempt.res.status === 401) {
       // developer token 可能被提前回收：强制重抓一次后重试
       const token = await this.fetchWebDeveloperToken()
       const at = Date.now()
@@ -199,8 +200,9 @@ export class AppleMusicAdapter extends BasePlatformAdapter {
         credential: serializeCredential({ ...parsed, developerToken: token, devTokenAt: at }),
         developerToken: token,
       }
-      res = await this.rawCall(method, host, path, current, body)
+      attempt = await this.rawCall(method, host, path, current, body)
     }
+    const res = attempt.res
     const text = await res.text()
     let parsed: JsonObject = {}
     if (text) {
@@ -212,30 +214,52 @@ export class AppleMusicAdapter extends BasePlatformAdapter {
     }
     if (res.status >= 400) {
       const firstError = asObject(asArray(parsed.errors)[0])
+      const httpInfo = {
+        method: attempt.method,
+        url: attempt.url,
+        requestBody: body,
+        requestHeaders: attempt.headers,
+        status: res.status,
+        responseBody: parsed,
+        durationMs: attempt.durationMs,
+      }
       if (res.status === 403) {
         const code = pickString(firstError.code)
-        throw new AppleAuthError(
+        const error = new AppleAuthError(
           `Apple Music：登录已失效${code ? `（${code}）` : ''}，请重新登录`,
           true,
         )
+        logHttpError(this.log, 'http.call', 'Apple Music 请求失败', error, httpInfo)
+        throw error
       }
       if (res.status === 429) {
-        throw new SearchError('Apple Music：请求过于频繁，请稍后再试', false, true)
+        const error = new SearchError('Apple Music：请求过于频繁，请稍后再试', false, true)
+        logHttpError(this.log, 'http.call', 'Apple Music 请求失败', error, httpInfo)
+        throw error
       }
       // 错误消息带状态码：doSearch 据此正确分类可重试性（4xx 不重试、5xx 重试）
       const detail = pickString(firstError.title, firstError.detail) ?? '请求失败'
-      throw new Error(`${detail} (${res.status})`)
+      const error = new Error(`${detail} (${res.status})`)
+      logHttpError(this.log, 'http.call', 'Apple Music 请求失败', error, httpInfo)
+      throw error
     }
     return parsed
   }
 
+  /** rawCall 返回：响应 + 请求信息（供失败时记录完整出入参） */
   private async rawCall(
     method: string,
     host: string,
     path: string,
     auth: { credential: string; developerToken: string },
     body?: unknown,
-  ): Promise<Response> {
+  ): Promise<{
+    res: Response
+    method: string
+    url: string
+    headers: Record<string, string>
+    durationMs: number
+  }> {
     const url = `${host}${path}`
     const { mediaUserToken } = parseCredential(auth.credential)
     const headers: Record<string, string> = {
@@ -252,13 +276,14 @@ export class AppleMusicAdapter extends BasePlatformAdapter {
     })
     const start = Date.now()
     const res = await this.handle(request, this.env)
+    const durationMs = Date.now() - start
     this.log.debug('http.call', 'Apple Music 请求', {
       method,
       path,
       status: res.status,
-      durationMs: Date.now() - start,
+      durationMs,
     })
-    return res
+    return { res, method, url, headers, durationMs }
   }
 
   /** 保证 developer token 在有效期内；重抓后返回更新过的凭证串（由保活持久化） */

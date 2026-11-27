@@ -13,6 +13,7 @@ import { basename, join } from 'node:path'
 import { Transform, type TransformCallback } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { app, BrowserWindow, shell } from 'electron'
+import { logHttpError } from '@core/logging'
 import { logCenter } from './logging/logCenter'
 import { notifyUpdateReady } from './notifications'
 import { getSetting } from './settingsService'
@@ -102,7 +103,20 @@ async function downloadInstaller(
   expectedSha512?: string,
 ): Promise<void> {
   const axios = createRequire(import.meta.url)('axios') as AxiosStreamClient
-  const response = await axios.get(url, { responseType: 'stream', timeout: 300_000 })
+  const started = Date.now()
+  let response: AxiosStreamResponse
+  try {
+    response = await axios.get(url, { responseType: 'stream', timeout: 300_000 })
+  } catch (e) {
+    logHttpError(log, 'updater.download-failed', '安装包下载请求失败', e, {
+      method: 'GET',
+      url,
+      requestBody: expectedSha512 !== undefined ? { expectedSha512 } : undefined,
+      status: (e as { response?: { status?: number } }).response?.status,
+      durationMs: Date.now() - started,
+    })
+    throw e
+  }
   const header = response.headers['content-length']
   const total = typeof header === 'string' ? Number(header) : 0
   const hash = createHash('sha512')
@@ -125,6 +139,12 @@ async function downloadInstaller(
     await pipeline(response.data, progress, createWriteStream(target))
   } catch (e) {
     if (existsSync(target)) unlinkSync(target)
+    logHttpError(log, 'updater.download-failed', '安装包下载中断', e, {
+      method: 'GET',
+      url,
+      requestBody: expectedSha512 !== undefined ? { expectedSha512 } : undefined,
+      durationMs: Date.now() - started,
+    })
     throw e
   }
 

@@ -43,7 +43,7 @@
 要点：
 - `planning.md` 以**当前状态**为准：只描述现行技术约定、已交付能力与发布前人工验收清单；过程叙事（原计划/已变更/修复迭代/历史测试数）不进正文，需要追溯时查 git 历史。
 - `docs/platform-api-fields.md` 是上游接口契约：字段表须标注来源（✅ 实测抓取 / 📐 SDK·NCM·适配器源码），未实测不得冒充实测。
-- 版本号表、测试数等易腐化数字，改完顺手核对一次。当前基线：四平台、十二张 SQLite 表（含 `schema_migrations`）、迁移至 v13、缓存 schema v7、567 项测试（另有 9 项真实网络链路验证，`LIVE_VERIFY=1 npx vitest run tests/live` 时运行）、TypeScript 6.0.3 / Vite 8 / Vitest 5 / Electron 45。
+- 版本号表、测试数等易腐化数字，改完顺手核对一次。当前基线：四平台、十二张 SQLite 表（含 `schema_migrations`）、迁移至 v13、缓存 schema v7、578 项测试（另有 9 项真实网络链路验证，`LIVE_VERIFY=1 npx vitest run tests/live` 时运行）、TypeScript 6.0.3 / Vite 8 / Vitest 5 / Electron 45。
 - 发布前自动化门禁：`npm run typecheck && npm run lint && npm run test && npm run build` 全绿；人工验收清单见 `planning.md` 第 5 节（2026-11-25 已完成）。
 - 发布相关变更（版本、流程、更新源）同步更新 `CHANGELOG.md`，并在 `README.md`「发布流程」与 `planning.md` 第 8 节保持一致。
 
@@ -92,3 +92,4 @@
 - 快捷键：`main/menu.ts` 统一定义。导航 `CmdOrCtrl+1..5`（快速创建/歌单/同步/账号/设置），`CmdOrCtrl+N` 作为快速创建的隐藏别名；`Cmd/Ctrl+,` 由 `before-input-event` 打开设置（macOS 惯例）。Edit 菜单保留系统剪贴板快捷键；View 菜单的 Reload/Force Reload/DevTools 仅开发模式提供，正式包屏蔽 `Cmd/Ctrl+R`（含 Shift）与 F5，并设 `webPreferences.devTools: isDev`；不注册全局快捷键。
 - 产品介绍页：`site/` 零依赖静态站点（HTML/CSS/JS + 平台 logo + `assets/screenshots/` 真实应用截图，示例歌单为本地演示数据，不用设计稿）；favicon 与页头页脚品牌标记复用 `build/icon.svg` 的应用图标，不另设站点标识。发布地址 <https://b1tzer.github.io/playlist-syncwave/>；`main` 分支推送 `site/**` 或 `.github/workflows/pages.yml` 由 Pages 工作流自动部署，下载链接统一指向 `releases/latest`。`eslint.config.mjs` 对 `site/**/*.js` 声明浏览器全局；首次部署需在仓库 Settings → Pages 把 Source 设为 GitHub Actions；站点文案变更同步核对 `README.md` 与 `planning.md` §3.6。
 - 应用图标资产：`build/icon.svg` 为唯一矢量源，渲染层 `src/renderer/src/assets/app-icon.svg` 与站点 `site/assets/app-icon.svg` 与之同源（改动后手动复制同步）；重导出位图资产运行 `bash scripts/generate-icns.sh`（qlmanage/WebKit 渲染以保留 SVG 滤镜，rsvg/magick 不支持 `<filter>` 仅作后备），产出 `build/icon.png`(1024)、`build/icon.icns`（`electron-builder.yml` mac.icon 引用）与 `build/icons/` 十规格 PNG。
+- 日志落盘：主进程统一落 `userData/logs/`（开发版在 `userData/dev/logs/`），按天分文件 `app-YYYY-MM-DD.log`；error 级别**单独落 `error-YYYY-MM-DD.log`**（app 文件排除 error，生产/开发均生效；`FileLogTransport` 的 `levels` 选项过滤，渲染进程日志经 `writeRendererEntry` 校验脱敏后与主进程同落）。请求失败统一走 `core/logging/httpError.ts` 的 `logHttpError`：**开发模式（`NODE_ENV=development`）记录完整出入参**（method/url/请求头/入参 body/状态/出参 body，敏感字段沿用 `sanitizeContext` 掩码、正文超 8KB 截断），**生产仅 method/url/status/durationMs 精简信息**；覆盖四平台适配器（QQ/Apple 走 `handle` 的标准 `Request/Response`，网易云/酷狗库函数直调以接口名作 url）与主进程 axios（安装包下载、代理连通性测试）。

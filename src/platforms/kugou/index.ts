@@ -29,6 +29,7 @@ import {
 } from '../json'
 import { normalizeReleaseDate } from '../releaseDate'
 import { attachSongUrl, songWebUrl } from '../songUrl'
+import { logHttpError } from '@core/logging'
 
 /** 酷狗 API 库模式的扁平函数签名（kugoumusicapi main.js 导出） */
 export type KugouApiFn = (params?: Record<string, unknown>) => Promise<KugouResponse>
@@ -308,8 +309,24 @@ export class KugouAdapter extends BasePlatformAdapter {
       const res = await fn(params)
       return asObject(res.body)
     } catch (e) {
-      throw toKugouError(e)
+      const error = toKugouError(e)
+      // 失败时记录完整出入参（开发模式；params 中的 cookie/token 经脱敏掩码）
+      logHttpError(this.log, 'http.call', '酷狗接口请求失败', error, {
+        method: 'kugou',
+        url: this.apiNameOf(fn),
+        requestBody: params,
+        responseBody: e,
+      })
+      throw error
     }
+  }
+
+  /** 反查库函数对应的接口名（仅失败分支调用，用于定位出错接口） */
+  private apiNameOf(fn: KugouApiFn): string {
+    for (const [name, candidate] of Object.entries(this.api)) {
+      if (candidate === fn) return name
+    }
+    return fn.name || 'unknown'
   }
 
   /** 凭证 + 设备指纹合并为库函数 cookie 参数（设备标识注入每个请求） */

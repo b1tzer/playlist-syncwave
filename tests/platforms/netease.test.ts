@@ -1,5 +1,20 @@
-import { describe, it, expect, vi } from 'vitest'
+import { afterEach, describe, it, expect, vi } from 'vitest'
+import { setDefaultTransports, type LogEntry, type LogTransport } from '@core/logging'
 import { NeteaseAdapter, type NcmApi } from '../../src/platforms/netease'
+
+/** 收集日志的内存传输 */
+class MemoryTransport implements LogTransport {
+  readonly name = 'memory'
+  entries: LogEntry[] = []
+  write(entry: LogEntry): void {
+    this.entries.push(entry)
+  }
+}
+
+afterEach(() => {
+  vi.unstubAllEnvs()
+  setDefaultTransports([])
+})
 
 function makeApi(overrides: Partial<NcmApi> = {}): NcmApi {
   return {
@@ -109,6 +124,36 @@ describe('NeteaseAdapter — 映射契约', () => {
     })
     const list = await new NeteaseAdapter(api).getUserPlaylists('c', '1')
     expect(list.map((p) => p.id)).toEqual(['1', '3'])
+  })
+
+  it('接口失败落 error 日志：开发模式含出入参，cookie 脱敏', async () => {
+    vi.stubEnv('NODE_ENV', 'development')
+    const memory = new MemoryTransport()
+    setDefaultTransports([memory])
+
+    const api = makeApi({
+      login_status: async () => {
+        throw { status: 502, body: { code: 502, message: '服务不可用' } }
+      },
+    })
+    await expect(new NeteaseAdapter(api).getLoginStatus('MUSIC_U=secret')).rejects.toThrow()
+
+    const entry = memory.entries.find((e) => e.event === 'http.call' && e.level === 'error')
+    expect(entry).toBeDefined()
+    expect(entry!.module).toBe('platform.netease')
+    expect(entry!.context).toMatchObject({ method: 'ncm', url: 'login_status' })
+
+    const requestBody = JSON.parse(entry!.context!.requestBody as string) as Record<
+      string,
+      unknown
+    >
+    expect(requestBody.cookie).not.toContain('MUSIC_U=secret')
+
+    const responseBody = JSON.parse(entry!.context!.responseBody as string) as Record<
+      string,
+      unknown
+    >
+    expect((responseBody.body as Record<string, unknown>).code).toBe(502)
   })
 
   it('搜索风控（405）→ 抛可重试且带限流标记的 SearchError', async () => {

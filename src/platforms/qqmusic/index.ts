@@ -16,7 +16,7 @@ import type {
   EncyclopediaTrack,
 } from '@core/models/encyclopedia'
 import type { SongDetailData } from '@core/models/songDetail'
-import { createLogger } from '@core/logging'
+import { createLogger, logHttpError } from '@core/logging'
 import type { PlatformModule } from '../meta'
 import type { HttpHandler } from '../httpHandler'
 import {
@@ -118,13 +118,19 @@ export class QqMusicAdapter extends BasePlatformAdapter {
     }
     const durationMs = Date.now() - start
     if (res.status >= 400 || (typeof parsed.code === 'number' && parsed.code >= 400)) {
-      this.log.error(
-        'http.call',
-        'QQ音乐请求失败',
-        undefined,
-        { method, path, status: res.status, durationMs },
+      const error = new Error(
+        pickString(parsed.message, parsed.msg) ?? `QQ音乐请求失败 (${res.status})`,
       )
-      throw new Error(pickString(parsed.message, parsed.msg) ?? `QQ音乐请求失败 (${res.status})`)
+      logHttpError(this.log, 'http.call', 'QQ音乐请求失败', error, {
+        method,
+        url: path,
+        requestBody: body,
+        requestHeaders: headers,
+        status: res.status,
+        responseBody: parsed,
+        durationMs,
+      })
+      throw error
     }
     this.log.debug('http.call', 'QQ音乐请求成功', { method, path, status: res.status, durationMs })
     return parsed

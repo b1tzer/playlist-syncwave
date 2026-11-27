@@ -9,7 +9,7 @@ import {
 } from 'node:fs'
 import { join } from 'node:path'
 import { formatJsonLine } from '@core/logging'
-import type { LogEntry, LogTransport } from '@core/logging'
+import type { LogEntry, LogLevel, LogTransport } from '@core/logging'
 
 const MB = 1024 * 1024
 const DEFAULT_MAX_BYTES = 5 * MB
@@ -45,6 +45,8 @@ export class FileLogTransport implements LogTransport {
       maxBytes?: number
       keepDays?: number
       prefix?: string
+      /** 只写指定级别；缺省写全部 */
+      levels?: LogLevel[]
     } = {},
   ) {}
 
@@ -67,6 +69,7 @@ export class FileLogTransport implements LogTransport {
   }
 
   write(entry: LogEntry): void {
+    if (this.options.levels && !this.options.levels.includes(entry.level)) return
     try {
       this.rotateIfNeeded()
       appendFileSync(this.currentFile, `${formatJsonLine(entry)}\n`, 'utf-8')

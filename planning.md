@@ -38,7 +38,7 @@ src/
 │   ├── matcher/   # 歌曲匹配引擎：归一化、模糊匹配、金标准判定
 │   ├── sync/      # 同步引擎：差异计算、并发搜索、候选确认、停止/跳过
 │   ├── export/    # 歌单导出（m3u/csv）
-│   ├── logging/   # 日志（含递归脱敏）
+│   ├── logging/   # 日志（递归脱敏、请求失败出入参记录）
 │   ├── cachePolicy.ts
 │   └── sync/tuning.ts  # 同步调优参数单一事实源
 ├── platforms/     # 插件化平台适配器（import.meta.glob 自动收集，每个平台一个目录）
@@ -106,6 +106,7 @@ tests/             # Vitest 单元测试（core/main/platforms/renderer）
 - i18n：自研轻量类型安全方案（`renderer/src/i18n/translations.ts`，en-US 以 `Record<TranslationKey, string>` 强制键一致）；语言偏好存 SQLite，非法值回退 zh-CN；同步失败/解析失败按稳定 reason 码翻译。首帧用 preload `settings:initial` 同步快照取语言/主题，缺键回退中文文案；避免异步恢复导致 key 或深色闪烁
 - 视图切换：已访问视图保持挂载、`display:none` 隐藏，切回不重新挂载、不重复 IPC；歌单页 `visible` prop 在隐藏时暂停轮询；去掉 0.3s 整页入场动画。拉伸窗口原生底色与 CSS 表面色一致，长列表行改为悬浮时测量一次（不再每行常驻 `ResizeObserver`）
 - 安全：渲染层 `sandbox: true`、`contextIsolation: true`，通信仅走 preload 白名单；打包环境由 `main/security.ts` 注入 CSP 与 nosniff；`core/logging/redact.ts` 递归脱敏
+- 日志：主进程统一落 `userData/logs/`，按天分文件 `app-YYYY-MM-DD.log`；error 级别单独落 `error-YYYY-MM-DD.log`（app 文件排除 error，生产/开发均生效，`FileLogTransport` 的 `levels` 选项过滤，渲染进程日志经 IPC 校验后与主进程同落）。请求失败统一走 `core/logging/httpError.ts` 的 `logHttpError`：开发模式记录完整出入参（请求头/入参 body/出参 body，敏感字段沿用脱敏、正文超 8KB 截断），生产仅 method/url/status/durationMs 精简信息；覆盖四平台适配器与主进程 axios（安装包下载、代理连通性测试）
 
 ### 3.6 产品介绍页
 - `site/` 为零依赖静态站点（HTML / CSS / JS + `assets/` 平台 logo 与真实截图），介绍产品定位、六项能力、三步流程、四平台矩阵、下载与常见问题；产品截图来自 v0.1.1 实际运行界面（`site/assets/screenshots/`，示例歌单为本地演示数据），不使用设计稿；favicon 与页头页脚品牌标记复用 `build/icon.svg` 的应用图标，不另设站点标识；页面下载入口固定指向 `releases/latest`，不随版本改动

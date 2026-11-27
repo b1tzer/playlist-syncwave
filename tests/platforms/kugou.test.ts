@@ -1,5 +1,20 @@
-import { describe, it, expect, vi } from 'vitest'
+import { afterEach, describe, it, expect, vi } from 'vitest'
+import { setDefaultTransports, type LogEntry, type LogTransport } from '@core/logging'
 import { KugouAdapter, type KugouApi, type KugouDevice } from '../../src/platforms/kugou'
+
+/** 收集日志的内存传输 */
+class MemoryTransport implements LogTransport {
+  readonly name = 'memory'
+  entries: LogEntry[] = []
+  write(entry: LogEntry): void {
+    this.entries.push(entry)
+  }
+}
+
+afterEach(() => {
+  vi.unstubAllEnvs()
+  setDefaultTransports([])
+})
 
 const DEVICE: KugouDevice = {
   guid: 'guid-1',
@@ -138,6 +153,42 @@ describe('KugouAdapter — 映射契约', () => {
     await expect(
       new KugouAdapter(api, DEVICE).getLoginStatus('token=t;userid=555'),
     ).rejects.toThrow('设备不匹配')
+  })
+
+  it('接口失败落 error 日志：开发模式含出入参，token 脱敏', async () => {
+    vi.stubEnv('NODE_ENV', 'development')
+    const memory = new MemoryTransport()
+    setDefaultTransports([memory])
+
+    const api = makeApi({
+      user_playlist: async () => {
+        throw { status: 502, body: { error_code: 500, error_msg: '接口不可用' }, cookie: [] }
+      },
+    })
+    await expect(
+      new KugouAdapter(api, DEVICE).getUserPlaylists('token=t1;userid=555', '555'),
+    ).rejects.toThrow('接口不可用')
+
+    const entry = memory.entries.find((e) => e.event === 'http.call' && e.level === 'error')
+    expect(entry).toBeDefined()
+    expect(entry!.module).toBe('platform.kugou')
+    expect(entry!.context).toMatchObject({ method: 'kugou', url: 'user_playlist' })
+
+    const requestBody = JSON.parse(entry!.context!.requestBody as string) as Record<
+      string,
+      unknown
+    >
+    // 敏感 cookie 子树整体掩码（沿用现有脱敏语义），凭证值绝不明文出现
+    expect(JSON.stringify(requestBody)).not.toContain('t1')
+    expect(JSON.stringify(requestBody)).not.toContain('555')
+    expect(requestBody.cookie).toBe('[object Object]')
+    expect(typeof requestBody.page).toBe('number')
+
+    const responseBody = JSON.parse(entry!.context!.responseBody as string) as Record<
+      string,
+      unknown
+    >
+    expect((responseBody.body as Record<string, unknown>).error_code).toBe(500)
   })
 
   it('歌单列表映射：id/name/songCount/coverUrl/webUrl', async () => {

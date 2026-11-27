@@ -32,27 +32,12 @@ import {
 } from '../json'
 import { normalizeReleaseDate } from '../releaseDate'
 import { attachSongUrl, songWebUrl } from '../songUrl'
+import { logHttpError } from '@core/logging'
 
 /** NeteaseCloudMusicApi 的模块函数签名（CJS） */
 export type NcmApiFn = (query?: Record<string, unknown>) => Promise<unknown>
 
 export type NcmApi = Record<string, NcmApiFn>
-
-/**
- * NCM 接口调用：将 NCM 风格对象异常（{ body: { code, message } }）
- * 转为带真实原因的 Error，避免错误原因被吞成 [object Object]。
- */
-async function callNcm(fn: NcmApiFn, query?: Record<string, unknown>): Promise<unknown> {
-  try {
-    return await fn(query)
-  } catch (e) {
-    if (e instanceof Error) throw e
-    const body = asObject(asObject(e).body)
-    const code = body.code !== undefined ? Number(body.code) : undefined
-    const message = pickString(body.message, body.msg) ?? '网易云接口请求失败'
-    throw new Error(code !== undefined ? `网易云接口错误 code=${code}：${message}` : message)
-  }
-}
 
 /**
  * 网易云适配器：基于 NeteaseCloudMusicApi。
@@ -65,6 +50,46 @@ export class NeteaseAdapter extends BasePlatformAdapter {
 
   constructor(private readonly api: NcmApi) {
     super()
+  }
+
+  /**
+   * NCM 接口调用：将 NCM 风格对象异常（{ body: { code, message } }）
+   * 转为带真实原因的 Error，避免错误原因被吞成 [object Object]；
+   * 失败时记录完整出入参（开发模式，敏感字段脱敏）。
+   */
+  private async callNcm(fn: NcmApiFn, query?: Record<string, unknown>): Promise<unknown> {
+    try {
+      return await fn(query)
+    } catch (e) {
+      const name = this.apiNameOf(fn)
+      if (e instanceof Error) {
+        logHttpError(this.log, 'http.call', '网易云接口请求失败', e, {
+          method: 'ncm',
+          url: name,
+          requestBody: query,
+        })
+        throw e
+      }
+      const body = asObject(asObject(e).body)
+      const code = body.code !== undefined ? Number(body.code) : undefined
+      const message = pickString(body.message, body.msg) ?? '网易云接口请求失败'
+      const error = new Error(code !== undefined ? `网易云接口错误 code=${code}：${message}` : message)
+      logHttpError(this.log, 'http.call', '网易云接口请求失败', error, {
+        method: 'ncm',
+        url: name,
+        requestBody: query,
+        responseBody: e,
+      })
+      throw error
+    }
+  }
+
+  /** 反查库函数对应的接口名（仅失败分支调用，用于定位出错接口） */
+  private apiNameOf(fn: NcmApiFn): string {
+    for (const [name, candidate] of Object.entries(this.api)) {
+      if (candidate === fn) return name
+    }
+    return fn.name || 'unknown'
   }
 
   // ==============================
@@ -86,7 +111,7 @@ export class NeteaseAdapter extends BasePlatformAdapter {
 
   private async searchEncyclopedia(kind: EncyclopediaKind, name: string): Promise<EncyclopediaCandidate[]> {
     const res = asObject(
-      await callNcm(this.api.cloudsearch!, {
+      await this.callNcm(this.api.cloudsearch!, {
         keywords: name,
         type: kind === 'singer' ? 100 : 10,
         limit: 20,
@@ -133,7 +158,7 @@ export class NeteaseAdapter extends BasePlatformAdapter {
 
   /** 歌手的歌：artists 模块返回 artist + hotSongs（实测 50 首热门，条目同 track 形） */
   private async fetchSingerSongs(id: string): Promise<EncyclopediaContent> {
-    const res = asObject(await callNcm(this.api.artists!, { id }))
+    const res = asObject(await this.callNcm(this.api.artists!, { id }))
     const body = asObject(res.body)
     const artist = asObject(body.artist)
     const songs = asArray(body.hotSongs).map((t) => this.withSongUrl(mapTrack(t)))
@@ -150,7 +175,7 @@ export class NeteaseAdapter extends BasePlatformAdapter {
 
   /** 专辑曲目：album 模块返回专辑信息 + songs 曲目清单 + publishTime（实测） */
   private async fetchAlbumTracks(id: string): Promise<EncyclopediaContent> {
-    const res = asObject(await callNcm(this.api.album!, { id }))
+    const res = asObject(await this.callNcm(this.api.album!, { id }))
     const body = asObject(res.body)
     const album = asObject(body.album)
     const songs = asArray(body.songs).map((t) => this.withSongUrl(mapTrack(t)))
@@ -183,8 +208,8 @@ export class NeteaseAdapter extends BasePlatformAdapter {
   ): Promise<SongDetailData> {
     const id = Number(songId)
     const [lyricRes, detailRes] = await Promise.all([
-      callNcm(this.api.lyric!, { id }).catch(() => null),
-      callNcm(this.api.song_detail!, { ids: String(id) }).catch(() => null),
+      this.callNcm(this.api.lyric!, { id }).catch(() => null),
+      this.callNcm(this.api.song_detail!, { ids: String(id) }).catch(() => null),
     ])
     const song = asObject(asArray(asObject(asObject(detailRes).body).songs)[0])
     // 发行时间优先歌曲自身 publishTime（毫秒时间戳），缺失时回退专辑详情
@@ -193,7 +218,7 @@ export class NeteaseAdapter extends BasePlatformAdapter {
       const albumId = pickString(asObject(song.al).id, identifiers.albumId)
       if (albumId) {
         const albumRes = asObject(
-          await callNcm(this.api.album!, { id: Number(albumId) }).catch(() => null),
+          await this.callNcm(this.api.album!, { id: Number(albumId) }).catch(() => null),
         )
         releaseDate = normalizeReleaseDate(pickString(asObject(asObject(albumRes.body).album).publishTime))
       }
@@ -212,19 +237,19 @@ export class NeteaseAdapter extends BasePlatformAdapter {
   // --- 读原语 ---
 
   protected async qrCreateKey(_channel?: string): Promise<string> {
-    const keyRes = asObject(await callNcm(this.api.login_qr_key!))
+    const keyRes = asObject(await this.callNcm(this.api.login_qr_key!))
     const key = pickString(asObject(asObject(keyRes.body).data).unikey)
     if (!key) throw new Error('网易云：获取二维码 key 失败')
     return key
   }
 
   protected async qrBuildImage(key: string): Promise<string | undefined> {
-    const qrRes = asObject(await callNcm(this.api.login_qr_create!, { key, qrimg: true }))
+    const qrRes = asObject(await this.callNcm(this.api.login_qr_create!, { key, qrimg: true }))
     return pickString(asObject(asObject(qrRes.body).data).qrimg)
   }
 
   protected async qrCheckStatus(key: string): Promise<QrCheckRaw> {
-    const res = asObject(await callNcm(this.api.login_qr_check!, { key }))
+    const res = asObject(await this.callNcm(this.api.login_qr_check!, { key }))
     const body = asObject(res.body)
     return {
       code: body.code as number | undefined,
@@ -233,7 +258,7 @@ export class NeteaseAdapter extends BasePlatformAdapter {
   }
 
   protected async fetchLoginStatus(cookie: string): Promise<LoginStatusRaw> {
-    const res = asObject(await callNcm(this.api.login_status!, { cookie }))
+    const res = asObject(await this.callNcm(this.api.login_status!, { cookie }))
     const data = asObject(asObject(res.body).data)
     const profile = asObject(data.profile)
     const account = asObject(data.account)
@@ -246,7 +271,7 @@ export class NeteaseAdapter extends BasePlatformAdapter {
   protected async doKeepAlive(cookie: string): Promise<KeepAliveResult> {
     // 优先走 login_refresh 续期；扫码登录无 refresh token 时接口报错，回退为登录态校验
     try {
-      const res = asObject(await callNcm(this.api.login_refresh!, { cookie }))
+      const res = asObject(await this.callNcm(this.api.login_refresh!, { cookie }))
       const refreshed = pickString(asObject(res.body).cookie)
       if (refreshed) return { alive: true, cookie: refreshed }
     } catch (e) {
@@ -265,7 +290,7 @@ export class NeteaseAdapter extends BasePlatformAdapter {
     // 防御上限 50 页（5000 个歌单），避免接口异常时无限循环。
     for (let page = 0; page < 50; page++) {
       const res = asObject(
-        await callNcm(this.api.user_playlist!, {
+        await this.callNcm(this.api.user_playlist!, {
           uid: userId,
           cookie,
           limit: pageSize,
@@ -299,7 +324,7 @@ export class NeteaseAdapter extends BasePlatformAdapter {
   }
 
   protected async fetchPlaylistSongs(cookie: string, playlistId: string): Promise<PlatformSong[]> {
-    const res = asObject(await callNcm(this.api.playlist_detail!, { id: playlistId, cookie }))
+    const res = asObject(await this.callNcm(this.api.playlist_detail!, { id: playlistId, cookie }))
     const tracks = asObject(asObject(res.body).playlist).tracks
     return asArray(tracks).map(mapTrack)
   }
@@ -340,7 +365,7 @@ export class NeteaseAdapter extends BasePlatformAdapter {
   // --- 写原语 ---
 
   protected async doCreatePlaylist(cookie: string, name: string): Promise<string> {
-    const res = asObject(await callNcm(this.api.playlist_create!, { name, privacy: '0', cookie }))
+    const res = asObject(await this.callNcm(this.api.playlist_create!, { name, privacy: '0', cookie }))
     const playlist = asObject(asObject(res.body).playlist)
     return pickString(playlist.id, asObject(res.body).id) ?? ''
   }
@@ -350,12 +375,12 @@ export class NeteaseAdapter extends BasePlatformAdapter {
   }
 
   protected async doRenamePlaylist(cookie: string, playlistId: string, name: string): Promise<void> {
-    const res = asObject(await callNcm(this.api.playlist_name_update!, { id: playlistId, name, cookie }))
+    const res = asObject(await this.callNcm(this.api.playlist_name_update!, { id: playlistId, name, cookie }))
     assertOk(asObject(res.body), '重命名歌单')
   }
 
   protected async doDeletePlaylist(cookie: string, playlistId: string): Promise<void> {
-    const res = asObject(await callNcm(this.api.playlist_delete!, { id: playlistId, cookie }))
+    const res = asObject(await this.callNcm(this.api.playlist_delete!, { id: playlistId, cookie }))
     assertOk(asObject(res.body), '删除歌单')
   }
 
@@ -372,7 +397,7 @@ export class NeteaseAdapter extends BasePlatformAdapter {
     label: string,
   ): Promise<void> {
     const res = asObject(
-      await callNcm(this.api.playlist_tracks!, {
+      await this.callNcm(this.api.playlist_tracks!, {
         op,
         pid: playlistId,
         tracks: songIds.join(','),
