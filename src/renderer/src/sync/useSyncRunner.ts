@@ -135,6 +135,8 @@ export function useSyncRunner() {
             progress: 1,
             failedDetail: rep.failed.map((f) => syncFailedText(t, f)),
             detail: finalDetail,
+            // 先建单流程：等待确认时歌单已创建，中断恢复可直接续写
+            playlistId: rep.playlistId || undefined,
           }
           onTaskUpdate(runningTask)
           // 会话提升到 App 层：分步确认弹窗接管选择流程
@@ -173,9 +175,8 @@ export function useSyncRunner() {
         }
 
         setReport(rep)
-        // 建单成功但一首都没写进去（空歌单）同样视为失败：用户侧结果与「无内容」一致，
-        // 且失败原因（逐首 add-failed 明细）随任务展示，可直接重新执行补写。
-        const ok = rep.playlistId !== '' && rep.added > 0
+        // 先建单流程：歌单已创建即为成功；空歌单（0 写入）如实提示，不再虚报失败
+        const ok = rep.playlistId !== ''
         log.info('runner.done', '同步结束', {
           targetPlatform,
           playlistId: rep.playlistId,
@@ -183,7 +184,9 @@ export function useSyncRunner() {
           failed: rep.failed.length,
         })
         if (ok) {
-          if (rep.failed.length > 0) {
+          if (rep.added === 0) {
+            notify('warning', t('toast.syncDoneTitle'), t('toast.syncEmptyDetail'))
+          } else if (rep.failed.length > 0) {
             notify(
               'warning',
               t('toast.syncDoneTitle'),
@@ -205,9 +208,8 @@ export function useSyncRunner() {
               }),
             )
           }
-        } else if (rep.playlistId !== '') {
-          notify('error', t('toast.syncFailedTitle'), t('toast.syncEmptyDetail'))
         } else {
+          // 未建单（理论上先建单流程不再出现）：兜底提示
           notify(
             'error',
             t('toast.syncNoneTitle'),

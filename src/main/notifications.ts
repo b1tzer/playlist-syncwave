@@ -29,8 +29,8 @@ const LABELS: Record<
     syncPartial: '同步部分完成',
     syncPartialBody: (added, failed, name) =>
       `${added} 首已写入「${name}」，${failed} 首未匹配`,
-    syncNone: '未创建歌单',
-    syncNoneBody: (failed) => `${failed} 首歌曲均未找到匹配`,
+    syncNone: '歌单已创建，但未写入歌曲',
+    syncNoneBody: (failed) => `${failed} 首歌曲均未找到匹配，歌单已创建可稍后补写`,
     syncStopped: '同步已停止',
     syncStoppedBody: (name) => `「${name}」的同步任务已停止，已完成部分已保留`,
     accountExpired: '账号已过期',
@@ -44,8 +44,8 @@ const LABELS: Record<
     syncPartial: 'Sync partially completed',
     syncPartialBody: (added, failed, name) =>
       `${added} songs written to "${name}", ${failed} unmatched`,
-    syncNone: 'No playlist created',
-    syncNoneBody: (failed) => `None of the ${failed} songs matched`,
+    syncNone: 'Playlist created, no songs written',
+    syncNoneBody: (failed) => `None of the ${failed} songs matched; playlist is created for a later refill`,
     syncStopped: 'Sync stopped',
     syncStoppedBody: (name) => `Sync of "${name}" was stopped; completed parts are kept`,
     accountExpired: 'Account expired',

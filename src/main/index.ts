@@ -944,12 +944,13 @@ ipcMain.handle(
             },
             onProgress: notify,
             onCheckpoint: checkpoint.onCheckpoint,
-            onChoiceNeeded: (plan, finalName, target, batchSize) => {
+            onChoiceNeeded: (plan, finalName, target, batchSize, playlistId) => {
               pendingSyncs.set(taskId, {
                 platform,
                 plan,
                 target,
                 playlistName: finalName,
+                playlistId,
                 batchSize,
                 sourceLocalPlaylistId: payload.sourceLocalPlaylistId,
               })
@@ -1264,11 +1265,13 @@ ipcMain.handle(
         }
         const control = beginRunningSync(taskId)
         try {
+          // 先建单流程：确认阶段不再建单，直接向已创建的歌单写入
           const report = await executeSync(pending.plan, selections, pending.playlistName, pending.target, {
             batchSize: pending.batchSize,
             ...syncTuning(),
             signal: control.signal,
             skipCheck: control.skipCheck,
+            existingPlaylistId: pending.playlistId,
             onProgress: notify,
             onStep: (item) => {
               if (!event.sender.isDestroyed()) {

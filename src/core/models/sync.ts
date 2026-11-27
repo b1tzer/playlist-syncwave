@@ -114,9 +114,9 @@ export interface SyncReport {
 
 /** 同步执行检查点：供主进程定期持久化，中断后恢复执行所需的最小状态 */
 export interface SyncCheckpoint {
-  /** 当前阶段：matching 逐首搜索 / adding 写入歌单 */
-  stage: 'matching' | 'adding'
-  /** adding 阶段：已创建的目标歌单 ID */
+  /** 当前阶段：created 建单完成 / matching 逐首搜索 / adding 写入歌单 */
+  stage: 'created' | 'matching' | 'adding'
+  /** created/adding 阶段：已创建的目标歌单 ID */
   playlistId?: string
   /** adding 阶段：已成功添加的歌曲数 */
   added?: number
@@ -145,6 +145,8 @@ export interface SyncOptions {
   onStep?: (item: SyncItemResult) => void
   /** 检查点回调：阶段切换与批次写入后触发，主进程据此定期保存状态 */
   onCheckpoint?: (checkpoint: SyncCheckpoint) => void
+  /** 复用调用方已创建的目标歌单：执行阶段跳过建单（先建单再匹配流程专用） */
+  existingPlaylistId?: string
 }
 
 /** 引擎被中止（用户停止任务）时抛出；partial 携带已产生的明细供收敛为 stopped 报告 */

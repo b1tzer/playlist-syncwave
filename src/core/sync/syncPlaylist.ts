@@ -444,13 +444,7 @@ export async function executeSync(
     firstGenre: plan.firstGenre,
   }
 
-  // 全部未匹配/未确认时不创建空歌单，避免污染用户账号
-  if (pending.length === 0) {
-    log.warn('execute.skipped', '无可添加歌曲，跳过创建歌单', { playlistName })
-    return { status: 'done', ...baseReport }
-  }
-
-  // 用户停止：建单前最后检查，避免建出空歌单
+  // 用户停止：建单前最后检查
   if (options.signal?.aborted) {
     throw new SyncAbortedError({
       items,
@@ -458,12 +452,24 @@ export async function executeSync(
       total: plan.total,
       matched: plan.matched.length,
       added: 0,
+      playlistId: options.existingPlaylistId,
     })
   }
 
-  const playlistId = await target.createPlaylist(playlistName)
-  log.info('execute.playlist-created', '目标歌单已创建', { playlistName, playlistId })
-  // 建单检查点：中断恢复时据此跳过匹配阶段，直接续写剩余批次
+  // 歌单：调用方已建（先建单再匹配流程）则复用；否则有可写内容才建单（低层原语兜底）
+  let playlistId = options.existingPlaylistId ?? ''
+  if (!playlistId) {
+    if (pending.length === 0) {
+      log.warn('execute.skipped', '无可添加歌曲，跳过创建歌单', { playlistName })
+      return { status: 'done', ...baseReport }
+    }
+    playlistId = await target.createPlaylist(playlistName)
+    log.info('execute.playlist-created', '目标歌单已创建', { playlistName, playlistId })
+    // 建单检查点：中断恢复时据此跳过匹配阶段，直接续写剩余批次
+    options.onCheckpoint?.({ stage: 'created', playlistId, added: 0 })
+  } else {
+    log.info('execute.playlist-reused', '复用调用方已创建的歌单', { playlistName, playlistId })
+  }
   options.onCheckpoint?.({ stage: 'adding', playlistId, added: 0 })
 
   let added = 0
@@ -639,12 +645,16 @@ export async function resumeSync(
   return { status: 'done', ...baseReport, added, failed }
 }
 
-/** 存在同歌不同作者时的 choice-needed 报告（未建单） */
-export function choiceNeededReport(playlistName: string, plan: SyncPlan): SyncReport {
+/** 存在同歌不同作者时的 choice-needed 报告（歌单已按新流程先行创建） */
+export function choiceNeededReport(
+  playlistName: string,
+  plan: SyncPlan,
+  playlistId = '',
+): SyncReport {
   return {
     status: 'choice-needed',
     playlistName,
-    playlistId: '',
+    playlistId,
     total: plan.total,
     matched: plan.matched.length,
     added: 0,
@@ -656,8 +666,10 @@ export function choiceNeededReport(playlistName: string, plan: SyncPlan): SyncRe
 }
 
 /**
- * 单向同步入口：先搜索判定，全自动则直接建单写入；
- * 存在同歌不同作者时返回 choice-needed，等待用户确认后调 executeSync 完成。
+ * 单向同步入口：先建歌单，再搜索匹配写入。
+ * - 建单失败直接失败（不会出现「说失败但歌单已存在」的假失败）；
+ * - 全部未匹配也保留空歌单，任务按「歌单已建」计成功，明细如实呈现失败数。
+ * 存在同歌不同作者时返回 choice-needed（歌单已建），确认后调 executeSync 完成。
  */
 export async function syncPlaylist(
   queries: MatchQuery[],
@@ -665,15 +677,48 @@ export async function syncPlaylist(
   target: SyncTarget,
   options: SyncOptions = {},
 ): Promise<SyncReport> {
-  const plan = await planSync(queries, target, options)
+  const finalName = (playlistName ?? '').trim() || '未命名歌单'
 
-  if (plan.choices.length > 0) {
-    log.info('sync.choice-needed', '同步等待用户确认', {
-      playlistName,
-      choices: plan.choices.length,
-    })
-    return choiceNeededReport(playlistName, plan)
+  // 空输入：没有可同步内容，不建空歌单
+  if (queries.length === 0) {
+    return {
+      status: 'done',
+      playlistName: finalName,
+      playlistId: '',
+      total: 0,
+      matched: 0,
+      added: 0,
+      failed: [],
+      choices: [],
+      items: [],
+    }
   }
 
-  return executeSync(plan, [], playlistName, target, options)
+  // 先建单：后续无论匹配结果如何，用户侧都能看到已创建的歌单
+  const playlistId = await target.createPlaylist(finalName)
+  log.info('sync.playlist-created', '目标歌单已创建', { playlistName: finalName, playlistId })
+  options.onCheckpoint?.({ stage: 'created', playlistId, added: 0 })
+
+  try {
+    const plan = await planSync(queries, target, options)
+
+    if (plan.choices.length > 0) {
+      log.info('sync.choice-needed', '同步等待用户确认', {
+        playlistName: finalName,
+        choices: plan.choices.length,
+      })
+      return choiceNeededReport(finalName, plan, playlistId)
+    }
+
+    return executeSync(plan, [], finalName, target, {
+      ...options,
+      existingPlaylistId: playlistId,
+    })
+  } catch (e) {
+    // 匹配阶段被停止：补齐已建歌单 id，调用方据此收敛 stopped 报告与反向关联
+    if (e instanceof SyncAbortedError) {
+      e.partial.playlistId = e.partial.playlistId ?? playlistId
+    }
+    throw e
+  }
 }

@@ -184,16 +184,36 @@ describe('syncPlaylist — 单向同步引擎（T4）', () => {
     expect(target.createPlaylist).not.toHaveBeenCalled()
   })
 
-  it('全部未匹配 → 不创建空歌单，失败明细保留', async () => {
+  it('全部未匹配 → 先建单流程：空歌单已创建，任务按成功收敛，失败明细保留', async () => {
     const target = makeTarget({})
     const report = await run(
       [{ title: 'A' }, { title: 'B' }],
       'x',
       target,
     )
-    expect(target.createPlaylist).not.toHaveBeenCalled()
-    expect(report.playlistId).toBe('')
+    // 先建单：即使全部未匹配，歌单也已创建（不再虚报「同步失败但歌单存在」）
+    expect(target.createPlaylist).toHaveBeenCalledWith('x')
+    expect(report.status).toBe('done')
+    expect(report.playlistId).toBe('pl-x')
+    expect(report.added).toBe(0)
     expect(report.failed).toHaveLength(2)
+  })
+
+  it('先建单流程：建单发生在搜索匹配之前', async () => {
+    const target = makeTarget({ 晴天: [song('1', '晴天', '周杰伦')] })
+    const order: string[] = []
+    const origCreate = target.createPlaylist
+    target.createPlaylist = vi.fn(async (name: string) => {
+      order.push('create')
+      return origCreate(name)
+    })
+    const origSearch = target.searchSongs
+    target.searchSongs = vi.fn(async (keyword: string) => {
+      order.push('search')
+      return origSearch(keyword)
+    })
+    await run([{ title: '晴天' }], 'x', target)
+    expect(order.indexOf('create')).toBeLessThan(order.indexOf('search'))
   })
 
   it('风控错误（405 操作频繁）→ 分类为 rate-limited', async () => {
@@ -205,7 +225,8 @@ describe('syncPlaylist — 单向同步引擎（T4）', () => {
     const report = await run([{ title: '晴天' }], 'x', target, { searchRetries: 0 })
     expect(report.failed[0].reason).toBe('rate-limited')
     expect(report.failed[0].message).toContain('操作频繁')
-    expect(target.createPlaylist).not.toHaveBeenCalled()
+    // 先建单流程：风控只影响匹配，歌单已创建，任务不虚报失败
+    expect(report.playlistId).toBe('pl-x')
   })
 
   it('可重试错误 → 重试后成功', async () => {
@@ -263,16 +284,17 @@ describe('syncPlaylist — 金标准两阶段（T6.4）', () => {
     expect(target.addSongs).toHaveBeenCalledWith('pl-x', ['1'])
   })
 
-  it('同歌不同作者（标题精确、歌手不匹配）→ choice-needed，不建单', async () => {
+  it('同歌不同作者（标题精确、歌手不匹配）→ choice-needed，歌单已按先建单流程创建', async () => {
     const target = makeTarget({
       勇气: [song('1', '勇气', '棉子'), song('2', '勇气', '金志文')],
     })
     const report = await run([{ title: '勇气', artist: '梁静茹' }], 'x', target)
     expect(report.status).toBe('choice-needed')
-    expect(report.playlistId).toBe('')
+    // 先建单：等待确认时歌单已存在，确认后直接写入
+    expect(report.playlistId).toBe('pl-x')
     expect(report.choices).toHaveLength(1)
     expect(report.choices[0].candidates.map((c) => c.id)).toEqual(['1', '2'])
-    expect(target.createPlaylist).not.toHaveBeenCalled()
+    expect(target.createPlaylist).toHaveBeenCalledWith('x')
   })
 
   it('query 无歌手且唯一标题精确 → 自动选择', async () => {
@@ -291,7 +313,7 @@ describe('syncPlaylist — 金标准两阶段（T6.4）', () => {
     expect(report.choices[0].candidates).toHaveLength(2)
   })
 
-  it('混合：确定的匹配暂不建单，等用户确认选择后一并写入', async () => {
+  it('混合：歌单先行创建，确定项暂不写入，等用户确认选择后一并写入', async () => {
     const target = makeTarget({
       晴天: [song('1', '晴天', '周杰伦')],
       勇气: [song('2', '勇气', '棉子'), song('3', '勇气', '金志文')],
@@ -303,7 +325,8 @@ describe('syncPlaylist — 金标准两阶段（T6.4）', () => {
     )
     expect(report.status).toBe('choice-needed')
     expect(report.matched).toBe(1)
-    expect(target.createPlaylist).not.toHaveBeenCalled()
+    expect(report.playlistId).toBe('pl-x')
+    expect(target.createPlaylist).toHaveBeenCalledWith('x')
   })
 
   it('executeSync：确认选择后建单，matched 与选定项一并添加', async () => {
@@ -889,9 +912,39 @@ describe('同步引擎 — 检查点与断点续写（定期保存/重启恢复�
       batchSize: 2,
       onCheckpoint: (cp) => checkpoints.push(cp),
     })
-    expect(checkpoints[0]).toEqual({ stage: 'adding', playlistId: 'pl-x', added: 0 })
-    expect(checkpoints[1]).toEqual({ stage: 'adding', playlistId: 'pl-x', added: 2 })
-    expect(checkpoints[2]).toEqual({ stage: 'adding', playlistId: 'pl-x', added: 3 })
+    // 建单（created）→ 写入起点（adding 0）→ 每批写入（adding 2/3）
+    expect(checkpoints[0]).toEqual({ stage: 'created', playlistId: 'pl-x', added: 0 })
+    expect(checkpoints[1]).toEqual({ stage: 'adding', playlistId: 'pl-x', added: 0 })
+    expect(checkpoints[2]).toEqual({ stage: 'adding', playlistId: 'pl-x', added: 2 })
+    expect(checkpoints[3]).toEqual({ stage: 'adding', playlistId: 'pl-x', added: 3 })
+  })
+
+  it('executeSync 复用调用方已建歌单（existingPlaylistId）→ 不再重复建单', async () => {
+    const index: Record<string, PlatformSong[]> = {}
+    for (let i = 1; i <= 2; i++) index[`歌${i}`] = [song(String(i), `歌${i}`, '某人')]
+    const target = makeTarget(index)
+    const plan = await planSync(
+      [1, 2].map((i) => ({ title: `歌${i}`, artist: '某人' })),
+      target,
+      { searchIntervalMs: 0 },
+    )
+    const report = await executeSync(plan, [], 'x', target, {
+      existingPlaylistId: 'pl-已建',
+    })
+    expect(target.createPlaylist).not.toHaveBeenCalled()
+    expect(report.playlistId).toBe('pl-已建')
+    expect(report.added).toBe(2)
+    expect((target.addSongs as ReturnType<typeof vi.fn>).mock.calls[0][0]).toBe('pl-已建')
+  })
+
+  it('executeSync 复用已建歌单且无待写内容 → done，playlistId 保留', async () => {
+    const target = makeTarget({})
+    const plan = await planSync([{ title: 'A' }], target, { searchIntervalMs: 0 })
+    const report = await executeSync(plan, [], 'x', target, { existingPlaylistId: 'pl-空' })
+    expect(target.createPlaylist).not.toHaveBeenCalled()
+    expect(report.status).toBe('done')
+    expect(report.playlistId).toBe('pl-空')
+    expect(report.added).toBe(0)
   })
 
   it('planSync 每首歌处理后触发 matching 检查点', async () => {

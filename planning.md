@@ -68,11 +68,12 @@ tests/             # Vitest 单元测试（core/main/platforms/renderer）
 - 歌单名留空时按「今日日期 + 第一首匹配歌曲风格」自动命名；无风格时仅日期
 
 ### 3.2 匹配与同步
+- 同步流程**先建单 → 匹配 → 写入**（`runSyncPipeline` → `createThenSync`；core 入口 `syncPlaylist` 同序）：建单失败即任务失败；歌单已建即为成功，空歌单按 done + 明细失败数如实呈现（渲染层/主进程/系统通知提示「歌单已创建但未写入歌曲」）；choice-needed 挂起时歌单已建，确认后经 `existingPlaylistId` 直接写入；断点恢复按检查点阶段区分：`adding` → `resumeSync` 直写剩余批次，`created`/匹配中断 → `completeAfterCreate` 补跑匹配后写入；歌单名留空自动命名仅用日期
 - 代理金标准（`core/matcher/exactMatch.ts`）：ISRC 国内平台不暴露，采用标题 + 歌手归一化精确相等 = `exact` 自动选；同歌不同作者 = `title-only` → `choice-needed` 两阶段（planSync → 用户选择 → executeSync，plan 缓存于 `pendingSyncs`，`platform:confirm-sync` 完成写入）；feat./多人名按人名交集判定，视为同一歌手则不进手动面板
 - 评分因子（T8）：归一化含小写/繁转简/全角转半角/去括号；歌手 exact +0.15 / partial +0.05；专辑 exact +0.05 / partial +0.02；版本标记同 +0.08 / 异 −0.05；时长 +0.02。斜杠不切分（乐队名 `Weird Fishes/Arpeggi`）
 - 并发（`core/sync/syncPlaylist.ts`）：`searchConcurrency` 默认 3 的受控并发池；`searchIntervalMs` 为**全局相邻两次搜索请求的最小间隔**（预约式限速器）；同一首歌「歌名+歌手」与「纯歌名」并行预取；任务内关键词缓存（normalize(keyword) 为 key，含在途 promise 去重，失败不缓存）；任一请求 `rateLimited` 触发全局冷却 4s；搜索超时 15s、建单/加歌 60s；结果按输入 index 顺序收敛，进度/明细/断点语义与串行一致
 - 介入控制：`AbortSignal` 停止、`skipCheck` 跳过当前歌曲；`SyncAbortedError` 携带 partial 明细收敛为 `stopped` 报告；逐首明细存 `sync_tasks.detail`，重启后详情抽屉可见；重启残留 running 任务归 `interrupted`，stopped 保持
-- 同步来源：文本快速创建（`text-import`）与歌单导入（`playlist-import`）；失败按稳定 reason 码在渲染层翻译，平台原始错误透传；未匹配不建空歌单
+- 同步来源：文本快速创建（`text-import`）与歌单导入（`playlist-import`）；失败按稳定 reason 码在渲染层翻译，平台原始错误透传；先建单流程下空输入不建单，未匹配保留已建空歌单
 
 ### 3.3 平台接入
 - **网易云**：`NeteaseCloudMusicApi`（CJS + 内联 createRequire）；连续快搜触发 405 风控，限速 + 指数退避重试；`/login/qr/*` 扫码登录；歌单列表过滤 `specialType=5` 与 `subscribed=true`，仅显示自有歌单；写接口 `playlist_name_update` / `playlist_delete` / `playlist_track_delete`；`PlatformPlaylist` 带 `webUrl`（music.163.com）与 `appUrl`（orpheus://）

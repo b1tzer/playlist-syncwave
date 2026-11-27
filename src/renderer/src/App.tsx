@@ -347,11 +347,13 @@ export default function App() {
         return
       }
 
-      // 建单成功但一首未写入（空歌单）视为失败：结果与「无内容」一致，失败原因随任务展示
-      const ok = rep.playlistId !== '' && rep.added > 0
+      // 先建单流程：歌单已创建即为成功；空歌单（0 写入）如实提示，不再虚报失败
+      const ok = rep.playlistId !== ''
       if (ok) {
         // 右上角通知：给用户明确的执行结果
-        if (rep.failed.length > 0) {
+        if (rep.added === 0) {
+          notify('warning', t('toast.confirmDoneTitle'), t('toast.syncEmptyDetail'))
+        } else if (rep.failed.length > 0) {
           notify(
             'warning',
             t('toast.confirmDoneTitle'),
@@ -368,10 +370,8 @@ export default function App() {
             t('toast.confirmDoneDetail', { added: rep.added, name: rep.playlistName }),
           )
         }
-      } else if (rep.playlistId !== '') {
-        notify('error', t('toast.syncFailedTitle'), t('toast.syncEmptyDetail'))
       } else {
-        // 全部未匹配/未选择：未创建歌单，同样以右上角通知呈现
+        // 未建单（理论上先建单流程不再出现）：兜底提示
         notify(
           'error',
           t('toast.syncNoneTitle'),

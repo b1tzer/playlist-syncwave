@@ -9,6 +9,7 @@ import {
   type SyncFailedItem,
   type SyncItemResult,
   type SyncMatchedResource,
+  type SyncOptions,
   type SyncPlan,
   type SyncReport,
   type SyncTarget,
@@ -34,6 +35,8 @@ export const pendingSyncs = new Map<
     plan: SyncPlan
     target: SyncTarget
     playlistName: string
+    /** 先建单流程：目标歌单已创建，确认后直接写入该歌单 */
+    playlistId: string
     batchSize?: number
     /** 来源本地歌单 id：确认写入成功后登记反向关联 */
     sourceLocalPlaylistId?: string
@@ -202,8 +205,14 @@ export interface RunSyncPipelineArgs {
   onProgress: (ratio: number, stage: 'matching' | 'adding') => void
   /** 检查点回调（调用方负责定期持久化） */
   onCheckpoint: (checkpoint: SyncCheckpoint) => void
-  /** choice-needed：主进程挂起会话等待用户选择 */
-  onChoiceNeeded: (plan: SyncPlan, finalName: string, target: SyncTarget, batchSize?: number) => void
+  /** choice-needed：主进程挂起会话等待用户选择（歌单已按先建单流程创建，playlistId 一并传入） */
+  onChoiceNeeded: (
+    plan: SyncPlan,
+    finalName: string,
+    target: SyncTarget,
+    batchSize: number | undefined,
+    playlistId: string,
+  ) => void
 }
 
 /**
@@ -280,17 +289,31 @@ export async function runSyncPipeline(args: RunSyncPipelineArgs): Promise<SyncRe
     onCheckpoint,
   }
 
-  // 断点续写：目标歌单已创建（上次 adding 阶段中断），跳过匹配直接续写剩余批次
+  // 断点续写：目标歌单已创建（上次中断），按检查点阶段决定恢复方式
   if (resumePlaylistId) {
     try {
-      const report = await resumeSync(
-        resumePlaylistId,
-        resumeAdded ?? 0,
-        resumeDetail ?? [],
-        playlistName,
-        target,
-        engineOptions,
-      )
+      const detail = resumeDetail ?? []
+      // 匹配已完整落定（逐首终态覆盖全部输入）→ 跳过匹配直接续写剩余批次；
+      // 匹配中断（先建单流程中建单后匹配未完）→ 复用已匹配结果补跑匹配后写入
+      const matchingComplete =
+        detail.length >= queries.length &&
+        detail.every(
+          (d) =>
+            (d.status === 'matched' && typeof d.songId === 'string' && d.songId !== '') ||
+            d.status === 'failed' ||
+            d.status === 'skipped',
+        )
+      const report = matchingComplete
+        ? await resumeSync(resumePlaylistId, resumeAdded ?? 0, detail, playlistName, target, engineOptions)
+        : await completeAfterCreate(
+            queries,
+            playlistName,
+            resumePlaylistId,
+            target,
+            engineOptions,
+            onChoiceNeeded,
+            batchSize,
+          )
       if (report.playlistId !== '') {
         getDatabase().playlistCache.markStalePlaylists(platform)
         registerLocalPlaylistSyncTarget(sourceLocalPlaylistId, platform, report.playlistId)
@@ -301,6 +324,7 @@ export async function runSyncPipeline(args: RunSyncPipelineArgs): Promise<SyncRe
         playlistId: report.playlistId,
         added: report.added,
         failed: report.failed.length,
+        matchingComplete,
       })
       notifySyncResult(playlistName, report.added, report.failed.length)
       return report
@@ -314,29 +338,18 @@ export async function runSyncPipeline(args: RunSyncPipelineArgs): Promise<SyncRe
     }
   }
 
-  // 常规路径：匹配计划 → 自动建单写入，或进入待确认
+  // 常规路径：先建单，再匹配写入，或进入待确认
   try {
-    const plan = await planSync(queries, target, engineOptions)
-
-    // 歌单名留空时自动命名：今日日期 + 第一首歌风格
-    const autoName = [autoNameDate, plan.firstGenre].filter(Boolean).join(' ')
-    const finalName = (playlistName ?? '').trim() || autoName || '未命名歌单'
-
-    if (plan.choices.length > 0) {
-      onChoiceNeeded(plan, finalName, target, batchSize)
-      log.info('pipeline.choice-needed', '同步需要用户确认', {
-        platform,
-        taskId,
-        playlistName: finalName,
-        total: plan.total,
-        matched: plan.matched.length,
-        choices: plan.choices.length,
-        failed: plan.failed.length,
-      })
-      return choiceNeededReport(finalName, plan)
-    }
-
-    const report = await executeSync(plan, [], finalName, target, engineOptions)
+    // 歌单名留空时自动命名：先建单流程下无法预知第一首歌风格，仅用日期
+    const finalName = (playlistName ?? '').trim() || autoNameDate || '未命名歌单'
+    const report = await createThenSync(
+      finalName,
+      queries,
+      target,
+      engineOptions,
+      onChoiceNeeded,
+      batchSize,
+    )
     // 目标平台新建了歌单：标记列表缓存过期，下次访问先兜底再重新验证
     if (report.playlistId !== '') {
       getDatabase().playlistCache.markStalePlaylists(platform)
@@ -364,6 +377,62 @@ export async function runSyncPipeline(args: RunSyncPipelineArgs): Promise<SyncRe
     }
     throw e
   }
+}
+
+/**
+ * 先建单再匹配流程：建单 → planSync → choice-needed 挂起（歌单已建）或 executeSync 复用歌单写入。
+ * 建单失败直接抛出（失败语义与「歌单不存在」严格一致）。
+ */
+async function createThenSync(
+  finalName: string,
+  queries: MatchQuery[],
+  target: SyncTarget,
+  options: SyncOptions,
+  onChoiceNeeded: RunSyncPipelineArgs['onChoiceNeeded'],
+  batchSize?: number,
+): Promise<SyncReport> {
+  const playlistId = await target.createPlaylist(finalName)
+  log.info('pipeline.playlist-created', '目标歌单已创建', {
+    playlistName: finalName,
+    playlistId,
+  })
+  options.onCheckpoint?.({ stage: 'created', playlistId, added: 0 })
+
+  const plan = await planSync(queries, target, options)
+  if (plan.choices.length > 0) {
+    log.info('pipeline.choice-needed', '同步需要用户确认', {
+      playlistName: finalName,
+      total: plan.total,
+      matched: plan.matched.length,
+      choices: plan.choices.length,
+      failed: plan.failed.length,
+    })
+    onChoiceNeeded(plan, finalName, target, batchSize, playlistId)
+    return choiceNeededReport(finalName, plan, playlistId)
+  }
+  return executeSync(plan, [], finalName, target, { ...options, existingPlaylistId: playlistId })
+}
+
+/** 恢复执行补匹配：复用已匹配项（lookupMapping 命中免搜索），匹配完成后写入已建歌单 */
+async function completeAfterCreate(
+  queries: MatchQuery[],
+  playlistName: string,
+  playlistId: string,
+  target: SyncTarget,
+  options: SyncOptions,
+  onChoiceNeeded: RunSyncPipelineArgs['onChoiceNeeded'],
+  batchSize?: number,
+): Promise<SyncReport> {
+  const plan = await planSync(queries, target, options)
+  if (plan.choices.length > 0) {
+    log.info('pipeline.resume-choice-needed', '恢复执行产生待确认选择', {
+      playlistName,
+      choices: plan.choices.length,
+    })
+    onChoiceNeeded(plan, playlistName, target, batchSize, playlistId)
+    return choiceNeededReport(playlistName, plan, playlistId)
+  }
+  return executeSync(plan, [], playlistName, target, { ...options, existingPlaylistId: playlistId })
 }
 
 /**
@@ -508,12 +577,13 @@ export async function resumePendingSyncTask(task: SyncTaskRecord): Promise<void>
       },
       onProgress: notifyProgress,
       onCheckpoint: checkpoint.onCheckpoint,
-      onChoiceNeeded: (plan, finalName, target, batchSize) => {
+      onChoiceNeeded: (plan, finalName, target, batchSize, playlistId) => {
         pendingSyncs.set(task.id, {
           platform: task.targetPlatform,
           plan,
           target,
           playlistName: finalName,
+          playlistId,
           batchSize,
           sourceLocalPlaylistId: task.sourceLocalPlaylistId,
         })
@@ -553,8 +623,8 @@ export async function resumePendingSyncTask(task: SyncTaskRecord): Promise<void>
       return
     }
 
-    // 建单成功但一首未写入（空歌单）视为失败：与渲染层同一口径
-    const ok = report.playlistId !== '' && report.added > 0
+    // 先建单流程：歌单已创建即为成功（空歌单在明细与提示中如实呈现，不再虚报失败）
+    const ok = report.playlistId !== ''
     // 终态计数以最终明细为权威口径，行摘要与展开明细保持一致
     const counts = deriveTaskCounts(report.items, {
       added: report.added,
