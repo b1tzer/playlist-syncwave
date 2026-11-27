@@ -73,12 +73,15 @@ run('百科与歌曲详情真实链路验证', () => {
     qqServer?.kill()
   })
 
-  it('QQ：歌手搜索返回候选，歌手歌曲清单真实可取', async () => {
-    const candidates = await qq.encyclopedia!.search('singer', '周杰伦')
+  // QQ 搜索类接口需登录态（上游已封禁匿名搜索）：设置 QQ_LIVE_SESSION（session token）并配合
+  // QQ_SESSION_SECRET / QQ_AUTH_SESSION_PATH / QQ_AUTH_STATE_PATH 指向真实 userData 才运行
+  it.skipIf(!process.env.QQ_LIVE_SESSION)('QQ：歌手搜索返回候选，歌手歌曲清单真实可取', async () => {
+    const token = process.env.QQ_LIVE_SESSION
+    const candidates = await qq.encyclopedia!.search('singer', '周杰伦', token)
     expect(candidates.length).toBeGreaterThan(0)
     const mid = candidates[0].id
     expect(mid).toMatch(/^[0-9A-Za-z]+$/)
-    const detail = await qq.encyclopedia!.detail('singer', mid)
+    const detail = await qq.encyclopedia!.detail('singer', mid, undefined, token)
     expect(detail.name).toBeTruthy()
     expect(detail.songs!.length).toBeGreaterThan(0)
     expect(detail.songs![0].title).toBeTruthy()
@@ -95,19 +98,22 @@ run('百科与歌曲详情真实链路验证', () => {
     expect(data.webUrl).toContain('0039MnYb0qxYhV')
   }, 30_000)
 
-  it('QQ：专辑曲目与发行时间（专辑名搜索 + 精确过滤）', async () => {
-    const detail = await qq.encyclopedia!.detail('album', '000MkMni19ClKG', '叶惠美')
+  it.skipIf(!process.env.QQ_LIVE_SESSION)('QQ：专辑曲目与发行时间（专辑名搜索 + 精确过滤）', async () => {
+    const token = process.env.QQ_LIVE_SESSION
+    const detail = await qq.encyclopedia!.detail('album', '000MkMni19ClKG', '叶惠美', token)
     expect(detail.name).toBe('叶惠美')
     expect(detail.releaseDate).toBeTruthy()
     expect(detail.songs!.length).toBeGreaterThan(5)
     expect(detail.songs!.every((s) => s.title)).toBeTruthy()
   }, 30_000)
 
-  it('QQ：次级标识缺失时按「歌名+歌手」搜索兜底仍能取到歌词', async () => {
+  it.skipIf(!process.env.QQ_LIVE_SESSION)('QQ：次级标识缺失时按「歌名+歌手」搜索兜底仍能取到歌词', async () => {
+    const token = process.env.QQ_LIVE_SESSION
     const data = await qq.songDetail!.detail(
       '97773',
       {},
       { title: '晴天', artist: '周杰伦' },
+      token,
     )
     expect(data.lyrics).toBeTruthy()
     expect(data.lyrics).toContain('晴天')
