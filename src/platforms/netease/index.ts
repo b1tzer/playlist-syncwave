@@ -93,29 +93,39 @@ export class NeteaseAdapter extends BasePlatformAdapter {
   }
 
   // ==============================
-  // 百科原语（歌手/专辑：公开内容，匿名可读）
+  // 百科原语（歌手/专辑：有登录态时带 cookie，未登录匿名）
   // ==============================
 
   readonly encyclopedia: PlatformEncyclopedia = {
-    search: async (kind: EncyclopediaKind, name: string): Promise<EncyclopediaCandidate[]> => {
-      return this.searchEncyclopedia(kind, name)
+    search: async (
+      kind: EncyclopediaKind,
+      name: string,
+      credential?: string,
+    ): Promise<EncyclopediaCandidate[]> => {
+      return this.searchEncyclopedia(kind, name, credential)
     },
     detail: async (
       kind: EncyclopediaKind,
       id: string,
       name?: string,
+      credential?: string,
     ): Promise<EncyclopediaContent> => {
-      return this.fetchEncyclopediaDetail(kind, id, name)
+      return this.fetchEncyclopediaDetail(kind, id, name, credential)
     },
   }
 
-  private async searchEncyclopedia(kind: EncyclopediaKind, name: string): Promise<EncyclopediaCandidate[]> {
+  private async searchEncyclopedia(
+    kind: EncyclopediaKind,
+    name: string,
+    credential?: string,
+  ): Promise<EncyclopediaCandidate[]> {
     const res = asObject(
       await this.callNcm(this.api.cloudsearch!, {
         keywords: name,
         type: kind === 'singer' ? 100 : 10,
         limit: 20,
         offset: 0,
+        cookie: credential ?? '',
       }),
     )
     const result = asObject(asObject(res.body).result)
@@ -146,9 +156,10 @@ export class NeteaseAdapter extends BasePlatformAdapter {
     kind: EncyclopediaKind,
     id: string,
     _name?: string,
+    credential?: string,
   ): Promise<EncyclopediaContent> {
-    if (kind === 'singer') return this.fetchSingerSongs(id)
-    return this.fetchAlbumTracks(id)
+    if (kind === 'singer') return this.fetchSingerSongs(id, credential)
+    return this.fetchAlbumTracks(id, credential)
   }
 
   /** 面板曲目附歌曲页跳转：网易歌曲页用数字 id（mapTrack 的 id 即数字 id） */
@@ -157,8 +168,10 @@ export class NeteaseAdapter extends BasePlatformAdapter {
   }
 
   /** 歌手的歌：artists 模块返回 artist + hotSongs（实测 50 首热门，条目同 track 形） */
-  private async fetchSingerSongs(id: string): Promise<EncyclopediaContent> {
-    const res = asObject(await this.callNcm(this.api.artists!, { id }))
+  private async fetchSingerSongs(id: string, credential?: string): Promise<EncyclopediaContent> {
+    const res = asObject(
+      await this.callNcm(this.api.artists!, { id, cookie: credential ?? '' }),
+    )
     const body = asObject(res.body)
     const artist = asObject(body.artist)
     const songs = asArray(body.hotSongs).map((t) => this.withSongUrl(mapTrack(t)))
@@ -174,8 +187,8 @@ export class NeteaseAdapter extends BasePlatformAdapter {
   }
 
   /** 专辑曲目：album 模块返回专辑信息 + songs 曲目清单 + publishTime（实测） */
-  private async fetchAlbumTracks(id: string): Promise<EncyclopediaContent> {
-    const res = asObject(await this.callNcm(this.api.album!, { id }))
+  private async fetchAlbumTracks(id: string, credential?: string): Promise<EncyclopediaContent> {
+    const res = asObject(await this.callNcm(this.api.album!, { id, cookie: credential ?? '' }))
     const body = asObject(res.body)
     const album = asObject(body.album)
     const songs = asArray(body.songs).map((t) => this.withSongUrl(mapTrack(t)))
@@ -192,12 +205,12 @@ export class NeteaseAdapter extends BasePlatformAdapter {
   }
 
   // ==============================
-  // 歌曲详情补充（歌词 + 发行时间；歌词接口匿名可用）
+  // 歌曲详情补充（歌词 + 发行时间；有登录态时带 cookie）
   // ==============================
 
   readonly songDetail: PlatformSongDetail = {
-    detail: (songId, identifiers, meta): Promise<SongDetailData> => {
-      return this.fetchSongDetail(songId, identifiers, meta)
+    detail: (songId, identifiers, meta, credential): Promise<SongDetailData> => {
+      return this.fetchSongDetail(songId, identifiers, meta, credential)
     },
   }
 
@@ -205,11 +218,13 @@ export class NeteaseAdapter extends BasePlatformAdapter {
     songId: string,
     identifiers: PlatformSongIdentifiers,
     _meta?: { title?: string; artist?: string },
+    credential?: string,
   ): Promise<SongDetailData> {
     const id = Number(songId)
+    const cookie = credential ?? ''
     const [lyricRes, detailRes] = await Promise.all([
-      this.callNcm(this.api.lyric!, { id }).catch(() => null),
-      this.callNcm(this.api.song_detail!, { ids: String(id) }).catch(() => null),
+      this.callNcm(this.api.lyric!, { id, cookie }).catch(() => null),
+      this.callNcm(this.api.song_detail!, { ids: String(id), cookie }).catch(() => null),
     ])
     const song = asObject(asArray(asObject(asObject(detailRes).body).songs)[0])
     // 发行时间优先歌曲自身 publishTime（毫秒时间戳），缺失时回退专辑详情
@@ -218,7 +233,9 @@ export class NeteaseAdapter extends BasePlatformAdapter {
       const albumId = pickString(asObject(song.al).id, identifiers.albumId)
       if (albumId) {
         const albumRes = asObject(
-          await this.callNcm(this.api.album!, { id: Number(albumId) }).catch(() => null),
+          await this.callNcm(this.api.album!, { id: Number(albumId), cookie }).catch(
+            () => null,
+          ),
         )
         releaseDate = normalizeReleaseDate(pickString(asObject(asObject(albumRes.body).album).publishTime))
       }

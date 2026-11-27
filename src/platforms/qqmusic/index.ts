@@ -189,14 +189,18 @@ export class QqMusicAdapter extends BasePlatformAdapter {
     // 注意：包内 controller 读的是 query 参数而非路径参数（路径参数形式实测 400）。
     const [lyricRes, albumRes] = await Promise.all([
       songMid
-        ? this.call('GET', `/getLyric?songmid=${encodeURIComponent(songMid)}`, '').catch(
-            () => null,
-          )
+        ? this.call(
+            'GET',
+            `/getLyric?songmid=${encodeURIComponent(songMid)}`,
+            credential ?? '',
+          ).catch(() => null)
         : null,
       albumMid
-        ? this.call('GET', `/getAlbumInfo?albummid=${encodeURIComponent(albumMid)}`, '').catch(
-            () => null,
-          )
+        ? this.call(
+            'GET',
+            `/getAlbumInfo?albummid=${encodeURIComponent(albumMid)}`,
+            credential ?? '',
+          ).catch(() => null)
         : null,
     ])
     // 实测：response.data 为对象（非数组），发行时间字段为 aDate
@@ -286,7 +290,7 @@ export class QqMusicAdapter extends BasePlatformAdapter {
     name?: string,
     credential?: string,
   ): Promise<EncyclopediaContent> {
-    if (kind === 'singer') return this.fetchSingerSongs(id)
+    if (kind === 'singer') return this.fetchSingerSongs(id, credential)
     return this.fetchAlbumTracks(id, name, credential)
   }
 
@@ -297,9 +301,13 @@ export class QqMusicAdapter extends BasePlatformAdapter {
     )
   }
 
-  /** 歌手的歌：/singer/songs 返回 track_info 形条目（匿名可用，单页上限 30 首热门） */
-  private async fetchSingerSongs(mid: string): Promise<EncyclopediaContent> {
-    const res = await this.call('GET', `/singer/songs?mid=${encodeURIComponent(mid)}&limit=30`, '')
+  /** 歌手的歌：/singer/songs 返回 track_info 形条目（单页上限 30 首热门） */
+  private async fetchSingerSongs(mid: string, credential?: string): Promise<EncyclopediaContent> {
+    const res = await this.call(
+      'GET',
+      `/singer/songs?mid=${encodeURIComponent(mid)}&limit=30`,
+      credential ?? '',
+    )
     const rawSongs = asArray(res.songs)
     const songs = rawSongs.map((raw) => this.withSongUrl(this.mapSong(asObject(raw))))
     return {
