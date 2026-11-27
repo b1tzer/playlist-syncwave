@@ -497,6 +497,7 @@ describe('KugouAdapter — 映射契约', () => {
               FileHash: 'ABC123',
               SongName: '<em>晴天</em>',
               SingerName: '周杰伦',
+              SingerId: [3520],
               AlbumName: '叶惠美',
               AlbumID: 77,
               MixSongID: 88,
@@ -519,7 +520,8 @@ describe('KugouAdapter — 映射契约', () => {
         album: '叶惠美',
         coverUrl: 'https://img.example/240/a.jpg',
         durationMs: 269000,
-        identifiers: { albumId: '77', mixSongId: '88' },
+        // 实测：SingerId 数字数组 → singerIds（点歌手名按 id 直达，无同名歧义）
+        identifiers: { singerIds: ['3520'], albumId: '77', mixSongId: '88' },
       },
     ])
     // 分页参数透传平台接口（page 从 1 起）

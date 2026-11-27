@@ -51,6 +51,7 @@ describe('QqMusicAdapter — serverless HTTP 映射', () => {
         album: '叶惠美',
         coverUrl: 'https://y.gtimg.cn/music/photo_new/T002R500x500M000000MkMni19ClKG.jpg',
         durationMs: 269000,
+        identifiers: { songMid: '0039MnYb0qxYhV', albumMid: '000MkMni19ClKG' },
       },
     ])
     expect(calls[0].headers.get('x-qq-session')).toBe('tok')

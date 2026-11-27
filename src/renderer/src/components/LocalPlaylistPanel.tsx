@@ -766,6 +766,13 @@ export default function LocalPlaylistPanel({
                     onLoadMore={() => void loadMoreSearch()}
                     emptyText={t('localPlaylist.noResults')}
                     maxHeightClass="max-h-52"
+                    encyclopediaPlatform={searchPlatform || undefined}
+                    encyclopediaSupported={
+                      platforms.find((p) => p.id === searchPlatform)?.capabilities
+                        .encyclopedia === true
+                    }
+                    platformName={platforms.find((p) => p.id === searchPlatform)?.name}
+                    platformIcon={platforms.find((p) => p.id === searchPlatform)?.icon}
                   />
                 </div>
               )}
@@ -784,16 +791,54 @@ export default function LocalPlaylistPanel({
                   key={activeId ?? 'none'}
                   songs={songs.map((s) => ({
                     id: String(s.id),
+                    sourceSongId: s.sourceSongId,
                     title: s.title,
                     artist: s.artist ?? '',
                     album: s.album,
                     durationMs: s.durationMs,
                     coverUrl: s.coverUrl,
+                    identifiers: s.identifiers,
                   }))}
                   showIndex
                   showHeader
                   selectable
                   onRemoveSelected={(ids) => handleRemoveSongs(ids.map(Number))}
+                  encyclopediaPlatformOf={(song) => {
+                    const local = songs.find((s) => String(s.id) === song.id)
+                    const platform = local?.sourcePlatform
+                    if (!platform) return undefined
+                    const meta = platforms.find((p) => p.id === platform)
+                    return meta
+                      ? {
+                          platform,
+                          name: meta.name,
+                          icon: meta.icon,
+                          encyclopedia: meta.capabilities.encyclopedia === true,
+                        }
+                      : undefined
+                  }}
+                  onEncyclopediaConfirm={(req, target) => {
+                    if (req.kind !== 'singer' || target.type !== 'encyclopedia') return
+                    // 按 target 携带的歌曲引用定位（本地歌单 id 为序号，不经 songId 字符串反查）
+                    const song = songs.find((s) => String(s.id) === target.song?.id)
+                    const position = song?.id
+                    if (song === undefined || position === undefined || !activeId) return
+                    const existing = [...(song.identifiers?.singerIds ?? [])]
+                    const idx = target.singerIndex ?? 0
+                    while (existing.length <= idx) existing.push('')
+                    existing[idx] = req.entityId
+                    const identifiers = { ...song.identifiers, singerIds: existing }
+                    void window.electronAPI.localPlaylists
+                      .updateSongIdentifiers(activeId, position, identifiers)
+                      .then(() => {
+                        setSongs((prev) =>
+                          prev.map((s) => (s.id === position ? { ...s, identifiers } : s)),
+                        )
+                      })
+                      .catch(() => {
+                        // 回写失败不影响百科面板展示，下次点击仍会重新问询
+                      })
+                  }}
                   renderAction={(song) => (
                     <button
                       onClick={(e) => {

@@ -6,12 +6,26 @@ import { createServer } from 'node:net'
 import type {
   PlatformPlaylist,
   PlatformSong,
+  PlatformSongIdentifiers,
 } from '@core/models/platform'
 import { SearchError } from '@core/models/sync'
+import type {
+  EncyclopediaCandidate,
+  EncyclopediaContent,
+  EncyclopediaKind,
+  EncyclopediaTrack,
+} from '@core/models/encyclopedia'
+import type { SongDetailData } from '@core/models/songDetail'
 import { createLogger } from '@core/logging'
 import type { PlatformModule } from '../meta'
 import type { HttpHandler } from '../httpHandler'
-import { BasePlatformAdapter, type LoginStatusRaw, type QrCheckRaw } from '../base'
+import {
+  BasePlatformAdapter,
+  type LoginStatusRaw,
+  type PlatformEncyclopedia,
+  type PlatformSongDetail,
+  type QrCheckRaw,
+} from '../base'
 import {
   artistNames,
   asArray,
@@ -21,8 +35,13 @@ import {
   toHttps,
   type JsonObject,
 } from '../json'
+import { normalizeReleaseDate } from '../releaseDate'
+import { attachSongUrl, songWebUrl } from '../songUrl'
 
 const log = createLogger({ module: 'platform.qqmusic' })
+
+/** QQ 音乐 mid 格式（纯字母数字）：图床拼接前校验，数字 id 不适用 */
+const MID_PATTERN = /^[0-9A-Za-z]{1,32}$/
 
 /**
  * 提取歌曲封面：
@@ -109,6 +128,213 @@ export class QqMusicAdapter extends BasePlatformAdapter {
     }
     this.log.debug('http.call', 'QQ音乐请求成功', { method, path, status: res.status, durationMs })
     return parsed
+  }
+
+  // ==============================
+  // 实体面板原语（歌手歌曲/专辑曲目，公开内容匿名可用）
+  // ==============================
+
+  readonly encyclopedia: PlatformEncyclopedia = {
+    search: async (kind: EncyclopediaKind, name: string): Promise<EncyclopediaCandidate[]> => {
+      return this.searchEncyclopedia(kind, name)
+    },
+    detail: async (
+      kind: EncyclopediaKind,
+      id: string,
+      name?: string,
+    ): Promise<EncyclopediaContent> => {
+      return this.fetchEncyclopediaDetail(kind, id, name)
+    },
+  }
+
+  // ==============================
+  // 歌曲详情补充（歌词/发行时间，均匿名可用；缺 songMid 时歌词与跳转不可用）
+  // ==============================
+
+  readonly songDetail: PlatformSongDetail = {
+    detail: (songId, identifiers, meta): Promise<SongDetailData> => {
+      return this.fetchSongDetail(songId, identifiers, meta)
+    },
+  }
+
+  private async fetchSongDetail(
+    _songId: string,
+    identifiers: PlatformSongIdentifiers,
+    meta?: { title?: string; artist?: string },
+  ): Promise<SongDetailData> {
+    let songMid = identifiers.songMid
+    let albumMid = identifiers.albumMid
+    // 兜底定位：次级标识缺失（旧缓存/旧本地数据/手工歌单）时按「歌名 + 歌手」搜索，
+    // 取精确歌名命中且歌手相符的首条，回填 mid/albumMid（getSongInfo 用数字 id 反查实测 404，不可用）
+    if (!songMid && meta?.title) {
+      const fallback = await this.searchSongMids(meta.title, meta.artist).catch(() => null)
+      songMid = fallback?.songMid
+      if (!albumMid) albumMid = fallback?.albumMid
+    }
+    // 单项失败静默：歌词/发行时间互不影响，服务层再兜底。
+    // 注意：包内 controller 读的是 query 参数而非路径参数（路径参数形式实测 400）。
+    const lyricRes = songMid
+      ? await this.call('GET', `/getLyric?songmid=${encodeURIComponent(songMid)}`, '').catch(
+          () => null,
+        )
+      : null
+    const albumRes = albumMid
+      ? await this.call('GET', `/getAlbumInfo?albummid=${encodeURIComponent(albumMid)}`, '').catch(
+          () => null,
+        )
+      : null
+    // 实测：response.data 为对象（非数组），发行时间字段为 aDate
+    const album = albumRes ? asObject(asObject(albumRes.response).data) : {}
+    const releaseDate = normalizeReleaseDate(
+      pickString(album.aDate, album.public_time, album.publicTime, album.time_public),
+    )
+    return {
+      lyrics: lyricRes ? pickString(asObject(lyricRes.response).lyric) : undefined,
+      releaseDate,
+      webUrl: songMid ? songWebUrl.qqmusic(songMid) : undefined,
+    }
+  }
+
+  /** 按歌名+歌手搜索定位歌曲 mid（歌名精确匹配优先、歌手名相符加分） */
+  private async searchSongMids(
+    title: string,
+    artist?: string,
+  ): Promise<{ songMid?: string; albumMid?: string } | null> {
+    const res = await this.call(
+      'GET',
+      `/search?keyword=${encodeURIComponent(title)}&type=song&limit=10&page=1`,
+      '',
+    )
+    const items = asArray(res.items).map((raw) => asObject(raw))
+    const matches = items.filter(
+      (item) => (pickString(item.name, item.title) ?? '').trim() === title.trim(),
+    )
+    const pool = matches.length > 0 ? matches : items
+    const artistText = artist?.trim()
+    const best = artistText
+      ? pool.find((item) => artistNames(asArray(item.singer)) === artistText) ?? pool[0]
+      : pool[0]
+    if (!best) return null
+    const album = asObject(best.album)
+    return {
+      songMid: pickString(best.mid, best.songmid),
+      albumMid: pickString(album.mid, best.albummid),
+    }
+  }
+
+  private async searchEncyclopedia(kind: EncyclopediaKind, name: string): Promise<EncyclopediaCandidate[]> {
+    const type = kind === 'singer' ? 'singer' : 'album'
+    const res = await this.call(
+      'GET',
+      `/search?keyword=${encodeURIComponent(name)}&type=${type}&limit=20&page=1`,
+      '',
+    )
+    const items = asArray(res.items)
+    return items
+      .map((raw) => {
+        const item = asObject(raw)
+        // 实测：歌手条目用 singerMID/singerName/singerPic（大写后缀），专辑条目用 albummid（全小写）
+        if (kind === 'singer') {
+          const mid = pickString(item.singerMID, item.singerMid, item.mid)
+          return {
+            id: mid ?? '',
+            name: pickString(item.singerName, item.name) ?? '',
+            picUrl: toHttps(
+              pickString(item.singerPic, item.pic, item.img, item.img1v1Url),
+            ),
+          }
+        }
+        const albumMid = pickString(item.albummid, item.albumMid, item.albumMID, item.mid)
+        return {
+          id: albumMid ?? '',
+          name: pickString(item.name, item.albumName, item.albumname) ?? '',
+          picUrl: toHttps(
+            pickString(item.pic, item.albumPic, item.albumPicUrl, item.img, item.coverUrl),
+          ),
+          // 专辑候选附歌手名，帮助同名专辑消歧
+          singer: pickString(item.singer_name, item.singerName, item.singername),
+        }
+      })
+      // 无 id 的残缺条目无法点选确认，直接过滤
+      .filter((c) => c.id !== '')
+  }
+
+  private async fetchEncyclopediaDetail(
+    kind: EncyclopediaKind,
+    id: string,
+    name?: string,
+  ): Promise<EncyclopediaContent> {
+    if (kind === 'singer') return this.fetchSingerSongs(id)
+    return this.fetchAlbumTracks(id, name)
+  }
+
+  /** 面板曲目附歌曲页跳转：QQ 歌曲页用 songMid，缺失时不提供跳转 */
+  private withSongUrl(song: PlatformSong): EncyclopediaTrack {
+    return attachSongUrl(song, (s) =>
+      s.identifiers?.songMid ? songWebUrl.qqmusic(s.identifiers.songMid) : undefined,
+    )
+  }
+
+  /** 歌手的歌：/singer/songs 返回 track_info 形条目（匿名可用，单页上限 30 首热门） */
+  private async fetchSingerSongs(mid: string): Promise<EncyclopediaContent> {
+    const res = await this.call('GET', `/singer/songs?mid=${encodeURIComponent(mid)}&limit=30`, '')
+    const rawSongs = asArray(res.songs)
+    const songs = rawSongs.map((raw) => this.withSongUrl(this.mapSong(asObject(raw))))
+    return {
+      kind: 'singer',
+      id: mid,
+      name: artistNames(asArray(asObject(rawSongs[0]).singer)) || '',
+      songs,
+      imageUrl: MID_PATTERN.test(mid)
+        ? `https://y.gtimg.cn/music/photo_new/T001R300x300M000${mid}.jpg`
+        : undefined,
+      source: 'qqmusic',
+      sourceUrl: `https://y.qq.com/n/ryqq/singer/${encodeURIComponent(mid)}`,
+    }
+  }
+
+  /** 专辑曲目：按专辑名搜索歌曲并精确过滤专辑名（包内无专辑曲目接口，实测可用） */
+  private async fetchAlbumTracks(albumMid: string, name?: string): Promise<EncyclopediaContent> {
+    const keyword = (name ?? '').trim()
+    if (!keyword) {
+      throw new Error('QQ音乐：获取专辑曲目需要专辑名')
+    }
+    const res = await this.call(
+      'GET',
+      `/search?keyword=${encodeURIComponent(keyword)}&type=song&limit=50&page=1`,
+      '',
+    )
+    const items = asArray(res.items).map((raw) => asObject(raw))
+    const tracks = items.filter(
+      (item) => (pickString(asObject(item.album).name, item.albumname) ?? '').trim() === keyword,
+    )
+    // 同曲多版本（mid 不同）去重，保留首个；歌曲条目自带 album.time_public 发行时间
+    const seen = new Set<string>()
+    const songs: EncyclopediaTrack[] = []
+    let releaseDate: string | undefined
+    for (const item of tracks) {
+      const mapped = this.withSongUrl(this.mapSong(item))
+      if (seen.has(mapped.id)) continue
+      seen.add(mapped.id)
+      songs.push(mapped)
+      if (!releaseDate) {
+        releaseDate = normalizeReleaseDate(
+          pickString(asObject(item.album).time_public, item.time_public),
+        )
+      }
+    }
+    return {
+      kind: 'album',
+      id: albumMid,
+      name: keyword,
+      releaseDate,
+      songs,
+      imageUrl: MID_PATTERN.test(albumMid)
+        ? `https://y.gtimg.cn/music/photo_new/T002R500x500M000${albumMid}.jpg`
+        : undefined,
+      source: 'qqmusic',
+      sourceUrl: `https://y.qq.com/n/ryqq/albumDetail/${encodeURIComponent(albumMid)}`,
+    }
   }
 
   // --- 读原语 ---
@@ -208,10 +434,14 @@ export class QqMusicAdapter extends BasePlatformAdapter {
 
   private mapSong(item: JsonObject): PlatformSong {
     const album = asObject(item.album)
+    const singerIds = asArray(item.singer ?? item.singers)
+      .map((s) => pickString(asObject(s).mid))
+      .filter((mid): mid is string => mid !== undefined)
     const identifiers = {
       songMid: pickString(item.songmid, item.mid),
       albumId: pickString(album.id, item.albumid),
       albumMid: pickString(album.mid, item.albummid),
+      ...(singerIds.length ? { singerIds } : {}),
     }
     return {
       id: pickString(item.songid, item.id, item.songmid) ?? '',
@@ -259,6 +489,16 @@ export class QqMusicAdapter extends BasePlatformAdapter {
     return items.map((s) => {
       const item = asObject(s)
       const album = asObject(item.album)
+      const singerIds = asArray(item.singer)
+        .map((x) => pickString(asObject(x).mid))
+        .filter((mid): mid is string => mid !== undefined)
+      const identifiers = {
+        // 搜索结果条目自带 mid/album.mid：填满次级标识，歌词/发行时间/百科定位直接用
+        songMid: pickString(item.mid, item.songmid),
+        albumId: pickString(album.id, item.albumid),
+        albumMid: pickString(album.mid, item.albummid),
+        ...(singerIds.length ? { singerIds } : {}),
+      }
       return {
         id: pickString(item.id, item.mid) ?? '',
         title: pickString(item.name, item.title) ?? '未知歌曲',
@@ -268,6 +508,7 @@ export class QqMusicAdapter extends BasePlatformAdapter {
         durationMs:
           typeof item.interval === 'number' ? item.interval * 1000 : undefined,
         genre: pickString(item.genre),
+        identifiers: compactIdentifiers(identifiers),
       }
     })
   }
@@ -367,7 +608,7 @@ const qqMusicModule: PlatformModule = {
     id: 'qqmusic',
     name: 'QQ音乐',
     icon: 'equalizer',
-    capabilities: { read: true, write: true },
+    capabilities: { read: true, write: true, encyclopedia: true },
     loginChannels: [
       { id: 'qqmusic', label: 'QQ音乐 App 扫码' },
       { id: 'wechat', label: '微信扫码' },

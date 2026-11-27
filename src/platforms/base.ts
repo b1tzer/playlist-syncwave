@@ -2,10 +2,17 @@ import type {
   PlatformAccount,
   PlatformPlaylist,
   PlatformSong,
+  PlatformSongIdentifiers,
   QrLoginResult,
   QrLoginTicket,
   WebLoginProfile,
 } from '@core/models/platform'
+import type {
+  EncyclopediaCandidate,
+  EncyclopediaContent,
+  EncyclopediaKind,
+} from '@core/models/encyclopedia'
+import type { SongDetailData } from '@core/models/songDetail'
 import { createLogger, type Logger } from '@core/logging'
 
 /**
@@ -65,6 +72,52 @@ export interface PlatformAdapter {
    * 未实现时已有凭证原样保留。
    */
   withWebLoginProfile?(credential: string, profile: WebLoginProfile): string
+
+  /**
+   * 百科查询能力（可选）：歌手/专辑的搜索与详情原语。
+   * 未实现的平台点击百科时渲染层展示「该平台暂不支持」空态。
+   */
+  encyclopedia?: PlatformEncyclopedia
+
+  /**
+   * 歌曲详情补充能力（可选）：歌词/发行时间/平台跳转。
+   * 未实现的平台详情卡只展示本地身份信息。
+   */
+  songDetail?: PlatformSongDetail
+}
+
+/**
+ * 平台百科原语：adapter 只负责平台差异的接口调用与字段映射，
+ * 消歧打分、缓存、限流等通用逻辑由主进程百科服务统一编排。
+ */
+export interface PlatformEncyclopedia {
+  /** 按名字搜索实体候选（同名返回多条，由服务层打分排序）；credential 为登录凭证（匿名平台忽略，酷狗用登录 cookie） */
+  search(kind: EncyclopediaKind, name: string, credential?: string): Promise<EncyclopediaCandidate[]>
+
+  /**
+   * 按实体 id 拉取面板内容（歌手的歌 / 专辑曲目与发行时间）。
+   * name 提供实体展示名：QQ 专辑曲目经「专辑名搜索 + 精确过滤」实现，需要名字定位。
+   */
+  detail(
+    kind: EncyclopediaKind,
+    id: string,
+    name?: string,
+    credential?: string,
+  ): Promise<EncyclopediaContent>
+}
+
+/** 歌曲详情补充原语（可选）：歌词/发行时间/平台跳转 */
+export interface PlatformSongDetail {
+  /**
+   * 拉取歌曲的歌词与发行时间等补充信息。
+   * 单项缺失（无歌词/纯音乐）以 undefined 表达；整体失败由服务层静默。
+   * meta 提供歌曲名/歌手：次级标识缺失时（旧缓存/旧本地数据）可据此搜索兜底定位。
+   */
+  detail(
+    songId: string,
+    identifiers: PlatformSongIdentifiers,
+    meta?: { title?: string; artist?: string },
+  ): Promise<SongDetailData>
 }
 
 function unsupported(platform: string, method: string): Error {

@@ -8,8 +8,9 @@
  * v3→v4：酷狗歌单列表不再显示收藏的他人歌单（type=1 过滤），旧缓存含收藏歌单需重新验证。
  * v4→v5：网易云歌单列表不再显示收藏的他人歌单（subscribed=true 过滤），旧缓存含收藏歌单需重新验证。
  * v5→v6：封面 URL 统一升级 https（打包版 CSP 只放行 https 图片），旧缓存 http 封面需重新验证。
+ * v6→v7：歌曲缓存补次级标识列（songMid/albumMid/singerIds），百科歌词/发行时间定位需要，旧缓存缺标识需重新验证。
  */
-export const PLAYLIST_CACHE_SCHEMA_VERSION = 6
+export const PLAYLIST_CACHE_SCHEMA_VERSION = 7
 
 /**
  * 歌单列表重新验证间隔：TTL 内直接返回缓存不请求接口；

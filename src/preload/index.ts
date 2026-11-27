@@ -5,10 +5,17 @@ import type {
   PlatformMeta,
   PlatformPlaylist,
   PlatformSong,
+  PlatformSongIdentifiers,
   QrLoginResult,
   QrLoginTicket,
 } from '@core/models/platform'
 import type { MatchQuery } from '@core/models/match'
+import type {
+  EncyclopediaConfirmRequest,
+  EncyclopediaLookupResult,
+  EncyclopediaQuery,
+} from '@core/models/encyclopedia'
+import type { SongDetailData, SongDetailRequest } from '@core/models/songDetail'
 import type {
   SyncChoice,
   SyncItemResult,
@@ -332,6 +339,20 @@ const api = {
     clear: (platform: string): Promise<void> => invoke('mappings:clear', platform),
   },
 
+  /** 百科查询：点击歌手/专辑名弹出百科面板 */
+  encyclopedia: {
+    lookup: (query: EncyclopediaQuery): Promise<EncyclopediaLookupResult> =>
+      invoke('encyclopedia:lookup', query),
+    confirm: (req: EncyclopediaConfirmRequest): Promise<void> =>
+      invoke('encyclopedia:confirm', req),
+  },
+
+  /** 歌曲详情补充：歌词/发行时间/平台跳转（失败静默返回 null，详情卡保持本地信息） */
+  songDetail: {
+    lookup: (request: SongDetailRequest): Promise<SongDetailData | null> =>
+      invoke('song-detail:lookup', request),
+  },
+
   /** 清空歌单/歌曲本地缓存（危险区操作，返回删除行数） */
   cache: {
     clear: (): Promise<{ playlists: number; songs: number }> => invoke('cache:clear'),
@@ -366,6 +387,12 @@ const api = {
     ): Promise<void> => invoke('local-playlist:add-songs', id, songs),
     removeSongs: (id: string, positions: number[]): Promise<void> =>
       invoke('local-playlist:remove-songs', id, positions),
+    /** 百科纠偏回写：把确认的歌手/专辑 id 合并后的完整次级标识覆盖写回 */
+    updateSongIdentifiers: (
+      id: string,
+      songId: number,
+      identifiers: PlatformSongIdentifiers,
+    ): Promise<void> => invoke('local-playlist:update-song-identifiers', id, songId, identifiers),
     /** 平台歌单整单导出为本地歌单（保留平台 id 与次级唯一标识） */
     importPlatformPlaylist: (
       platform: string,

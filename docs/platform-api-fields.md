@@ -1422,8 +1422,8 @@
 
 | 平台 | 主 id（`PlatformSong.id`） | 次级唯一标识（`PlatformSong.identifiers`） | 证据 |
 |---|---|---|---|
-| 网易云 | 数字歌曲 `id` | `al.id` → `albumId`；`originSongSimpleData.songId` → `originSongId`；`alia` → `aliases` | 📐 NCM `playlist_detail`/`cloudsearch` 源码 |
-| QQ音乐 | `songid` / `id` / `songmid` 优先序 | `mid`/`songmid` → `songMid`；`album.id` → `albumId`；`album.mid`/`albummid` → `albumMid` | ✅ `/search` 响应实测；歌单详情映射 📐 |
+| 网易云 | 数字歌曲 `id` | `al.id` → `albumId`；`ar[].id` → `singerIds`；`originSongSimpleData.songId` → `originSongId`；`alia` → `aliases` | 📐 NCM `playlist_detail`/`cloudsearch` 源码 |
+| QQ音乐 | `songid` / `id` / `songmid` 优先序 | `mid`/`songmid` → `songMid`；`singer[].mid` → `singerIds`；`album.id` → `albumId`；`album.mid`/`albummid` → `albumMid` | ✅ `/search` 响应实测；歌单详情映射 📐 |
 | 酷狗 | `hash`（统一小写，歌单/搜索来源不同字段名） | 云歌单 `fileid` → `fileId`（删歌必需）；`mixsongid` → `mixSongId`、`album_id` → `albumId`（加歌必需，之前只在内存 `songMeta` 中） | 📐 库模式源码 + ✅ 写接口字段实测 |
 | Apple Music | `playParams.catalogId` 优先，回退条目 `id` | 条目 `id` → `librarySongId`（catalogId 存在时保留）；`playParams.albumId` → `albumId` | 📐 社区 Web API 源码 |
 
@@ -1436,3 +1436,48 @@
 - 封面列（`local_playlists.cover_url` / `cover_source`、`local_playlist_songs.cover_url`，迁移 v8）：只接受 https（service 层 `normalizeCoverUrl`，http/file/data 丢弃），来源为平台歌单复制或首曲派生；封面 URL 是易变资源，不参与唯一性判定。存量导入歌单在读取时从 `playlist_cache` 惰性回填：歌单封面按 `source_platform + source_playlist_id`，歌曲封面按 `playlist_song_cache` 的原顺序（必要时按 `source_song_id`）只填空行，不额外发请求。
 - 多来源：`local_playlist_sources`（v9）以 `(playlist_id, platform, source_playlist_id)` 为键记录同一本地歌单对应的多个平台歌单，附链接/ownerId/extra_ids/cover_url/last_synced_at；重复保存按此键幂等命中并增量 upsert 歌曲，本地列表用平台 logo 展示已来源。旧库单来源列由 v9 回填为一条记录；关系为本地 1 → 平台多，v10 加 `(platform, source_playlist_id)` 唯一索引，同一平台歌单改派到别的本地歌单时旧关系删除。反向（本地歌单 → 平台同步建单成功）登记走 `linkSyncTarget`：只写关系表，不覆盖本地歌单自身的来源/封面列，来源本地歌单 id 记录在 `sync_tasks.source_local_playlist_id`（迁移 v11）。
 - 匹配含义：这些字段为**精确记录**而非自动跨平台的全局 id——不同平台的主 id 互不通用，后续同步仍以「标题+歌手归一化」为代理金标准，次级 id 用于同平台回写定位、版本/翻唱区分与候选排序，避免把「歌名相同」当成「同一首歌」。
+
+---
+
+## 8. 实体面板接口（歌手歌曲 / 专辑曲目）
+
+> 点击歌手名显示歌手歌曲清单、点击专辑名显示发行时间与专辑曲目清单（支持网易云 + QQ + 酷狗；百科正文与 Wikipedia 兜底已按需求移除）。全部平台接口已经真实链路实测（`LIVE_VERIFY=1 npx vitest run tests/live`，2026-11-27，酷狗为匿名设备指纹调用）；字段样本固化在 `tests/platforms/encyclopediaPlatforms.test.ts`；标注沿用 ✅（实测抓取）/📐（源码示意）约定。
+
+### 8.1 歌手（→ `EncyclopediaContent.songs` 热门歌曲清单）
+
+| 平台 | 搜索接口 | 搜索条目字段（→ `EncyclopediaCandidate`） | 歌曲清单接口 | 清单字段 | 证据 |
+|---|---|---|---|---|---|
+| QQ音乐 | `GET /search?type=singer&keyword=&limit=20`（匿名可用） | **`singerMID`/`singerName`/`singerPic`（大写后缀键）** → id/name/picUrl | `GET /singer/songs?mid=&limit=30`（query 参数，匿名可用，单页上限 30） | `songs[]` 为 track_info 形条目（`mid`/`name`/`singer[]`/`album`/`interval`），经 `mapSong` 映射 | ✅ 实测（2026-11-27，周杰伦样本） |
+| 网易云 | `cloudsearch` `type=100` | `body.result.artists[]`：`id`/`name`/`alias[]`/`picUrl` | `artists`（`/api/v1/artist/{id}`，weapi） | **`body.hotSongs[]`**（50 首热门，track 形条目）+ `body.artist`（name/cover） | ✅ 实测（2026-11-27） |
+| 酷狗 | `search type=author`（`/v1/search/author`，android 加密 + 设备指纹即可） | **大写驼峰键** `AuthorId`/`AuthorName`/`Avatar`（+`FansNum` 热度）→ id/name/picUrl/followerCount | `artist_audios`（`/kmr/v1/audio_group/author`，POST；cookie 里的 `KUGOU_API_MID` 是**设备指纹**非登录态） | 顶层 `data` 直接是歌曲数组：`audio_id`/`hash`/`audio_name`/`author_name`/`album_name`/`timelength`（毫秒） | ✅ 实测（2026-11-27，匿名设备指纹，周杰伦样本） |
+
+### 8.2 专辑（→ `EncyclopediaContent.songs` 曲目 + `releaseDate`）
+
+| 平台 | 搜索接口 | 搜索条目字段 | 曲目与发行时间来源 | 证据 |
+|---|---|---|---|---|
+| QQ音乐 | `GET /search?type=album` | **`albummid`（全小写）**/`name`/`singer_name` → id/name/singer | **包内无专辑曲目接口**：`GET /search?type=song&keyword={专辑名}&limit=50` 按 `album.name` 精确过滤 + mid 去重；发行时间取条目 `album.time_public` | ✅ 实测（2026-11-27，叶惠美 11 曲样本；同名翻唱专辑被过滤） |
+| 网易云 | `cloudsearch` `type=10` | `body.result.albums[]`：`id`/`name`/`picUrl`/`artist.name` | `album`（`/api/v1/album/{id}`，weapi）：**`body.songs[]`** 曲目 + **`body.album.publishTime`**（毫秒时间戳）+ `picUrl` | ✅ 实测（2026-11-27） |
+| 酷狗 | `search type=album`（`/v1/search/album`，android 加密 + 设备指纹即可） | **全小写键** `albumid`/`albumname`/`singer`（歌手名字符串）/`img`/`publish_time` → id/name/singer/picUrl | `album_detail`（`/kmr/v2/albums`：`data[0].publish_date`/`album_name`/`sizable_cover`）+ `album_songs`（`/v1/album_audio/lite`：`data.songs[]`）并行；曲目条目同歌手清单形态 | ✅ 实测（2026-11-27，匿名设备指纹，叶惠美样本） |
+
+### 8.3 语义约定
+
+- 直达 id 按平台区分形态：QQ 专辑详情只认 `albummid`（搜索候选 id 即 albummid），网易云用数字 id；`EncyclopediaQuery` 同时携带 `albumId`/`albumMid`，由主进程服务按平台选取，适配器不再各自解释。QQ 专辑曲目经专辑名搜索定位，`PlatformEncyclopedia.detail` 需携带实体名（`detail(kind, id, name)`）。
+- 凭证：登录凭证始终注入（`getCredential`，有登录态传登录 cookie、未登录传空串）；酷狗 `buildCookie` 合并设备指纹（`KUGOU_API_GUID/MID/DEV`），读接口实测匿名（仅设备指纹）即可用。
+- 纠偏映射 `encyclopedia_entity_mappings`（迁移 v12）以 `(platform, kind, name)` 为键存实体 canonical id；候选 id 与详情 id 同形态，确认后直达无需再搜索。
+
+### 8.4 歌曲详情补充（歌词 / 发行时间 / 平台跳转）
+
+| 平台 | 歌词接口 | 发行时间来源 | 平台跳转 | 证据 |
+|---|---|---|---|---|
+| QQ音乐 | `GET /getLyric?songmid=`（**query 参数**；路径参数形式实测 400。`fcg_query_lyric_new.fcg`，返回 `response.lyric` LRC 文本；需 `identifiers.songMid`） | `GET /getAlbumInfo?albummid=` → **`response.data.aDate`**（`2003-07-31` 形态） | `https://y.qq.com/n/ryqq/songDetail/{songmid}` | ✅ 实测（2026-11-27，晴天/叶惠美样本） |
+| 网易云 | `lyric`（`/api/song/lyric`，weapi）→ **`body.lrc.lyric`**（LRC 文本） | `song_detail`（`/api/v3/song/detail`）→ `body.songs[0].publishTime`（毫秒时间戳）；缺失回退 `album` → `body.album.publishTime` | `https://music.163.com/#/song?id={id}` | ✅ 实测（2026-11-27，晴天 id=186016 样本） |
+
+> 实测踩坑备忘：QQ 详情路由全部用 query 参数（Koa 路由路径参数形式返回 400）；QQ 搜索条目键大小写不统一（歌手 `singerMID`、专辑 `albummid`）；网易云模块统一 `{ status, body, cookie }` 包装（`lyric` 的歌词在 `body.lrc`，不是顶层）；QQ 本地服务在 `NODE_ENV=test` 下不监听端口（live 验证经 `scripts/qq-api-server.mjs` 子进程）。
+
+> QQ 歌曲定位三级链：`identifiers.songMid/albumMid` 直达 → 缺失时（旧缓存/旧本地数据/手工歌单）按「歌名+歌手」搜索兜底（`/search?type=song`，歌名精确匹配优先、歌手名相符加分；`getSongInfo?songid=` 用数字 id 反查实测返回 404，不可用）→ 失败静默无歌词。QQ 搜索结果歌曲映射已补 `songMid/albumMid`（条目自带 `mid`/`album.mid`）。
+
+- 发行时间统一经 `platforms/releaseDate.ts` 归一化为 `yyyy-MM-dd`（兼容日期字符串与秒/毫秒时间戳；时间戳按**东八区**取日期，位数判定 13 位毫秒/10~12 位秒，日历合法性回读校验），无法识别则隐藏该行。
+- 歌词原文保留 LRC 格式，渲染层 `EncyclopediaPopover.lyricsLines` 剥离时间戳与元信息行（副歌重复行保留忠实原文）后预览 6 行、可展开收起；无歌词（纯音乐/无版权）时整个歌词区不渲染。
+- 歌曲详情补充走 `song-detail:lookup` → `main/songDetailService.ts`（LRU + 单飞 + 令牌桶，缓存键收口 `cacheKey`；限流/失败结果不进缓存），单项/整体失败静默返回 null，详情卡保持本地身份信息。
+- 面板曲目为 `EncyclopediaTrack`（`PlatformSong` + 平台歌曲页 `webUrl`：QQ 用 `identifiers.songMid`、网易/酷狗用歌曲 id/hash），有链接时渲染层整行可点击跳平台。
+- 百科查询服务 LRU 只缓存 `content`/`candidates` 结果，限流/异常空态不冻结；候选列表过滤无 id 的残缺条目。

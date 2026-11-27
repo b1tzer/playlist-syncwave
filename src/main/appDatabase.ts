@@ -7,6 +7,7 @@ import { createSettingsStore, type SettingsStore } from './settingsStore'
 import { createMappingStore, type MappingStore } from './mappingStore'
 import { createPlaylistCacheStore, type PlaylistCacheStore } from './playlistCacheStore'
 import { createLocalPlaylistStore, type LocalPlaylistStore } from './localPlaylistStore'
+import { createEncyclopediaStore, type EncyclopediaStore } from './encyclopediaStore'
 import { runMigrations } from './migrations'
 import type { SyncTaskRecord } from '@core/models/sync'
 import type { SqliteDb } from './sqlite'
@@ -18,6 +19,7 @@ export interface AppDatabase {
   mappings: MappingStore
   playlistCache: PlaylistCacheStore
   localPlaylists: LocalPlaylistStore
+  encyclopedia: EncyclopediaStore
 }
 
 let instance: AppDatabase | null = null
@@ -78,6 +80,7 @@ export function getDatabase(): AppDatabase {
       mappings: createMappingStore(db),
       playlistCache: createPlaylistCacheStore(db),
       localPlaylists: createLocalPlaylistStore(db),
+      encyclopedia: createEncyclopediaStore(db),
     }
     // 旧库数据迁移（幂等：旧文件删掉后不再执行）
     migrateLegacyHistory(db)

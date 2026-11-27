@@ -545,6 +545,22 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_local_playlist_sources_unique_source
         db.prepare('UPDATE local_playlists SET updated_at = ? WHERE id = ?').run(now, id)
       })
     },
+
+    /** 百科纠偏：把确认的歌手/专辑 id 回写进歌曲次级标识（下次点击直达详情） */
+    updateSongIdentifiers(
+      id: string,
+      position: number,
+      identifiers: PlatformSongIdentifiers,
+      now: string,
+    ): boolean {
+      const result = db.prepare(
+        `UPDATE local_playlist_songs SET identifiers = ?
+         WHERE playlist_id = ? AND position = ?`,
+      ).run(JSON.stringify(identifiers), id, position)
+      if (result.changes === 0) return false
+      db.prepare('UPDATE local_playlists SET updated_at = ? WHERE id = ?').run(now, id)
+      return true
+    },
   }
 }
 

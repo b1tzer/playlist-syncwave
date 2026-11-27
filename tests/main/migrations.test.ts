@@ -104,7 +104,7 @@ describe('runMigrations — 版本化迁移', () => {
     const version = fresh
       .prepare('SELECT MAX(version) AS v FROM schema_migrations')
       .get() as { v: number }
-    expect(version.v).toBe(11)
+    expect(version.v).toBe(13)
     // 迁移不建业务表：建表仍由各 Store 负责
     const tables = fresh
       .prepare(`SELECT name FROM sqlite_master WHERE type = 'table'`)
@@ -270,5 +270,61 @@ INSERT INTO local_playlist_sources (playlist_id, platform, source_playlist_id, l
         .run(),
     ).toThrow()
     db10.close()
+  })
+
+  it('v12：创建百科纠偏映射表，重复执行幂等', () => {
+    const db12 = new Database(':memory:')
+    runMigrations(db12)
+    const tables = (
+      db12.prepare(`SELECT name FROM sqlite_master WHERE type = 'table'`).all() as Array<{
+        name: string
+      }>
+    ).map((r) => r.name)
+    expect(tables).toContain('encyclopedia_entity_mappings')
+    const indexes = (
+      db12.prepare(`SELECT name FROM sqlite_master WHERE type = 'index'`).all() as Array<{
+        name: string
+      }>
+    ).map((r) => r.name)
+    expect(indexes).toContain('idx_encyclopedia_mappings_lookup')
+    // 幂等：重复执行不报错
+    expect(() => runMigrations(db12)).not.toThrow()
+    const versions = (
+      db12.prepare('SELECT version FROM schema_migrations').all() as Array<{ version: number }>
+    ).map((r) => r.version)
+    expect(versions.filter((v) => v === 12)).toHaveLength(1)
+    db12.close()
+  })
+
+  it('v13：存量歌单歌曲缓存补 identifiers 列，重复执行幂等', () => {
+    const legacy = new Database(':memory:')
+    legacy.exec(`
+CREATE TABLE playlist_song_cache (
+  platform TEXT NOT NULL,
+  playlist_id TEXT NOT NULL,
+  song_id TEXT NOT NULL,
+  title TEXT NOT NULL,
+  artist TEXT NOT NULL,
+  album TEXT,
+  cover_url TEXT,
+  duration_ms INTEGER,
+  genre TEXT,
+  PRIMARY KEY (platform, playlist_id, song_id)
+);
+INSERT INTO playlist_song_cache (platform, playlist_id, song_id, title, artist)
+  VALUES ('qqmusic', '1', '97773', '晴天', '周杰伦');
+`)
+    runMigrations(legacy)
+    const cols = (legacy.pragma('table_info(playlist_song_cache)') as Array<{ name: string }>).map(
+      (c) => c.name,
+    )
+    expect(cols).toContain('identifiers')
+    // 幂等：重复执行不报错，存量行新列保持 NULL
+    expect(() => runMigrations(legacy)).not.toThrow()
+    const row = legacy
+      .prepare('SELECT identifiers FROM playlist_song_cache WHERE song_id = ?')
+      .get('97773') as { identifiers: string | null }
+    expect(row.identifiers).toBeNull()
+    legacy.close()
   })
 })

@@ -330,6 +330,21 @@
   .marquee-x {
     animation: marquee-x ease-in-out infinite;
   }
+  /* 百科可点击文本：歌名/歌手/专辑 hover 提示可点，键盘聚焦同样有可见指示 */
+  .encyclopedia-link {
+    cursor: pointer;
+    transition: color 0.15s ease;
+    border-radius: 2px;
+  }
+  .encyclopedia-link:hover {
+    color: var(--sw-primary);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+  .encyclopedia-link:focus-visible {
+    outline: 2px solid var(--sw-primary);
+    outline-offset: 2px;
+  }
 }
 
 /* 无障碍：系统开启「减弱动态效果」时关闭非必要动效（对齐 iOS 设置） */

@@ -60,6 +60,13 @@ function normalizeIdentifiers(raw: unknown): PlatformSongIdentifiers | undefined
       .slice(0, 10)
     if (aliases.length > 0) result.aliases = aliases
   }
+  if (Array.isArray(source.singerIds)) {
+    const singerIds = source.singerIds
+      .map((a) => normalizeText(a, 100))
+      .filter((a): a is string => a !== undefined)
+      .slice(0, 20)
+    if (singerIds.length > 0) result.singerIds = singerIds
+  }
   return Object.keys(result).length > 0 ? result : undefined
 }
 
@@ -256,4 +263,15 @@ export function removeLocalPlaylistSongs(id: unknown, positions: unknown) {
     throw new Error('无效的歌曲序号列表')
   }
   getDatabase().localPlaylists.removeSongs(id, positions as number[], now())
+}
+
+/** 百科纠偏回写：渲染层合并后的完整次级标识覆盖写回（白名单校验，只认已知字段） */
+export function updateLocalSongIdentifiers(id: unknown, songId: unknown, identifiers: unknown) {
+  if (typeof id !== 'string' || !id) throw new Error('无效的歌单 ID')
+  const position = typeof songId === 'number' ? songId : Number(songId)
+  if (!Number.isInteger(position) || position < 0) throw new Error('无效的歌曲序号')
+  const clean = normalizeIdentifiers(identifiers)
+  if (!clean) throw new Error('无效的歌曲标识')
+  const updated = getDatabase().localPlaylists.updateSongIdentifiers(id, position, clean, now())
+  if (!updated) throw new Error('歌曲不存在')
 }

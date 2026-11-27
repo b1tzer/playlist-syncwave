@@ -4,6 +4,8 @@
  */
 export interface PlatformSongIdentifiers {
   albumId?: string
+  /** 歌手 id（多歌手时为数组，与 artist 文本顺序一致）；供百科查询直达详情、避免同名搜索 */
+  singerIds?: string[]
   /** QQ 音乐歌曲 mid */
   songMid?: string
   /** QQ 音乐专辑 mid */
@@ -20,8 +22,10 @@ export interface PlatformSongIdentifiers {
 }
 
 export interface PlatformSong {
-  /** 平台歌曲 ID */
+  /** 平台歌曲 ID（本地歌单为歌单内序号，详情查询优先用 sourceSongId） */
   id: string
+  /** 原始平台歌曲 ID：本地歌单的 id 是序号时用于详情查询，避免把序号当平台 id */
+  sourceSongId?: string
   title: string
   artist: string
   album?: string
@@ -94,6 +98,11 @@ export interface PlatformCapabilities {
    * 缺省表示 write 能力覆盖的操作全部支持。
    */
   unsupportedOperations?: Partial<Record<PlatformOperation, { reason: string }>>
+  /**
+   * 是否支持百科查询（歌手歌曲/专辑曲目）。
+   * 缺省视为不支持：渲染层歌手/专辑名不可点，避免点击后只有空态。
+   */
+  encyclopedia?: boolean
 }
 
 /** 扫码登录渠道（如 QQ音乐的 qqmusic/wechat/qq）；无渠道的平台省略 */

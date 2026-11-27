@@ -4,11 +4,18 @@ import {
   useState,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
+  type SyntheticEvent,
 } from 'react'
 import type { PlatformSong } from '@core/models/platform'
+import type { EncyclopediaConfirmRequest } from '@core/models/encyclopedia'
 import { useI18n } from '../i18n'
 import { formatDuration } from '../sync/helpers'
 import CoverImage from './CoverImage'
+import EncyclopediaPopover, {
+  ArtistLinks,
+  EncyclopediaLink,
+  type EncyclopediaTarget,
+} from './EncyclopediaPopover'
 import Tooltip from './Tooltip'
 
 interface SongListProps {
@@ -40,6 +47,20 @@ interface SongListProps {
   removeDisabled?: boolean
   /** 删除不可用时的悬浮原因 */
   removeDisabledReason?: string
+  /** 百科查询平台（歌名详情卡始终可用；歌手/专辑名仅在提供平台且支持百科时可点） */
+  encyclopediaPlatform?: string
+  /** 列表级平台是否支持百科查询（歌手/专辑名可点性）；缺省视为不支持 */
+  encyclopediaSupported?: boolean
+  /** 平台展示名（百科面板来源标识） */
+  platformName?: string
+  /** 平台 material-symbols 图标名（百科面板来源标识） */
+  platformIcon?: string
+  /** 按歌曲解析百科平台（本地歌单按每首歌的来源平台；未提供时用列表级 encyclopediaPlatform） */
+  encyclopediaPlatformOf?: (
+    song: PlatformSong,
+  ) => { platform: string; name: string; icon: string; encyclopedia: boolean } | undefined
+  /** 用户选定同名候选后回调（本地歌单回写歌手 id） */
+  onEncyclopediaConfirm?: (req: EncyclopediaConfirmRequest, target: EncyclopediaTarget) => void
 }
 
 export default function SongList({
@@ -58,6 +79,12 @@ export default function SongList({
   onRemoveSelected,
   removeDisabled = false,
   removeDisabledReason,
+  encyclopediaPlatform,
+  encyclopediaSupported,
+  platformName,
+  platformIcon,
+  encyclopediaPlatformOf,
+  onEncyclopediaConfirm,
 }: SongListProps) {
   const { t } = useI18n()
   // 整列缺失时隐藏该列，避免全空占位
@@ -77,6 +104,12 @@ export default function SongList({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [bulkRemoving, setBulkRemoving] = useState(false)
   const [bulkTip, setBulkTip] = useState<{ x: number; y: number; text: string } | null>(null)
+  /** 百科面板：锚点（点击文本下方）+ 点击目标 */
+  const [encyclopedia, setEncyclopedia] = useState<{
+    target: EncyclopediaTarget
+    x: number
+    y: number
+  } | null>(null)
   /** Shift 连选锚点：最后一次普通点选的行 */
   const anchorIdRef = useRef<string | null>(null)
   /** 拖拽框选：按下锚点 + 起点，移动超 5px 才进入框选 */
@@ -145,6 +178,15 @@ export default function SongList({
   }
   const handleRowMouseDown = (e: ReactMouseEvent, song: PlatformSong) => {
     if (e.button !== 0) return
+    // 百科面板打开时：本次点击只关闭面板（window mousedown 冒泡触发），
+    // 不进入选择/框选流程——抑制随后的 click，避免「关闭面板的同时选中了歌曲」
+    if (encyclopedia) {
+      suppressClickRef.current = true
+      setTimeout(() => {
+        suppressClickRef.current = false
+      }, 0)
+      return
+    }
     dragRef.current = { anchorId: song.id, startX: e.clientX, startY: e.clientY, moved: false }
   }
   /** 拖拽经过的行：以按下行到当前行整段替换选择 */
@@ -176,6 +218,25 @@ export default function SongList({
     toggleSelection(song.id)
   }
 
+  /** 打开百科面板：锚点固定在点击文本的正下方，stopPropagation 避免触发行多选 */
+  const openEncyclopedia = (e: SyntheticEvent<HTMLElement>, target: EncyclopediaTarget) => {
+    e.stopPropagation()
+    const rect = e.currentTarget.getBoundingClientRect()
+    setEncyclopedia({ target, x: rect.left, y: rect.bottom + 4 })
+  }
+
+  /** 某首歌的百科平台：优先按歌解析（本地歌单多来源），回退列表级平台 */
+  const platformOf = (song: PlatformSong) =>
+    encyclopediaPlatformOf?.(song) ??
+    (encyclopediaPlatform
+      ? {
+          platform: encyclopediaPlatform,
+          name: platformName ?? '',
+          icon: platformIcon ?? '',
+          encyclopedia: encyclopediaSupported === true,
+        }
+      : undefined)
+
   const handleRemoveSelected = async () => {
     if (!onRemoveSelected || selectedIds.size === 0 || bulkRemoving) return
     setBulkTip(null)
@@ -192,9 +253,10 @@ export default function SongList({
   }
 
   return (
-    <ul
-      className={`divide-y divide-outline-variant overflow-y-auto ${maxHeightClass ?? ''} ${className}`}
-    >
+    <>
+      <ul
+        className={`divide-y divide-outline-variant overflow-y-auto ${maxHeightClass ?? ''} ${className}`}
+      >
       {showHeader && selectable && selectedIds.size > 0 && (
         <li className="sticky top-0 z-20 flex items-center gap-2 bg-primary/10 px-4 py-1.5 font-label-md text-label-md text-primary">
           <span className="font-medium">{t('song.selectedCount', { count: selectedIds.size })}</span>
@@ -311,15 +373,69 @@ export default function SongList({
               />
             )}
             <div className="min-w-0 flex-1">
-              <div className="truncate">{s.title}</div>
+              <div className="truncate">
+                <EncyclopediaLink
+                  label={s.title}
+                  onOpen={(e) => {
+                    const ep = platformOf(s)
+                    openEncyclopedia(e, {
+                      type: 'song',
+                      song: s,
+                      platform: ep?.platform,
+                      platformName: ep?.name,
+                      platformIcon: ep?.icon,
+                      // 详情卡内歌手/专辑是否可点，取决于来源平台是否支持百科
+                      encyclopedia: ep?.encyclopedia === true,
+                    })
+                  }}
+                />
+              </div>
               {subtitle != null && (
                 <div className="truncate font-label-sm text-label-sm">{subtitle}</div>
               )}
             </div>
-            <span className="w-1/4 min-w-0 truncate text-on-surface-variant">{s.artist}</span>
+            <span className="w-1/4 min-w-0 truncate text-on-surface-variant">
+              <ArtistLinks
+                artist={s.artist}
+                singerIds={s.identifiers?.singerIds}
+                clickable={platformOf(s)?.encyclopedia === true}
+                onOpen={(e, part, idx, singerId) =>
+                  openEncyclopedia(e, {
+                    type: 'encyclopedia',
+                    platform: platformOf(s)!.platform,
+                    platformName: platformOf(s)!.name,
+                    platformIcon: platformOf(s)!.icon,
+                    kind: 'singer',
+                    name: part,
+                    id: singerId,
+                    song: s,
+                    singerIndex: idx,
+                  })
+                }
+              />
+            </span>
             {hasAlbum && (
               <span className="w-1/4 min-w-0 truncate text-on-surface-variant">
-                {s.album ?? ''}
+                {s.album && platformOf(s)?.encyclopedia === true ? (
+                  <EncyclopediaLink
+                    label={s.album}
+                    onOpen={(e) =>
+                      openEncyclopedia(e, {
+                        type: 'encyclopedia',
+                        platform: platformOf(s)!.platform,
+                        platformName: platformOf(s)!.name,
+                        platformIcon: platformOf(s)!.icon,
+                        kind: 'album',
+                        name: s.album!,
+                        albumId: s.identifiers?.albumId,
+                        albumMid: s.identifiers?.albumMid,
+                        song: s,
+                      })
+                    }
+                  />
+                ) : (
+                  (s.album ?? '')
+                )}
               </span>
             )}
             {hasDuration && (
@@ -338,6 +454,19 @@ export default function SongList({
         )
       })}
       {renderFooter?.()}
-    </ul>
+      </ul>
+      {encyclopedia && (
+        <EncyclopediaPopover
+          target={encyclopedia.target}
+          x={encyclopedia.x}
+          y={encyclopedia.y}
+          onClose={() => setEncyclopedia(null)}
+          onConfirmEntity={onEncyclopediaConfirm}
+          onNavigate={(next) =>
+            setEncyclopedia((prev) => (prev ? { ...prev, target: next } : null))
+          }
+        />
+      )}
+    </>
   )
 }

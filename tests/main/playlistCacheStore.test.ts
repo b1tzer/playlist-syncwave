@@ -8,9 +8,11 @@ const song = (id: string, title: string, artist: string) => ({ id, title, artist
 
 describe('playlistCacheStore — 歌单缓存存储（缓存永不清空，失效仅标记过期）', () => {
   let store: ReturnType<typeof createPlaylistCacheStore>
+  let db: Database.Database
 
   beforeEach(() => {
-    store = createPlaylistCacheStore(new Database(':memory:'))
+    db = new Database(':memory:')
+    store = createPlaylistCacheStore(db)
   })
 
   it('歌单列表保存后可读回（保持顺序），记录更新时间', () => {
@@ -73,6 +75,42 @@ describe('playlistCacheStore — 歌单缓存存储（缓存永不清空，失�
     const cached = store.listSongs('netease', '1')
     expect(cached?.songs.map((s) => s.id)).toEqual(['b'])
     expect(cached?.updatedAt).toBe(4000)
+  })
+
+  it('次级标识持久化：songMid/albumMid/singerIds 写入后原样读回（百科歌词/发行时间定位依赖）', () => {
+    store.saveSongs(
+      'qqmusic',
+      '1',
+      [
+        {
+          id: '97773',
+          title: '晴天',
+          artist: '周杰伦',
+          identifiers: {
+            songMid: '0039MnYb0qxYhV',
+            albumMid: '000MkMni19ClKG',
+            singerIds: ['0025NhlN2yWrP4'],
+          },
+        },
+      ],
+      3000,
+    )
+    const cached = store.listSongs('qqmusic', '1')
+    expect(cached?.songs[0].identifiers).toEqual({
+      songMid: '0039MnYb0qxYhV',
+      albumMid: '000MkMni19ClKG',
+      singerIds: ['0025NhlN2yWrP4'],
+    })
+  })
+
+  it('无标识歌曲读回 identifiers 为 undefined；损坏 JSON 不阻塞读取', () => {
+    store.saveSongs('netease', '1', [song('a', 'A', 'X')], 3000)
+    expect(store.listSongs('netease', '1')?.songs[0].identifiers).toBeUndefined()
+    // 手动写入损坏 JSON：读取按缺失处理，不抛错
+    db.prepare(
+      'UPDATE playlist_song_cache SET identifiers = ? WHERE platform = ? AND song_id = ?',
+    ).run('{broken', 'netease', 'a')
+    expect(store.listSongs('netease', '1')?.songs[0].identifiers).toBeUndefined()
   })
 
   it('歌曲按歌单隔离', () => {

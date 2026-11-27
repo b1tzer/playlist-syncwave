@@ -105,7 +105,17 @@ function normalizePlaylistField(field: keyof PlatformPlaylist, value: unknown): 
 }
 
 function normalizeSongField(field: keyof PlatformSong, value: unknown): unknown {
-  return field === 'coverUrl' ? normalizeCoverUrl(value as string | undefined) : value
+  if (field === 'coverUrl') return normalizeCoverUrl(value as string | undefined)
+  if (field === 'identifiers') {
+    // 对象按 JSON 文本比较（避免引用比较导致每次重写缓存），键序稳定：写入方与读取方同源
+    if (value === undefined || value === null) return undefined
+    try {
+      return JSON.stringify(value)
+    } catch {
+      return String(value)
+    }
+  }
+  return value
 }
 
 const PLAYLIST_FIELDS: (keyof PlatformPlaylist)[] = [
@@ -122,6 +132,8 @@ const SONG_FIELDS: (keyof PlatformSong)[] = [
   'coverUrl',
   'durationMs',
   'genre',
+  // 次级标识参与 diff：旧缓存缺 songMid/albumMid 时判为变化整单重写（百科歌词/发行时间定位依赖）
+  'identifiers',
 ]
 
 /**

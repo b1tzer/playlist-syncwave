@@ -188,6 +188,8 @@ export default function PlaylistSection({
   const activeMeta = platforms.find((p) => p.id === active)
   /** 当前平台是否声明写能力（歌单管理操作仅写平台可用） */
   const canManage = activeMeta?.capabilities.write === true
+  /** 当前平台是否支持百科查询（歌手/专辑名可点性；AM 不支持则纯文本） */
+  const encyclopediaSupported = activeMeta?.capabilities.encyclopedia === true
   /** 操作级能力：不支持的操作置灰，悬浮显示原因（能力清单由平台适配器声明） */
   const canRename = operationAllowed(activeMeta, 'renamePlaylist')
   const canDelete = operationAllowed(activeMeta, 'deletePlaylist')
@@ -1316,6 +1318,10 @@ export default function PlaylistSection({
                       onAdd={(s) => void handleAddSong(s)}
                       onLoadMore={() => void loadMoreSearch()}
                       emptyText={t('playlist.noSearchResult')}
+                      encyclopediaPlatform={active === 'local' ? undefined : active}
+                      encyclopediaSupported={encyclopediaSupported}
+                      platformName={activeMeta?.name}
+                      platformIcon={activeMeta?.icon}
                     />
                   </div>
                 )}
@@ -1333,6 +1339,10 @@ export default function PlaylistSection({
                 removeDisabled={!canRemoveSong}
                 removeDisabledReason={removeSongReason ?? t('playlist.removeSong')}
                 className="min-h-0 flex-1"
+                encyclopediaPlatform={active === 'local' ? undefined : active}
+                encyclopediaSupported={encyclopediaSupported}
+                platformName={activeMeta?.name}
+                platformIcon={activeMeta?.icon}
                 renderFooter={
                   songs.length < songTotal
                     ? () => <LoadMoreSentinel onVisible={() => void loadMoreSongs()} />

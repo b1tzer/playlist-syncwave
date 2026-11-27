@@ -20,6 +20,12 @@ interface SongSearchResultsProps {
   emptyText: string
   /** 滚动容器最大高度类名，如 max-h-64 */
   maxHeightClass?: string
+  /** 百科查询平台（透传 SongList；未提供时歌手/专辑名不可点） */
+  encyclopediaPlatform?: string
+  /** 平台是否支持百科查询（透传 SongList；缺省视为不支持） */
+  encyclopediaSupported?: boolean
+  platformName?: string
+  platformIcon?: string
 }
 
 /**
@@ -37,6 +43,10 @@ export default function SongSearchResults({
   onLoadMore,
   emptyText,
   maxHeightClass = 'max-h-64',
+  encyclopediaPlatform,
+  encyclopediaSupported,
+  platformName,
+  platformIcon,
 }: SongSearchResultsProps) {
   const { t } = useI18n()
 
@@ -53,6 +63,10 @@ export default function SongSearchResults({
       songs={songs}
       maxHeightClass={maxHeightClass}
       className="rounded-md border border-outline-variant"
+      encyclopediaPlatform={encyclopediaPlatform}
+      encyclopediaSupported={encyclopediaSupported}
+      platformName={platformName}
+      platformIcon={platformIcon}
       renderFooter={
         hasMore
           ? () => (

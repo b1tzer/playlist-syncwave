@@ -20,6 +20,21 @@ interface SongRow {
   cover_url: string | null
   duration_ms: number | null
   genre: string | null
+  identifiers: string | null
+}
+
+/** 宽容解析 JSON 列（损坏/空值回退 undefined，不阻塞缓存读取） */
+function parseIdentifiers(raw: string | null): PlatformSong['identifiers'] {
+  if (!raw) return undefined
+  try {
+    const parsed = JSON.parse(raw) as unknown
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as PlatformSong['identifiers']
+    }
+  } catch {
+    // 损坏数据按缺失处理
+  }
+  return undefined
 }
 
 /**
@@ -56,6 +71,7 @@ CREATE TABLE IF NOT EXISTS playlist_song_cache (
   cover_url TEXT,
   duration_ms INTEGER,
   genre TEXT,
+  identifiers TEXT,
   PRIMARY KEY (platform, playlist_id, song_id)
 );
 CREATE TABLE IF NOT EXISTS playlist_song_meta (
@@ -182,6 +198,7 @@ CREATE TABLE IF NOT EXISTS playlist_song_meta (
           coverUrl: r.cover_url ?? undefined,
           durationMs: r.duration_ms ?? undefined,
           genre: r.genre ?? undefined,
+          identifiers: parseIdentifiers(r.identifiers),
         })),
         updatedAt,
       }
@@ -202,8 +219,8 @@ CREATE TABLE IF NOT EXISTS playlist_song_meta (
       )
       const insert = db.prepare(
         `INSERT INTO playlist_song_cache
-          (platform, playlist_id, song_id, title, artist, album, cover_url, duration_ms, genre)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          (platform, playlist_id, song_id, title, artist, album, cover_url, duration_ms, genre, identifiers)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       for (const s of songs) {
         insert.run(
@@ -216,6 +233,7 @@ CREATE TABLE IF NOT EXISTS playlist_song_meta (
           s.coverUrl ?? null,
           s.durationMs ?? null,
           s.genre ?? null,
+          s.identifiers ? JSON.stringify(s.identifiers) : null,
         )
       }
       db.prepare(

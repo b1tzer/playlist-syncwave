@@ -87,13 +87,14 @@ tests/             # Vitest 单元测试（core/main/platforms/renderer）
 - 歌单选择：`usePlaylistMultiSelect.ts` 统一实现拖拽框选（5px 阈值、锚点→当前行）、Cmd/Ctrl+单击切换，已选计数/清除用 `PlaylistSelectionStatus.tsx`；右键菜单由 `buildPlaylistMenu.tsx` 统一构造公共项（重命名/同步到/导出/删除），「新建歌单」仅列表空白区右键显示（行右键 stopPropagation 不显示），平台专属项（打开链接）走 `extraItems`，「同步到本地」经 `localSync` 参数排在所有平台目标之前（应用 logo，单选弹目标选择、多选逐个保存为新本地歌单），删除确认统一 `PlaylistDeleteDialog.tsx`，本地按平台同等对待；菜单渲染仍用 `ContextMenu.tsx`；新建歌单内联表单在 `PlaylistList.tsx` 统一渲染，本地不再有右上角独立新建按钮，平台新建通过 `platform:playlist-create` 调适配器（四平台均实现），本地走 `local-playlist:create`（portal 挂载、视口翻转定位、键盘导航、滚动/resize 关闭、role/aria）；多选支持「同步到」各平台与「同步到本地」，单选另含重命名/应用打开/浏览器打开（scheme 白名单 http/https/orpheus/qqmusic）；本地歌单列表右键复用同一菜单，含重命名、按目标歌单同步到（已登录且可写平台）、导出 m3u/csv、删除（两步确认），无歌曲时同步/导出项禁用，同步中或待确认时同步项禁用
 - 添加歌曲搜索：`page` 参数贯通适配器和 IPC，四平台分页映射（酷狗 page/pagesize、QQ page 单页 20、网易云 offset=(page-1)*limit、Apple catalog offset）；渲染层单页 20 条，`LoadMoreSentinel` 提前 200px 预取；按钮三态（添加 / 添加中 / 已添加禁用）；面板失焦收起；`SongSearchResults` 在平台歌单与本地歌单两处复用；歌单卡片歌曲数增删后就地 ±1
 - 异常与加载：所有异常统一走 `renderer/src/utils/notifyError.ts` 右上角 toast（平台中文文案作详情、代码性报错过滤为通用标题），无组件内联错误条；歌单列表/歌曲拉取 30s 超时；超 3s 文案切「网络较慢，正在获取中…」并保持转圈，loading 区域居中
-- 数据库：正式版 `userData/app.db`、开发版 `userData/dev/app.db`（由 `src/main/appPaths.ts` 在 ready 前隔离，`PLAYLIST_USER_DATA_DIR` 可覆盖；WAL），十一张表——`sync_tasks`（同步历史，逐首明细存 `detail`）、`app_settings`、`song_mappings`（人工确认优先）、`playlist_cache`、`playlist_song_cache`、`playlist_song_meta`、`playlist_cache_schema`（按 platform 隔离 scope）、`local_playlists`、`local_playlist_songs`、`local_playlist_sources`（本地歌单 ↔ 平台歌单多来源）、`schema_migrations`。本地歌单扩展：`local_playlists` 存 `source_platform` / `source_playlist_id` / 链接 / `owner_id` / `extra_ids` JSON（酷狗 gcid 等）/ `cover_url` / `cover_source`；`local_playlist_songs` 存 `source_platform` / `source_song_id` / `identifiers` JSON（平台次级唯一 id）/ `cover_url`，另有 `(source_platform, source_playlist_id)` 与 `(playlist_id, source_platform, source_song_id)` 索引；`local_playlist_sources` 主键 `(playlist_id, platform, source_playlist_id)`，存链接/ownerId/extra_ids/cover_url/last_synced_at 并有 `(platform, source_playlist_id)` 唯一索引（一个平台歌单只归属一个本地歌单，一对多而非多对多）
-- 迁移：`main/migrations.ts` 当前为发布前基线 `version=6` + v7（本地歌单来源/唯一标识列与索引）+ v8（封面列）+ v9（多来源关系表 + 存量回填）+ v10（平台歌单唯一归属约束与重复来源清理）+ v11（`sync_tasks.source_local_playlist_id`，本地歌单 → 平台同步的来源记录；列补丁均包在 `tableExists` 检查内，全新库跳过由 Store 最新 DDL 建表）；`runMigrations` 在 `getDatabase()` 中先于所有 Store 建表；后续 `MIGRATIONS` 只追加（version ≥ 12）、不修改、不删除
-- 缓存策略（`core/cachePolicy.ts` + `playlistCacheService` + `playlistCacheStore`）：列表 TTL 10min、歌曲 TTL 30min；手动强制刷新为令牌桶（容量 3、每 10s 补 1 令牌），令牌不足静默降级返回缓存，渲染层按钮同步冷却；单飞去重共享在途请求；重命名/删除/增删歌曲/同步建单后联动失效；`PLAYLIST_CACHE_SCHEMA_VERSION=6`（v5→v6 封面 URL 统一 https），字段映射/过滤规则/缓存内容协议变更需 bump。封面一律 https：平台适配器源头 `toHttps` 升级，渲染层 `utils/coverUrl.ts` 兜底（打包版 CSP `img-src` 只放行 https）
+- 数据库：正式版 `userData/app.db`、开发版 `userData/dev/app.db`（由 `src/main/appPaths.ts` 在 ready 前隔离，`PLAYLIST_USER_DATA_DIR` 可覆盖；WAL），十二张表——`sync_tasks`（同步历史，逐首明细存 `detail`）、`app_settings`、`song_mappings`（人工确认优先）、`playlist_cache`、`playlist_song_cache`、`playlist_song_meta`、`playlist_cache_schema`（按 platform 隔离 scope）、`local_playlists`、`local_playlist_songs`、`local_playlist_sources`（本地歌单 ↔ 平台歌单多来源）、`encyclopedia_entity_mappings`（百科纠偏「名字 → 实体 id」映射，`(platform, kind, name)` 唯一）、`schema_migrations`。本地歌单扩展：`local_playlists` 存 `source_platform` / `source_playlist_id` / 链接 / `owner_id` / `extra_ids` JSON（酷狗 gcid 等）/ `cover_url` / `cover_source`；`local_playlist_songs` 存 `source_platform` / `source_song_id` / `identifiers` JSON（平台次级唯一 id）/ `cover_url`，另有 `(source_platform, source_playlist_id)` 与 `(playlist_id, source_platform, source_song_id)` 索引；`local_playlist_sources` 主键 `(playlist_id, platform, source_playlist_id)`，存链接/ownerId/extra_ids/cover_url/last_synced_at 并有 `(platform, source_playlist_id)` 唯一索引（一个平台歌单只归属一个本地歌单，一对多而非多对多）
+- 迁移：`main/migrations.ts` 当前为发布前基线 `version=6` + v7（本地歌单来源/唯一标识列与索引）+ v8（封面列）+ v9（多来源关系表 + 存量回填）+ v10（平台歌单唯一归属约束与重复来源清理）+ v11（`sync_tasks.source_local_playlist_id`，本地歌单 → 平台同步的来源记录）+ v12（`encyclopedia_entity_mappings` 百科纠偏映射表）+ v13（`playlist_song_cache.identifiers` 列，百科歌词/发行时间定位；列补丁均包在 `tableExists` 检查内，全新库跳过由 Store 最新 DDL 建表）；`runMigrations` 在 `getDatabase()` 中先于所有 Store 建表；后续 `MIGRATIONS` 只追加（version ≥ 14）、不修改、不删除
+- 缓存策略（`core/cachePolicy.ts` + `playlistCacheService` + `playlistCacheStore`）：列表 TTL 10min、歌曲 TTL 30min；手动强制刷新为令牌桶（容量 3、每 10s 补 1 令牌），令牌不足静默降级返回缓存，渲染层按钮同步冷却；单飞去重共享在途请求；重命名/删除/增删歌曲/同步建单后联动失效；`PLAYLIST_CACHE_SCHEMA_VERSION=7`（v5→v6 封面 URL 统一 https；v6→v7 歌曲缓存补 `identifiers` 次级标识列，百科歌词/发行时间定位需要），字段映射/过滤规则/缓存内容协议变更需 bump；歌曲缓存 `identifiers` 参与 diff（JSON 文本比较，旧缓存缺标识时判变化整单重写）。封面一律 https：平台适配器源头 `toHttps` 升级，渲染层 `utils/coverUrl.ts` 兜底（打包版 CSP `img-src` 只放行 https）
 - 登录态内存缓存（`main/loginStatusCache.ts`）：`platform:login-status` 命中直接返回，首次查询写入；扫码登录成功/登出/保活失效时清除，网页登录先写 `pending` 临时态、后台补全后覆盖；渲染层初始化逐平台独立点亮，失败平台 3s 重试
 - 数据层模式：`createXxxStore(db)` 依赖注入 + `appDatabase.getDatabase()` 统一入口 + `xxxService.ts` 供 IPC 调用
 - 平台歌单导出到本地：右键「保存到本地歌单」弹出选择层，可新建或合并到已有本地歌单；IPC `local-playlist:import-platform` 经 `localPlaylistImportService` 复用适配器 `getPlaylistSongs` 全量拉取（30s 超时、上限 10000 首），`syncPlatformPlaylistToLocal` 按「平台 + 歌单 id」查来源关系：命中则按来源歌曲 id 增量更新/追加（不删除上游已移除的歌），未命中才建单；把 `PlatformSong.id` 与 `PlatformSong.identifiers` 一并落库；写入后广播 `local-playlist:changed`，本地歌单面板自动刷新。字段白名单校验在 `localPlaylistService`，未知 key 丢弃。关系为**本地 1 → 平台多**：同一平台歌单只归属一个本地歌单，重复登记改派；v10 唯一索引保证约束。反向（本地歌单 → 平台）同步建单成功后经 `registerLocalPlaylistSyncTarget` → `localPlaylists.linkSyncTarget` 登记关系（只写关系表，不改本地歌单的来源/封面列）并广播 `local-playlist:changed` 点亮平台 logo；来源本地歌单 id 随 `SyncTaskRecord.sourceLocalPlaylistId`（`sync_tasks` 列，迁移 v11）持久化，重启续写完成时同样登记
 - 本地歌单封面：`cover_url` / `cover_source` 只接受 https（service 层校验），导入复制平台歌单/歌曲封面，手工歌单首次添加带封面歌曲后派生；存量导入歌单在读取时从 `playlistCache` 惰性回填：歌单封面在 `listLocalPlaylists` 按来源歌单 id，歌曲封面在 `getLocalPlaylistSongs` 按缓存顺序/来源歌曲 id，只填空行，不发网络请求。渲染统一 `CoverImage.tsx`（https 兜底、加载失败回退图标、URL 变化重置），平台歌单/歌曲/候选卡片/本地歌单共用
+- 实体面板（原百科面板）：`SongList` 中歌名/歌手名/专辑名可点（hover 品牌绿下划线），点击弹出 `EncyclopediaPopover`（锚点定位 + 点外部/Esc 关闭，沿用 ContextMenu 模式）。歌名点击为「歌曲详情卡」：封面/时长/歌手/专辑/来源平台本地即时渲染，经 `song-detail:lookup` → 主进程 `songDetailService`（LRU + 单飞 + 令牌桶，失败静默返回 null）异步补充歌词（LRC 剥离时间戳、预览 6 行展开收起）、发行时间与「在平台打开」跳转；**歌手点击显示歌手歌曲清单、专辑点击显示发行时间与专辑曲目清单（已按需求移除百科正文与 Wikipedia 兜底）**。歌手/专辑点击走 `encyclopedia:lookup` → 主进程 `encyclopediaService` 编排「纠偏映射 → 搜索 → 消歧打分 → 详情」，支持网易云 + QQ + 酷狗（adapter 可选原语 `encyclopedia.search/detail`、`songDetail.detail`；QQ 歌手歌曲走 `/singer/songs?mid=`、专辑曲目走「专辑名搜索 + 精确过滤 + mid 去重」、歌词走 `/getLyric?songmid=`；网易云歌手歌曲走 `artists` 模块 `body.hotSongs`、专辑曲目走 `album` 模块 `body.songs`+`publishTime`、歌词走 `body.lrc.lyric`；酷狗 android 加密 + 设备指纹即可读（`KUGOU_API_MID` 是设备指纹非登录态，登录凭证经 `getCredential` 注入、有登录态传登录 cookie）：歌手歌曲走 `artist_audios`（`data` 直接数组、条目 `audio_name`/`author_name`/`timelength`）、专辑走 `album_detail`（`data[0].publish_date`）+`album_songs`（`data.songs`）、搜索走 `search type=author/album`（歌手条目大写驼峰 `AuthorId`/`AuthorName`/`Avatar`、专辑条目全小写 `albumid`/`albumname`/`singer`）——✅ 匿名设备指纹实测；歌词接口需歌词 id+accesskey 无来源故仅提供平台跳转；发行时间归一化在 `platforms/releaseDate.ts`）。同名消歧：`rankCandidates` 打分（精确全名 100 > 前缀 60 > 子串 40，opencc 简繁归一、别名双向、流派/热度弱信号），唯一精确命中直达、多候选面板内点选；用户点选写入 `encyclopedia_entity_mappings`（迁移 v12，`(platform, kind, name)` 唯一）并回写本地歌曲 `identifiers.singerIds`（`local-playlist:update-song-identifiers`，白名单校验）下次直达；「不对？换一个」经 `forceSearch` 重查候选。服务内 LRU（forceSearch 独立键）+ 单飞 + 按平台令牌桶（容量 10 / 500ms），全程失败静默降级空态。平台歌曲适配器补 `identifiers.singerIds`（网易 `ar[].id`、QQ `singer[].mid`）供 id 直达；本地歌单多来源歌曲按歌曲来源平台解析面板目标（`encyclopediaPlatformOf`）
 - 唯一性标识调研结论见 `docs/platform-api-fields.md` 第 7 节：四平台歌单主键与次级 id 逐项列出来源，ISRC 国内平台均不提供故不预留；跨平台匹配仍以「标题 + 歌手归一化」为代理金标准，次级 id 用于同平台回写定位、版本/翻唱区分与候选排序，不把不同平台主 id 当作全局 id；凭证与 QQ 会话文件保持文件存储，不进 SQLite
 
 ### 3.5 桌面体验与设置
@@ -119,7 +120,7 @@ tests/             # Vitest 单元测试（core/main/platforms/renderer）
 |---|---|
 | `npm run typecheck` | 通过（无错误） |
 | `npm run lint` | 通过（无错误） |
-| `npm run test` | 39 个测试文件、463 项测试全部通过 |
+| `npm run test` | 46 个测试文件、552 项测试全部通过（另 9 项真实网络验证，`LIVE_VERIFY=1 npx vitest run tests/live` 时运行） |
 | `npm run build` | 通过（主进程 / preload / renderer 均产出） |
 
 **代码事实核对**（文档与代码同步基准）：
@@ -128,13 +129,13 @@ tests/             # Vitest 单元测试（core/main/platforms/renderer）
 |---|---|---|
 | 应用版本 / 名称 | 0.2.0 / playlist-sync（产品名 SyncWave） | `package.json:2-3` |
 | 平台 | 4：netease / qqmusic / kugou / applemusic | `src/platforms/*/index.ts` |
-| SQLite 表 | 10（含 `schema_migrations`） | `src/main/*Store.ts`、`migrations.ts` |
-| 迁移 | 基线 `version=6` + v7（唯一性字段）+ v8（封面列）+ v9（多来源表）+ v10（唯一归属约束）+ v11（sync_tasks 来源本地歌单 id），启动先于 Store 建表 | `src/main/migrations.ts`、`appDatabase.ts:73-80` |
-| 缓存 schema | `PLAYLIST_CACHE_SCHEMA_VERSION=6` | `src/core/cachePolicy.ts:12` |
+| SQLite 表 | 12（含 `schema_migrations`） | `src/main/*Store.ts`、`migrations.ts` |
+| 迁移 | 基线 `version=6` + v7（唯一性字段）+ v8（封面列）+ v9（多来源表）+ v10（唯一归属约束）+ v11（sync_tasks 来源本地歌单 id）+ v12（百科纠偏映射表）+ v13（歌曲缓存 identifiers 列），启动先于 Store 建表 | `src/main/migrations.ts`、`appDatabase.ts:73-80` |
+| 缓存 schema | `PLAYLIST_CACHE_SCHEMA_VERSION=7` | `src/core/cachePolicy.ts:12` |
 | 缓存常量 | 列表 TTL 10min / 歌曲 TTL 30min / 令牌桶 3 个、10s 补 1 | `src/core/cachePolicy.ts:18-37` |
 | 同步调优 | 默认 0.6 / 2 / 500ms；预设 0.45 / 0.6 / 0.75 | `src/core/sync/tuning.ts:17-40` |
 | 更新源 | GitHub Releases（唯一源） | `electron-builder.yml:26-32`、`src/main/updater.ts:14-15` |
-| 测试数 | 463 | `npm run test` 输出 |
+| 测试数 | 552（+9 项 live 真实网络验证，需 `LIVE_VERIFY=1`） | `npm run test` 输出 |
 
 **构建**：本地未执行 `electron-builder` 打包；tag 推送后由发布工作流在 CI 完成三平台未签名构建、更新元数据生成与 draft release（见第 8 节，尚未执行）。
 
@@ -203,7 +204,7 @@ tests/             # Vitest 单元测试（core/main/platforms/renderer）
 | ADR-003 | 凭证用 Electron `safeStorage` 加密落盘 | 已采用（keytar 未引入） |
 | ADR-004 | 先做文本解析，再接平台同步 | 已完成 |
 | ADR-005 | 字段顺序不使用本地词典，由平台搜索验证裁决 | 已采用；强结构信号 + 投票仅决定预览默认顺序 |
-| ADR-006 | 发布前迁移压缩为单一基线 `version=6` | 已采用；正式发布后仅追加（现有 v7~v11，后续 ≥12），每条迁移须幂等且对全新库安全 |
+| ADR-006 | 发布前迁移压缩为单一基线 `version=6` | 已采用；正式发布后仅追加（现有 v7~v13，后续 ≥14），每条迁移须幂等且对全新库安全 |
 | ADR-007 | 缓存手动刷新限流用令牌桶替代固定间隔 | 已采用（3 个令牌 / 10s 补充） |
 | ADR-008 | 自动更新只用 GitHub Releases，不设备用源 | 已采用（Gitee 单文件 100MB 配额无法托管安装包） |
 | ADR-009 | 发布由 `v*` tag 触发，先产出 draft release 人工复核再转正式 | 已采用；回滚必须发更高版本 |

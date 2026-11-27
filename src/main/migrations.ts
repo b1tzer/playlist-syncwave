@@ -176,6 +176,35 @@ CREATE TABLE IF NOT EXISTS local_playlist_sources (
       }
     },
   },
+  {
+    version: 12,
+    name: '百科纠偏映射表：名字 → 实体 id 的用户确认映射',
+    up: (db) => {
+      db.exec(`
+CREATE TABLE IF NOT EXISTS encyclopedia_entity_mappings (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  platform TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  name TEXT NOT NULL,
+  entity_id TEXT NOT NULL,
+  entity_name TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  UNIQUE(platform, kind, name)
+);
+CREATE INDEX IF NOT EXISTS idx_encyclopedia_mappings_lookup
+  ON encyclopedia_entity_mappings (platform, kind, name);
+`)
+    },
+  },
+  {
+    version: 13,
+    name: '歌单歌曲缓存补次级标识列（百科歌词/发行时间定位需 songMid/albumMid）',
+    up: (db) => {
+      if (tableExists(db, 'playlist_song_cache')) {
+        addColumnIfMissing(db, 'playlist_song_cache', 'identifiers', 'identifiers TEXT')
+      }
+    },
+  },
 ]
 
 /** 应用所有未执行的迁移（按版本序，每个迁移独立事务并记录版本） */

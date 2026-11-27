@@ -60,6 +60,7 @@ import {
   getLocalPlaylistSongs,
   addLocalPlaylistSongs,
   removeLocalPlaylistSongs,
+  updateLocalSongIdentifiers,
 } from './localPlaylistService'
 import { importPlatformPlaylistToLocal } from './localPlaylistImportService'
 import { loadWindowState, trackWindowState } from './windowState'
@@ -68,8 +69,15 @@ import { buildApplicationMenu, installWindowShortcuts } from './menu'
 import { setupAutoUpdater, checkForUpdates, openInstaller, setAutoUpdateEnabled } from './updater'
 import { notifySyncResult, notifySyncStopped } from './notifications'
 import { createPlaylistCacheService } from './playlistCacheService'
+import { createEncyclopediaService } from './encyclopediaService'
+import { createSongDetailService } from './songDetailService'
 import { getDatabase, takePendingResumeTasks } from './appDatabase'
 import type { SyncTaskRecord, SyncChoice } from '@core/models/sync'
+import type {
+  EncyclopediaConfirmRequest,
+  EncyclopediaQuery,
+} from '@core/models/encyclopedia'
+import type { SongDetailRequest } from '@core/models/songDetail'
 
 // 部分网络环境 IPv6 无路由（连接报 EHOSTUNREACH，IPv6 立即失败不会触发
 // 双栈回退），强制 DNS 解析优先返回 IPv4，避免平台接口请求优先尝试 IPv6 失败。
@@ -109,6 +117,17 @@ if (!gotSingleInstanceLock) {
 // 歌单缓存服务：缓存兜底 + 后台重新验证（逐行 diff 更新）+ 单飞 + 手动刷新限流（内存态，随进程生命周期）
 const playlistCache = createPlaylistCacheService(getDatabase().playlistCache)
 const playlistCacheStore = getDatabase().playlistCache
+
+// 实体面板服务：映射缓存 → 搜索 → 消歧打分 → 详情（失败静默降级，不打扰用户）；
+// 酷狗等需要登录态的平台经 getCredential 注入凭证，未登录返回 login-required
+const encyclopediaService = createEncyclopediaService({
+  store: getDatabase().encyclopedia,
+  resolveAdapter,
+  getCredential: (platform) => getPlatform(platform).getCredential(),
+})
+
+// 歌曲详情补充：歌词/发行时间/平台跳转（失败静默返回 null，详情卡保持本地信息）
+const songDetailService = createSongDetailService({ resolveAdapter })
 
 /** 广播歌单缓存后台刷新结果到所有窗口（渲染层按 platform/playlistId 过滤） */
 function broadcastPlaylistRefresh(channel: string, payload: unknown): void {
@@ -1111,6 +1130,19 @@ ipcMain.handle('local-playlist:remove-songs', (_event, id: unknown, positions: u
   ),
 )
 
+ipcMain.handle(
+  'local-playlist:update-song-identifiers',
+  (_event, id: unknown, songId: unknown, identifiers: unknown) =>
+    ipcLog.time(
+      'local-playlist.update-song-identifiers',
+      async () => {
+        updateLocalSongIdentifiers(id, songId, identifiers)
+      },
+      { id: String(id), songId: String(songId) },
+      'debug',
+    ),
+)
+
 // --- 应用设置（SQLite 持久化）---
 
 ipcMain.handle('settings:get-all', () =>
@@ -1199,6 +1231,90 @@ ipcMain.handle('mappings:clear', (_event, platform: string) =>
 
 ipcMain.handle('mappings:stats', () =>
   ipcLog.time('mappings.stats', async () => mappingStats(), undefined, 'debug'),
+)
+
+// --- 百科查询（点击歌手/专辑名弹出百科面板）---
+
+/** IPC 边界可选字段校验：undefined 或字符串（渲染层输入一律视为不可信） */
+const isOptionalString = (v: unknown): boolean => v === undefined || typeof v === 'string'
+
+ipcMain.handle('encyclopedia:lookup', (_event, query: EncyclopediaQuery) =>
+  ipcLog.time(
+    'encyclopedia.lookup',
+    async () => {
+      if (
+        typeof query !== 'object' ||
+        query === null ||
+        typeof query.platform !== 'string' ||
+        (query.kind !== 'singer' && query.kind !== 'album') ||
+        typeof query.name !== 'string' ||
+        !query.name.trim() ||
+        !isOptionalString(query.id) ||
+        !isOptionalString(query.albumId) ||
+        !isOptionalString(query.albumMid)
+      ) {
+        throw new Error('无效的百科查询参数')
+      }
+      return encyclopediaService.lookup(query)
+    },
+    { platform: query?.platform, kind: query?.kind, name: query?.name },
+    'debug',
+  ),
+)
+
+ipcMain.handle('encyclopedia:confirm', (_event, req: EncyclopediaConfirmRequest) =>
+  ipcLog.time(
+    'encyclopedia.confirm',
+    async () => {
+      if (
+        typeof req !== 'object' ||
+        req === null ||
+        typeof req.platform !== 'string' ||
+        (req.kind !== 'singer' && req.kind !== 'album') ||
+        typeof req.name !== 'string' ||
+        !req.name.trim() ||
+        typeof req.entityId !== 'string' ||
+        !req.entityId ||
+        typeof req.entityName !== 'string' ||
+        !req.entityName
+      ) {
+        throw new Error('无效的百科纠偏参数')
+      }
+      encyclopediaService.confirm(req)
+    },
+    { platform: req?.platform, kind: req?.kind, name: req?.name },
+    'debug',
+  ),
+)
+
+// --- 歌曲详情补充（点击歌名详情卡的歌词/发行时间/平台跳转）---
+
+ipcMain.handle('song-detail:lookup', (_event, request: SongDetailRequest) =>
+  ipcLog.time(
+    'song-detail.lookup',
+    async () => {
+      if (
+        typeof request !== 'object' ||
+        request === null ||
+        typeof request.platform !== 'string' ||
+        typeof request.songId !== 'string' ||
+        !request.songId ||
+        !isOptionalString(request.title) ||
+        !isOptionalString(request.artist) ||
+        (request.identifiers !== undefined &&
+          (typeof request.identifiers !== 'object' ||
+            request.identifiers === null ||
+            !isOptionalString(request.identifiers.songMid) ||
+            !isOptionalString(request.identifiers.albumMid) ||
+            !isOptionalString(request.identifiers.albumId)))
+      ) {
+        throw new Error('无效的歌曲详情参数')
+      }
+      return songDetailService.lookup(request)
+    },
+    { platform: request?.platform, songId: request?.songId },
+    'debug',
+  ),
 )
 
 /**

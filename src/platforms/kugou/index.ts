@@ -4,11 +4,19 @@ import { createRequire } from 'node:module'
 import { join } from 'node:path'
 import type { PlatformPlaylist, PlatformSong } from '@core/models/platform'
 import { SearchError } from '@core/models/sync'
+import type {
+  EncyclopediaCandidate,
+  EncyclopediaContent,
+  EncyclopediaKind,
+  EncyclopediaTrack,
+} from '@core/models/encyclopedia'
 import type { PlatformModule } from '../meta'
 import {
   BasePlatformAdapter,
   type KeepAliveResult,
   type LoginStatusRaw,
+  type PlatformEncyclopedia,
+  type PlatformSongDetail,
   type QrCheckRaw,
 } from '../base'
 import {
@@ -19,6 +27,8 @@ import {
   pickString,
   type JsonObject,
 } from '../json'
+import { normalizeReleaseDate } from '../releaseDate'
+import { attachSongUrl, songWebUrl } from '../songUrl'
 
 /** 酷狗 API 库模式的扁平函数签名（kugoumusicapi main.js 导出） */
 export type KugouApiFn = (params?: Record<string, unknown>) => Promise<KugouResponse>
@@ -47,6 +57,20 @@ export interface KugouDevice {
 
 function toIdString(value: number | undefined): string | undefined {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? String(value) : undefined
+}
+
+/** 歌手/实体 id 数组 → 字符串数组（数字/字符串/带 id 字段的对象均兼容），去重去空 */
+function toIdList(value: unknown): string[] | undefined {
+  const ids = asArray(value)
+    .map((x) => {
+      if (typeof x === 'number') return String(x)
+      if (typeof x === 'string') return x
+      const o = asObject(x)
+      return pickString(o.id, o.singerid, o.singer_id, o.singerId)
+    })
+    .filter((x): x is string => Boolean(x))
+  const unique = [...new Set(ids)]
+  return unique.length > 0 ? unique : undefined
 }
 
 /** 加歌/删歌需要的歌曲元数据缓存（搜索与歌单歌曲拉取时顺带填充） */
@@ -140,7 +164,7 @@ function randomDev(len: number): string {
 }
 
 /** 加载或生成设备指纹，持久化到 userData，保证跨重启 token 仍与设备匹配 */
-function loadKugouDevice(userDataDir: string): KugouDevice {
+export function loadKugouDevice(userDataDir: string): KugouDevice {
   const file = join(userDataDir, 'kugou-device.json')
   try {
     if (existsSync(file)) {
@@ -676,11 +700,183 @@ export class KugouAdapter extends BasePlatformAdapter {
           ? normalizeKgTimelen(item.timelen)
           : saneDuration(typeof item.duration === 'number' ? item.duration * 1000 : Number.NaN),
       identifiers: compactIdentifiers({
+        // 云歌单条目歌手 id：singerinfo 元素带 id 字段时取之；SingerId 数组兜底（字段名多键容错）
+        singerIds: toIdList(item.SingerId) ?? toIdList(item.singerinfo ?? item.singer_info),
         fileId: this.songMeta.get(hash)?.fileId,
         mixSongId: toIdString(this.songMeta.get(hash)?.mixSongId),
         albumId: toIdString(this.songMeta.get(hash)?.albumId),
       }),
     }
+  }
+
+  // ==============================
+  // 实体面板原语（歌手歌曲/专辑曲目）：android 加密 + 设备指纹即可读
+  // （KUGOU_API_MID 是设备指纹而非登录态，buildCookie 未登录也注入；
+  //  读接口 cookie 参数可选，匿名可用）。字段契约 📐 源码 + 多键容错。
+  // ==============================
+
+  readonly encyclopedia: PlatformEncyclopedia = {
+    search: async (kind: EncyclopediaKind, name: string, credential?: string) => {
+      return this.searchEncyclopedia(kind, name, credential ?? '')
+    },
+    detail: async (
+      kind: EncyclopediaKind,
+      id: string,
+      name?: string,
+      credential?: string,
+    ) => {
+      return this.fetchPanelContent(kind, id, name, credential ?? '')
+    },
+  }
+
+  private async searchEncyclopedia(
+    kind: EncyclopediaKind,
+    name: string,
+    credential: string,
+  ): Promise<EncyclopediaCandidate[]> {
+    const res = await this.call(this.api.search!, {
+      keyword: name,
+      type: kind === 'singer' ? 'author' : 'album',
+      page: 1,
+      pagesize: 20,
+      cookie: this.buildCookie(credential),
+    })
+    const data = asObject(res.data ?? res)
+    const raw = asArray(data.lists ?? data.info ?? data.list)
+    const list = raw.length > 0 && Array.isArray(raw[0]) ? asArray(raw[0]) : raw
+    return list
+      .map((rawItem) => {
+        const item = asObject(rawItem)
+        // 实测：歌手条目为大写驼峰键 AuthorId/AuthorName/Avatar；专辑条目为全小写 albumid/albumname/singer/img
+        if (kind === 'singer') {
+          const fans = typeof item.FansNum === 'number' ? item.FansNum : Number(item.FansNum ?? 0)
+          return {
+            id: pickString(item.AuthorId, item.author_id, item.authorid, item.singer_id, item.singerid, item.id) ?? '',
+            name: pickString(item.AuthorName, item.author_name, item.authorname, item.singer_name, item.singername, item.name) ?? '',
+            picUrl: normalizeCover(pickString(item.Avatar, item.sizable_avatar, item.avatar, item.pic, item.img, item.image)),
+            ...(Number.isFinite(fans) && fans > 0 ? { followerCount: fans } : {}),
+          }
+        }
+        return {
+          id: pickString(item.albumid, item.album_id, item.id) ?? '',
+          name: pickString(item.albumname, item.album_name, item.name) ?? '',
+          picUrl: normalizeCover(pickString(item.img, item.sizable_cover, item.cover, item.pic, item.image)),
+          // 专辑候选附歌手名，帮助同名专辑消歧
+          singer: pickString(item.singer, item.singername, item.author_name, item.authorname),
+        }
+      })
+      // 无 id 的残缺条目无法点选确认，直接过滤
+      .filter((c) => c.id !== '')
+  }
+
+  private async fetchPanelContent(
+    kind: EncyclopediaKind,
+    id: string,
+    name: string | undefined,
+    credential: string,
+  ): Promise<EncyclopediaContent> {
+    if (kind === 'singer') return this.fetchSingerSongs(id, credential)
+    return this.fetchAlbumTracks(id, name, credential)
+  }
+
+  /** 歌手的歌：/kmr/v1/audio_group/author（sort=hot 最热）；实测：顶层 { total, error_code, data: [...] }，data 直接是歌曲数组 */
+  private async fetchSingerSongs(id: string, credential: string): Promise<EncyclopediaContent> {
+    const res = await this.call(this.api.artist_audios!, {
+      id,
+      page: 1,
+      pagesize: 30,
+      sort: 'hot',
+      cookie: this.buildCookie(credential),
+    })
+    const raw = asArray(res.data)
+    const songs = raw.map((rawItem) => this.withSongUrl(this.mapPanelSong(asObject(rawItem))))
+    return {
+      kind: 'singer',
+      id,
+      name: songs[0]?.artist ?? '',
+      songs,
+      source: 'kugou',
+      sourceUrl: `https://www.kugou.com/singer/${encodeURIComponent(id)}.html`,
+    }
+  }
+
+  /** 专辑曲目：专辑详情（publish_date）+ 专辑音乐列表并行 */
+  private async fetchAlbumTracks(
+    id: string,
+    name: string | undefined,
+    credential: string,
+  ): Promise<EncyclopediaContent> {
+    const [detailRes, songsRes] = await Promise.all([
+      this.call(this.api.album_detail!, { id, cookie: this.buildCookie(credential) }).catch(
+        () => null,
+      ),
+      this.call(this.api.album_songs!, {
+        id,
+        page: 1,
+        pagesize: 50,
+        cookie: this.buildCookie(credential),
+      }).catch(() => null),
+    ])
+    const detailData = asObject(asObject(detailRes).data ?? detailRes)
+    const album = asObject(
+      Array.isArray(detailData) ? asArray(detailData)[0] : detailData,
+    )
+    const songsData = asObject(asObject(songsRes).data ?? songsRes)
+    const raw = asArray(songsData.list ?? songsData.lists ?? songsData.songs ?? songsData.audios)
+    const songs = raw.map((rawItem) => this.withSongUrl(this.mapPanelSong(asObject(rawItem))))
+    return {
+      kind: 'album',
+      id,
+      name:
+        pickString(album.album_name, album.albumname, album.name) ?? name ?? '',
+      releaseDate: normalizeReleaseDate(pickString(album.publish_date, album.publishDate)),
+      songs,
+      imageUrl: normalizeCover(pickString(album.sizable_cover, album.cover, album.pic, album.img)),
+      source: 'kugou',
+      sourceUrl: `https://www.kugou.com/album/${encodeURIComponent(id)}.html`,
+    }
+  }
+
+  /** 面板曲目附歌曲页跳转：酷狗歌曲页用 hash（与 songDetail 一致），缺失 id 时不提供 */
+  private withSongUrl(song: PlatformSong): EncyclopediaTrack {
+    return attachSongUrl(song, (s) => (s.id ? songWebUrl.kugou(s.id) : undefined))
+  }
+
+  /**
+   * 面板歌曲条目（实测 artist_audios/album_songs 同形）：
+   * hash 为 32 位大写 → 统一小写作 id（与搜索/歌单歌曲一致）；
+   * 歌手字段是 author_name、时长为 timelength（毫秒）。
+   */
+  private mapPanelSong(item: JsonObject): PlatformSong {
+    const hash = (pickString(item.hash, item.hash_32, item.filehash, item.FileHash) ?? '').toLowerCase()
+    const title = stripHighlightTags(
+      pickString(item.audio_name, item.audioName, item.song_name, item.songname, item.name) ??
+        '未知歌曲',
+    )
+    return {
+      id: hash || pickString(item.audio_id, item.audioId, item.album_audio_id, item.rid, item.id) || '',
+      title,
+      artist: pickString(item.author_name, item.authorname, item.singer_name, item.singername, item.singer) ?? '',
+      album: pickString(item.album_name, item.albumname),
+      durationMs: saneDuration(
+        typeof item.timelength === 'number' && item.timelength > 0
+          ? item.timelength
+          : typeof item.playtime === 'number' && item.playtime > 0
+            ? (item.playtime > 10_000 ? item.playtime : item.playtime * 1000)
+            : Number.NaN,
+      ),
+    }
+  }
+
+  // ==============================
+  // 歌曲详情补充：酷狗无公开歌词 id 来源（lyric 接口需歌词 id + accesskey），
+  // 只提供平台跳转；歌词/发行时间保持静默缺失。
+  // ==============================
+
+  readonly songDetail: PlatformSongDetail = {
+    detail: async (songId) => ({
+      webUrl: songWebUrl.kugou(songId),
+    }),
   }
 
   // --- 搜索 ---
@@ -742,6 +938,8 @@ export class KugouAdapter extends BasePlatformAdapter {
         typeof item.Duration === 'number' ? item.Duration * 1000 : Number.NaN,
       ),
       identifiers: compactIdentifiers({
+        // 实测：v2/search/song 条目带 SingerId 数字数组（[3520]）→ 点歌手名按 id 直达，无同名歧义
+        singerIds: toIdList(item.SingerId),
         mixSongId: toIdString(this.songMeta.get(hash)?.mixSongId),
         albumId: toIdString(this.songMeta.get(hash)?.albumId),
       }),
@@ -865,7 +1063,7 @@ const kugouModule: PlatformModule = {
     id: 'kugou',
     name: '酷狗音乐',
     icon: 'music_note',
-    capabilities: { read: true, write: true },
+    capabilities: { read: true, write: true, encyclopedia: true },
   },
   createAdapter: (ctx) => {
     // 重依赖懒加载：测试环境 import 本模块不会触发 require
