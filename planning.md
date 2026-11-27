@@ -115,13 +115,13 @@ tests/             # Vitest 单元测试（core/main/platforms/renderer）
 
 ---
 
-## 4. 发布前自动化检查（已执行，2026-11-26，v0.2.0 发布前）
+## 4. 发布前自动化检查（已执行，2026-11-27）
 
 | 检查项 | 结果 |
 |---|---|
 | `npm run typecheck` | 通过（无错误） |
 | `npm run lint` | 通过（无错误） |
-| `npm run test` | 46 个测试文件、552 项测试全部通过（另 9 项真实网络验证，`LIVE_VERIFY=1 npx vitest run tests/live` 时运行） |
+| `npm run test` | 49 个测试文件、583 项测试全部通过（另 9 项真实网络验证，`LIVE_VERIFY=1 npx vitest run tests/live` 时运行） |
 | `npm run build` | 通过（主进程 / preload / renderer 均产出） |
 
 **代码事实核对**（文档与代码同步基准）：
@@ -136,7 +136,7 @@ tests/             # Vitest 单元测试（core/main/platforms/renderer）
 | 缓存常量 | 列表 TTL 10min / 歌曲 TTL 30min / 令牌桶 3 个、10s 补 1 | `src/core/cachePolicy.ts:18-37` |
 | 同步调优 | 默认 0.6 / 2 / 500ms；预设 0.45 / 0.6 / 0.75 | `src/core/sync/tuning.ts:17-40` |
 | 更新源 | GitHub Releases（唯一源） | `electron-builder.yml:26-32`、`src/main/updater.ts:14-15` |
-| 测试数 | 556（+9 项 live 真实网络验证，需 `LIVE_VERIFY=1`） | `npm run test` 输出 |
+| 测试数 | 583（+9 项 live 真实网络验证，需 `LIVE_VERIFY=1`） | `npm run test` 输出 |
 
 **构建**：本地未执行 `electron-builder` 打包；tag 推送后由发布工作流在 CI 完成三平台未签名构建、更新元数据生成与 draft release（见第 8 节，尚未执行）。
 
