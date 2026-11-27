@@ -25,7 +25,6 @@ interface SongSearchResultsProps {
   /** 平台是否支持百科查询（透传 SongList；缺省视为不支持） */
   encyclopediaSupported?: boolean
   platformName?: string
-  platformIcon?: string
 }
 
 /**
@@ -46,7 +45,6 @@ export default function SongSearchResults({
   encyclopediaPlatform,
   encyclopediaSupported,
   platformName,
-  platformIcon,
 }: SongSearchResultsProps) {
   const { t } = useI18n()
 
@@ -66,7 +64,6 @@ export default function SongSearchResults({
       encyclopediaPlatform={encyclopediaPlatform}
       encyclopediaSupported={encyclopediaSupported}
       platformName={platformName}
-      platformIcon={platformIcon}
       renderFooter={
         hasMore
           ? () => (

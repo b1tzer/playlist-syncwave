@@ -1,6 +1,7 @@
 import {
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type ReactNode,
@@ -31,7 +32,6 @@ export type EncyclopediaTarget =
       /** 来源平台 id：提供时详情卡异步补充歌词/发行时间 */
       platform?: string
       platformName?: string
-      platformIcon?: string
       /** 来源平台是否支持百科：决定详情卡内歌手/专辑是否可点 */
       encyclopedia?: boolean
     }
@@ -39,7 +39,6 @@ export type EncyclopediaTarget =
       type: 'encyclopedia'
       platform: string
       platformName: string
-      platformIcon: string
       kind: EncyclopediaKind
       name: string
       id?: string
@@ -620,7 +619,6 @@ function SongDetailCard({
       type: 'encyclopedia',
       platform: target.platform,
       platformName: target.platformName ?? '',
-      platformIcon: target.platformIcon ?? '',
       kind,
       name,
       id: opts.id,
@@ -631,7 +629,11 @@ function SongDetailCard({
     })
   }
 
-  const lines = detail?.lyrics ? lyricsLines(detail.lyrics) : []
+  // 歌词剥离时间戳按 detail 缓存：展开/收起等重渲染不重复处理全文
+  const lines = useMemo(
+    () => (detail?.lyrics ? lyricsLines(detail.lyrics) : []),
+    [detail],
+  )
   const overflow = lines.length > LYRICS_PREVIEW_LINES
   const visible = expanded ? lines : lines.slice(0, LYRICS_PREVIEW_LINES)
 

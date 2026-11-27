@@ -135,7 +135,7 @@ tests/             # Vitest 单元测试（core/main/platforms/renderer）
 | 缓存常量 | 列表 TTL 10min / 歌曲 TTL 30min / 令牌桶 3 个、10s 补 1 | `src/core/cachePolicy.ts:18-37` |
 | 同步调优 | 默认 0.6 / 2 / 500ms；预设 0.45 / 0.6 / 0.75 | `src/core/sync/tuning.ts:17-40` |
 | 更新源 | GitHub Releases（唯一源） | `electron-builder.yml:26-32`、`src/main/updater.ts:14-15` |
-| 测试数 | 552（+9 项 live 真实网络验证，需 `LIVE_VERIFY=1`） | `npm run test` 输出 |
+| 测试数 | 555（+9 项 live 真实网络验证，需 `LIVE_VERIFY=1`） | `npm run test` 输出 |
 
 **构建**：本地未执行 `electron-builder` 打包；tag 推送后由发布工作流在 CI 完成三平台未签名构建、更新元数据生成与 draft release（见第 8 节，尚未执行）。
 

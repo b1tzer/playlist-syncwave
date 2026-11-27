@@ -171,18 +171,20 @@ export class QqMusicAdapter extends BasePlatformAdapter {
       songMid = fallback?.songMid
       if (!albumMid) albumMid = fallback?.albumMid
     }
-    // 单项失败静默：歌词/发行时间互不影响，服务层再兜底。
+    // 歌词/发行时间互不影响：并行请求（单项失败静默，服务层再兜底）。
     // 注意：包内 controller 读的是 query 参数而非路径参数（路径参数形式实测 400）。
-    const lyricRes = songMid
-      ? await this.call('GET', `/getLyric?songmid=${encodeURIComponent(songMid)}`, '').catch(
-          () => null,
-        )
-      : null
-    const albumRes = albumMid
-      ? await this.call('GET', `/getAlbumInfo?albummid=${encodeURIComponent(albumMid)}`, '').catch(
-          () => null,
-        )
-      : null
+    const [lyricRes, albumRes] = await Promise.all([
+      songMid
+        ? this.call('GET', `/getLyric?songmid=${encodeURIComponent(songMid)}`, '').catch(
+            () => null,
+          )
+        : null,
+      albumMid
+        ? this.call('GET', `/getAlbumInfo?albummid=${encodeURIComponent(albumMid)}`, '').catch(
+            () => null,
+          )
+        : null,
+    ])
     // 实测：response.data 为对象（非数组），发行时间字段为 aDate
     const album = albumRes ? asObject(asObject(albumRes.response).data) : {}
     const releaseDate = normalizeReleaseDate(

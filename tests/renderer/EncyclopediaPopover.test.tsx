@@ -11,7 +11,6 @@ const encyclopediaTarget = (overrides: Partial<Extract<EncyclopediaTarget, { typ
   type: 'encyclopedia',
   platform: 'netease',
   platformName: '网易云音乐',
-  platformIcon: 'graphic_eq',
   kind: 'singer',
   name: '周杰伦',
   ...overrides,
@@ -31,7 +30,6 @@ const songTarget = (
   },
   platform: 'netease',
   platformName: '网易云音乐',
-  platformIcon: 'graphic_eq',
   encyclopedia: true,
   ...overrides,
 })

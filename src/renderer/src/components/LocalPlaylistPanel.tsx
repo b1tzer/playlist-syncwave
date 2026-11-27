@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useMemo,
   useRef,
   useState,
   type MouseEvent as ReactMouseEvent,
@@ -104,6 +105,22 @@ export default function LocalPlaylistPanel({
 
   const activePlaylist = playlists.find((p) => p.id === activeId) ?? null
   const loggedPlatforms = platforms.filter((p) => accounts[p.id] !== null)
+  /** 本地歌曲 id → 百科平台信息：预建 Map，避免每行渲染线性查找 songs（大歌单 O(n²)→O(n)） */
+  const encyclopediaPlatformById = useMemo(() => {
+    const map = new Map<string, { platform: string; name: string; encyclopedia: boolean }>()
+    for (const s of songs) {
+      const platform = s.sourcePlatform
+      if (!platform) continue
+      const meta = platforms.find((p) => p.id === platform)
+      if (!meta) continue
+      map.set(String(s.id), {
+        platform,
+        name: meta.name,
+        encyclopedia: meta.capabilities.encyclopedia === true,
+      })
+    }
+    return map
+  }, [songs, platforms])
 
   const fetchPlaylists = async () => {
     try {
@@ -772,7 +789,6 @@ export default function LocalPlaylistPanel({
                         .encyclopedia === true
                     }
                     platformName={platforms.find((p) => p.id === searchPlatform)?.name}
-                    platformIcon={platforms.find((p) => p.id === searchPlatform)?.icon}
                   />
                 </div>
               )}
@@ -803,20 +819,7 @@ export default function LocalPlaylistPanel({
                   showHeader
                   selectable
                   onRemoveSelected={(ids) => handleRemoveSongs(ids.map(Number))}
-                  encyclopediaPlatformOf={(song) => {
-                    const local = songs.find((s) => String(s.id) === song.id)
-                    const platform = local?.sourcePlatform
-                    if (!platform) return undefined
-                    const meta = platforms.find((p) => p.id === platform)
-                    return meta
-                      ? {
-                          platform,
-                          name: meta.name,
-                          icon: meta.icon,
-                          encyclopedia: meta.capabilities.encyclopedia === true,
-                        }
-                      : undefined
-                  }}
+                  encyclopediaPlatformOf={(song) => encyclopediaPlatformById.get(song.id)}
                   onEncyclopediaConfirm={(req, target) => {
                     if (req.kind !== 'singer' || target.type !== 'encyclopedia') return
                     // 按 target 携带的歌曲引用定位（本地歌单 id 为序号，不经 songId 字符串反查）

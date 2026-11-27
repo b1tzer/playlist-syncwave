@@ -53,12 +53,10 @@ interface SongListProps {
   encyclopediaSupported?: boolean
   /** 平台展示名（百科面板来源标识） */
   platformName?: string
-  /** 平台 material-symbols 图标名（百科面板来源标识） */
-  platformIcon?: string
   /** 按歌曲解析百科平台（本地歌单按每首歌的来源平台；未提供时用列表级 encyclopediaPlatform） */
   encyclopediaPlatformOf?: (
     song: PlatformSong,
-  ) => { platform: string; name: string; icon: string; encyclopedia: boolean } | undefined
+  ) => { platform: string; name: string; encyclopedia: boolean } | undefined
   /** 用户选定同名候选后回调（本地歌单回写歌手 id） */
   onEncyclopediaConfirm?: (req: EncyclopediaConfirmRequest, target: EncyclopediaTarget) => void
 }
@@ -82,7 +80,6 @@ export default function SongList({
   encyclopediaPlatform,
   encyclopediaSupported,
   platformName,
-  platformIcon,
   encyclopediaPlatformOf,
   onEncyclopediaConfirm,
 }: SongListProps) {
@@ -232,7 +229,6 @@ export default function SongList({
       ? {
           platform: encyclopediaPlatform,
           name: platformName ?? '',
-          icon: platformIcon ?? '',
           encyclopedia: encyclopediaSupported === true,
         }
       : undefined)
@@ -336,6 +332,8 @@ export default function SongList({
         const flashing = flashIds?.has(s.id) ?? false
         const entered = enteredIds.has(s.id)
         const selected = selectedIds.has(s.id)
+        // 每行只解析一次百科平台（本地歌单场景 encyclopediaPlatformOf 按歌查来源，避免重复线性查找）
+        const ep = platformOf(s)
         return (
           <li
             key={s.id}
@@ -376,18 +374,16 @@ export default function SongList({
               <div className="truncate">
                 <EncyclopediaLink
                   label={s.title}
-                  onOpen={(e) => {
-                    const ep = platformOf(s)
+                  onOpen={(e) =>
                     openEncyclopedia(e, {
                       type: 'song',
                       song: s,
                       platform: ep?.platform,
                       platformName: ep?.name,
-                      platformIcon: ep?.icon,
                       // 详情卡内歌手/专辑是否可点，取决于来源平台是否支持百科
                       encyclopedia: ep?.encyclopedia === true,
                     })
-                  }}
+                  }
                 />
               </div>
               {subtitle != null && (
@@ -398,13 +394,12 @@ export default function SongList({
               <ArtistLinks
                 artist={s.artist}
                 singerIds={s.identifiers?.singerIds}
-                clickable={platformOf(s)?.encyclopedia === true}
+                clickable={ep?.encyclopedia === true}
                 onOpen={(e, part, idx, singerId) =>
                   openEncyclopedia(e, {
                     type: 'encyclopedia',
-                    platform: platformOf(s)!.platform,
-                    platformName: platformOf(s)!.name,
-                    platformIcon: platformOf(s)!.icon,
+                    platform: ep!.platform,
+                    platformName: ep!.name,
                     kind: 'singer',
                     name: part,
                     id: singerId,
@@ -416,15 +411,14 @@ export default function SongList({
             </span>
             {hasAlbum && (
               <span className="w-1/4 min-w-0 truncate text-on-surface-variant">
-                {s.album && platformOf(s)?.encyclopedia === true ? (
+                {s.album && ep?.encyclopedia === true ? (
                   <EncyclopediaLink
                     label={s.album}
                     onOpen={(e) =>
                       openEncyclopedia(e, {
                         type: 'encyclopedia',
-                        platform: platformOf(s)!.platform,
-                        platformName: platformOf(s)!.name,
-                        platformIcon: platformOf(s)!.icon,
+                        platform: ep!.platform,
+                        platformName: ep!.name,
                         kind: 'album',
                         name: s.album!,
                         albumId: s.identifiers?.albumId,

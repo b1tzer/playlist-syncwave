@@ -1,8 +1,6 @@
-import { Converter } from 'opencc-js'
 import type { CandidateSong, MatchOptions, MatchQuery, MatchResult } from '@core/models/match'
 import { SYNC_TUNING_DEFAULTS } from '@core/sync/tuning'
-
-const t2s = Converter({ from: 'tw', to: 'cn' })
+import { simplify } from '@core/simplify'
 
 const FULLWIDTH = /[\uFF01-\uFF5E]/g
 const PAREN_CONTENT = /\s*[(（【[].*?[)）】\]]\s*/g
@@ -10,7 +8,7 @@ const HAS_PAREN = /[(（【[].*?[)）】\]]/
 
 /** 保留括号内容的原始键：小写、繁转简、全角转半角、去空白 */
 function rawKey(text: string): string {
-  return t2s(text)
+  return simplify(text)
     .toLowerCase()
     .replace(FULLWIDTH, (ch) => String.fromCharCode(ch.charCodeAt(0) - 0xfee0))
     .replace(/\s+/gu, '')

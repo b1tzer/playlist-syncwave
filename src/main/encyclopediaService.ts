@@ -1,4 +1,3 @@
-import { Converter } from 'opencc-js'
 import type { PlatformAdapter, PlatformEncyclopedia } from '../platforms/base'
 import type {
   EncyclopediaCandidate,
@@ -9,22 +8,15 @@ import type {
   EncyclopediaQuery,
 } from '@core/models/encyclopedia'
 import { createLogger } from '@core/logging'
+import { simplify } from '@core/simplify'
 import { createTokenBucket, type TokenBucket } from './tokenBucket'
 import { LruCache } from './lruCache'
+import { withTimeout } from './withTimeout'
 import type { EncyclopediaStore } from './encyclopediaStore'
-
-/** 简繁归一（opencc-js，与歌曲匹配引擎同款），失败回退原文 */
-const t2s = Converter({ from: 'tw', to: 'cn' })
 
 /** 名字归一化：简繁转换 + 小写 + 空白折叠，用于候选打分比较 */
 export function normalizeName(raw: string): string {
-  let text = raw.trim().toLowerCase()
-  try {
-    text = t2s(text)
-  } catch {
-    // 转换失败用原文继续比较
-  }
-  return text.replace(/\s+/g, ' ')
+  return simplify(raw.trim().toLowerCase()).replace(/\s+/g, ' ')
 }
 
 export interface RankedCandidate {
@@ -87,6 +79,9 @@ const LRU_CAPACITY = 200
 /** 每平台一个令牌桶：容量 10，每 500ms 补充一枚（低频点击交互足够宽松） */
 const BUCKET_CAPACITY = 10
 const BUCKET_REFILL_MS = 500
+
+/** 平台接口超时：挂起请求不永久占用单飞槽位、面板不无限转圈 */
+const PLATFORM_TIMEOUT_MS = 10_000
 
 /** 缓存键构造（lookup 与失效逻辑同源，格式变更必须改这里） */
 function cacheKeyPrefix(platform: string, kind: EncyclopediaKind, name: string): string {
@@ -160,7 +155,10 @@ export function createEncyclopediaService(deps: {
     credential?: string,
   ): Promise<EncyclopediaContent | null> {
     try {
-      return await encyclopedia.detail(kind, id, name, credential)
+      return await withTimeout(
+        encyclopedia.detail(kind, id, name, credential),
+        PLATFORM_TIMEOUT_MS,
+      )
     } catch {
       return null
     }
@@ -201,7 +199,10 @@ export function createEncyclopediaService(deps: {
       }
 
       // 2. 名字搜索 + 消歧打分
-      const candidates = await encyclopedia.search(query.kind, query.name, credential)
+      const candidates = await withTimeout(
+        encyclopedia.search(query.kind, query.name, credential),
+        PLATFORM_TIMEOUT_MS,
+      )
       if (candidates.length === 0) return { status: 'empty' }
       const ranked = rankCandidates(query.name, candidates)
       if (decideDirect(ranked)) {
@@ -261,5 +262,3 @@ export function createEncyclopediaService(deps: {
 
   return { lookup, confirm }
 }
-
-export type EncyclopediaService = ReturnType<typeof createEncyclopediaService>

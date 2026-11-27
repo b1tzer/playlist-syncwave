@@ -1321,7 +1321,6 @@ export default function PlaylistSection({
                       encyclopediaPlatform={active === 'local' ? undefined : active}
                       encyclopediaSupported={encyclopediaSupported}
                       platformName={activeMeta?.name}
-                      platformIcon={activeMeta?.icon}
                     />
                   </div>
                 )}
@@ -1342,7 +1341,6 @@ export default function PlaylistSection({
                 encyclopediaPlatform={active === 'local' ? undefined : active}
                 encyclopediaSupported={encyclopediaSupported}
                 platformName={activeMeta?.name}
-                platformIcon={activeMeta?.icon}
                 renderFooter={
                   songs.length < songTotal
                     ? () => <LoadMoreSentinel onVisible={() => void loadMoreSongs()} />

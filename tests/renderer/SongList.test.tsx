@@ -32,7 +32,6 @@ function renderList(overrides: { selectable?: boolean; encyclopediaSupported?: b
         encyclopediaPlatform="netease"
         encyclopediaSupported={overrides.encyclopediaSupported ?? true}
         platformName="网易云音乐"
-        platformIcon="graphic_eq"
       />
     </I18nProvider>,
   )
