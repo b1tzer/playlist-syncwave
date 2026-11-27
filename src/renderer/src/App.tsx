@@ -6,7 +6,7 @@ import TextCreator from './components/TextCreator'
 import PlaylistSection from './components/PlaylistSection'
 import LoginSection from './components/LoginSection'
 import SyncHistory from './components/SyncHistory'
-import type { PendingConfirmSession, SyncTaskRecord } from '@core/models/sync'
+import type { PendingConfirmSession, SyncTaskRecord, SyncTaskStatus } from '@core/models/sync'
 import SettingsView from './components/SettingsView'
 import ConfirmSyncDialog from './components/ConfirmSyncDialog'
 import { ToastHost, notify } from './components/toast'
@@ -16,9 +16,18 @@ import { useI18n } from './i18n'
 import { failedDetailLines, songDupKey } from './sync/helpers'
 import { useSyncRunner } from './sync/useSyncRunner'
 import { deriveTaskCounts } from '@core/sync/taskStats'
+import { userFacingErrorMessage } from './utils/ipcError'
 import TaskCenter from './components/TaskCenter'
 
 const log = createRendererLogger('renderer.app')
+
+/** 同步任务终态：本地已收敛为终态时，忽略主进程迟到的 running 快照回滚 */
+const TERMINAL_STATUSES: ReadonlySet<SyncTaskStatus> = new Set([
+  'done',
+  'failed',
+  'stopped',
+  'interrupted',
+])
 
 export default function App() {
   const { t } = useI18n()
@@ -173,6 +182,12 @@ export default function App() {
       setTasks((prev) => {
         const idx = prev.findIndex((x) => x.id === task.id)
         if (idx === -1) return [task, ...prev]
+        const existing = prev[idx]
+        // 执行尾声的迟到 running 快照不得回滚渲染层已收敛的终态：
+        // 否则同步历史/任务中心会重新显示「进行中」且没有后续事件再纠正
+        if (TERMINAL_STATUSES.has(existing.status) && task.status === 'running') {
+          return prev
+        }
         const next = [...prev]
         next[idx] = task
         return next
@@ -326,7 +341,7 @@ export default function App() {
       })
 
       if (rep.status === 'stopped') {
-        // 确认后的写入被用户停止：任务归为 stopped，弹窗关闭
+        // 确认后的写入被用户停止：任务归为 stopped，弹窗关闭（结果由任务中心原地更新任务卡）
         const { task } = pendingConfirm
         handleTaskUpdate({
           ...task,
@@ -339,45 +354,11 @@ export default function App() {
           playlistId: rep.playlistId || undefined,
         })
         resetConfirmSession()
-        notify(
-          'warning',
-          t('toast.syncStoppedTitle'),
-          t('toast.syncStoppedDetail', { name: rep.playlistName }),
-        )
         return
       }
 
       // 先建单流程：歌单已创建即为成功；空歌单（0 写入）如实提示，不再虚报失败
       const ok = rep.playlistId !== ''
-      if (ok) {
-        // 右上角通知：给用户明确的执行结果
-        if (rep.added === 0) {
-          notify('warning', t('toast.confirmDoneTitle'), t('toast.syncEmptyDetail'))
-        } else if (rep.failed.length > 0) {
-          notify(
-            'warning',
-            t('toast.confirmDoneTitle'),
-            t('toast.confirmPartialDetail', {
-              added: rep.added,
-              name: rep.playlistName,
-              failed: rep.failed.length,
-            }),
-          )
-        } else {
-          notify(
-            'success',
-            t('toast.confirmDoneTitle'),
-            t('toast.confirmDoneDetail', { added: rep.added, name: rep.playlistName }),
-          )
-        }
-      } else {
-        // 未建单（理论上先建单流程不再出现）：兜底提示
-        notify(
-          'error',
-          t('toast.syncNoneTitle'),
-          t('toast.syncNoneDetail', { count: rep.failed.length || rep.total }),
-        )
-      }
       const { task } = pendingConfirm
       // 终态计数以最终明细为权威口径：行摘要与展开明细永远一致
       const counts = deriveTaskCounts(rep.items, {
@@ -396,12 +377,25 @@ export default function App() {
         detail: rep.items,
         playlistId: rep.playlistId || undefined,
       })
-      // 写入完成后直接关闭确认弹窗，结果以上方通知呈现
+      // 写入完成后直接关闭确认弹窗，结果由任务中心在任务卡上原地更新呈现
       resetConfirmSession()
     } catch (e) {
       log.error('sync.confirm-failed', '确认同步失败', e, { targetPlatform: target })
-      // 错误提示走右上角 toast，代码性报错过滤为通用文案
-      notifyError(e, t('toast.syncFailedTitle'))
+      // 主进程侧会话已失效：任务收敛为 failed（结果由任务中心原地更新任务卡呈现），
+      // 同时关闭确认弹窗（会话无法再确认，重试可经同步历史重新执行）
+      if (pendingConfirm) {
+        const { task } = pendingConfirm
+        handleTaskUpdate({
+          ...task,
+          status: 'failed',
+          progress: 1,
+          failedDetail: [
+            ...task.failedDetail,
+            userFacingErrorMessage(e, t('sync.failedGeneric')),
+          ],
+        })
+        resetConfirmSession()
+      }
     } finally {
       setConfirming(false)
     }

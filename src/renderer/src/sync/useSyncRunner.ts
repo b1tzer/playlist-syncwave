@@ -9,8 +9,6 @@ import type {
 } from '@core/models/sync'
 import { createRendererLogger } from '../logging/rendererLogger'
 import { useI18n } from '../i18n'
-import { notify } from '../components/toast'
-import { notifyError } from '../utils/notifyError'
 import { userFacingErrorMessage } from '../utils/ipcError'
 import { syncFailedText } from './helpers'
 import { deriveTaskCounts, markTaskDetailFailed } from '@core/sync/taskStats'
@@ -166,11 +164,7 @@ export function useSyncRunner() {
             // 停止时可能已建单并写入部分批次：保留歌单 ID，重启后可续写
             playlistId: rep.playlistId || undefined,
           })
-          notify(
-            'warning',
-            t('toast.syncStoppedTitle'),
-            t('toast.syncStoppedDetail', { name: rep.playlistName }),
-          )
+          // 结果由任务中心在任务卡上原地更新呈现，执行方不再弹 toast
           return
         }
 
@@ -183,39 +177,6 @@ export function useSyncRunner() {
           added: rep.added,
           failed: rep.failed.length,
         })
-        if (ok) {
-          if (rep.added === 0) {
-            notify('warning', t('toast.syncDoneTitle'), t('toast.syncEmptyDetail'))
-          } else if (rep.failed.length > 0) {
-            notify(
-              'warning',
-              t('toast.syncDoneTitle'),
-              t('toast.syncPartialDetail', {
-                added: rep.added,
-                total: rep.total,
-                name: rep.playlistName,
-                failed: rep.failed.length,
-              }),
-            )
-          } else {
-            notify(
-              'success',
-              t('toast.syncDoneTitle'),
-              t('toast.syncDoneDetail', {
-                added: rep.added,
-                total: rep.total,
-                name: rep.playlistName,
-              }),
-            )
-          }
-        } else {
-          // 未建单（理论上先建单流程不再出现）：兜底提示
-          notify(
-            'error',
-            t('toast.syncNoneTitle'),
-            t('toast.syncNoneDetail', { count: rep.failed.length || rep.total }),
-          )
-        }
         // 终态计数以最终明细为权威口径：行摘要与展开明细永远一致
         const counts = deriveTaskCounts(finalDetail, {
           added: rep.added,
@@ -238,8 +199,7 @@ export function useSyncRunner() {
         const msg = userFacingErrorMessage(e, t('sync.failedGeneric'))
         log.error('runner.failed', '同步失败', e, { targetPlatform })
         setError(msg)
-        // 错误提示走右上角 toast，代码性报错过滤为通用文案
-        notifyError(e, t('toast.syncFailedTitle'))
+        // 失败结果由任务中心在任务卡上原地更新呈现，执行方不再弹 toast
         // 整体异常：明细收敛为全失败，与 failed=total 标量自洽（保留 query 供重新执行）
         const failedDetail = markTaskDetailFailed([...detailRef], queries, msg)
         onTaskUpdate({

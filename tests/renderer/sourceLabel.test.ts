@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { TranslationKey, TranslateParams } from '../../src/renderer/src/i18n/translations'
-import { isLocalSource, syncSourceLabel } from '../../src/renderer/src/sync/sourceLabel'
+import {
+  isLocalSource,
+  sourcePlatformId,
+  syncSourceLabel,
+} from '../../src/renderer/src/sync/sourceLabel'
 
 const zh: Partial<Record<TranslationKey, string>> = {
   'syncHistory.sourceTextImport': '文本导入',
@@ -30,5 +34,23 @@ describe('isLocalSource — 本地来源判定（决定是否使用应用 logo�
     expect(isLocalSource('local-playlist')).toBe(true)
     expect(isLocalSource('text-import')).toBe(false)
     expect(isLocalSource('playlist-import')).toBe(false)
+  })
+})
+
+describe('sourcePlatformId — 平台歌单导入的来源平台解析', () => {
+  it('playlist-import:<platformId> 解析出来源平台 id', () => {
+    expect(sourcePlatformId('playlist-import:qqmusic')).toBe('qqmusic')
+    expect(sourcePlatformId('playlist-import:netease')).toBe('netease')
+  })
+
+  it('旧任务无平台信息（playlist-import）返回 null，展示兜底为「歌单导入」', () => {
+    expect(sourcePlatformId('playlist-import')).toBeNull()
+    expect(sourcePlatformId('playlist-import:')).toBeNull()
+  })
+
+  it('其他来源（文本导入/本地/未知）返回 null', () => {
+    expect(sourcePlatformId('text-import')).toBeNull()
+    expect(sourcePlatformId('local-playlist')).toBeNull()
+    expect(sourcePlatformId('some-future-source')).toBeNull()
   })
 })

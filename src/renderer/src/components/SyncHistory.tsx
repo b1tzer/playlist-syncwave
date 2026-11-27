@@ -5,7 +5,7 @@ import type { SyncItemResult, SyncTaskRecord, SyncTaskStatus } from '@core/model
 import { useI18n } from '../i18n'
 import type { TranslationKey, TranslateParams } from '../i18n/translations'
 import { syncItemTitle } from '../sync/helpers'
-import { syncSourceLabel, isLocalSource } from '../sync/sourceLabel'
+import { syncSourceLabel, isLocalSource, sourcePlatformId } from '../sync/sourceLabel'
 import { userFacingErrorMessage } from '../utils/ipcError'
 import { deriveTaskCounts, firstFailureReason, taskSummaryKind } from '@core/sync/taskStats'
 import SongList from './SongList'
@@ -497,6 +497,11 @@ export default function SyncHistory({
           const intervenable = intervenableIds.includes(task.id)
           const statusMeta = STATUS_META[task.status]
           const target = platforms.find((p) => p.id === task.targetPlatform)
+          // 平台歌单导入携带来源平台 id：行内展示「A 平台 → B 平台」而非笼统的「歌单导入」
+          const sourcePlatform = sourcePlatformId(task.source)
+          const sourceMeta = sourcePlatform
+            ? platforms.find((p) => p.id === sourcePlatform)
+            : null
           // 行摘要计数以逐首明细为权威口径（空明细回退标量），与展开详情保持一致
           const counts = deriveTaskCounts(task.detail, { added: task.added, failed: task.failed })
           return (
@@ -521,7 +526,15 @@ export default function SyncHistory({
                   <p className="truncate font-body-md text-body-md font-medium">{task.name}</p>
                   <span className="flex shrink-0 items-center gap-2 font-label-sm text-label-sm text-on-surface-variant">
                     <span className="flex items-center gap-1">
-                      {isLocalSource(task.source) ? (
+                      {sourcePlatform ? (
+                        <PlatformLogo
+                          platform={sourcePlatform}
+                          name={sourceMeta?.name ?? sourcePlatform}
+                          icon={sourceMeta?.icon ?? 'library_music'}
+                          size="h-4 w-4"
+                          iconSize="text-sm"
+                        />
+                      ) : isLocalSource(task.source) ? (
                         <PlatformLogo
                           platform="local"
                           name={t('syncHistory.sourceLocalPlaylist')}
@@ -532,7 +545,9 @@ export default function SyncHistory({
                       ) : (
                         <span className="material-symbols-outlined text-sm">description</span>
                       )}
-                      {syncSourceLabel(task.source, t)}
+                      {sourcePlatform
+                        ? sourceMeta?.name ?? sourcePlatform
+                        : syncSourceLabel(task.source, t)}
                     </span>
                     <span className="material-symbols-outlined text-sm text-outline">
                       arrow_forward
@@ -548,6 +563,7 @@ export default function SyncHistory({
                         size="h-4 w-4"
                         iconSize="text-sm"
                       />
+                      <span>{target?.name ?? task.targetPlatform}</span>
                     </span>
                   </span>
                   <span className="material-symbols-outlined text-sm text-outline">

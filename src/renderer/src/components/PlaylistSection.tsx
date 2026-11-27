@@ -1069,7 +1069,8 @@ export default function PlaylistSection({
         targetPlatform,
         queries,
         name,
-        source: 'playlist-import',
+        // 携带来源平台 id：同步历史展示「A 平台 → B 平台」，而非笼统的「歌单导入」
+        source: `playlist-import:${active}`,
         onTaskUpdate,
         onPendingConfirmChange,
       })
@@ -1119,7 +1120,14 @@ export default function PlaylistSection({
                 : 'text-on-surface-variant hover:text-on-surface'
             }`}
           >
-            <span className="material-symbols-outlined text-sm">save</span>
+            {/* 与各平台标签统一用品牌 logo：本地 = 应用自身 logo（save 图标仅作无资源兜底） */}
+            <PlatformLogo
+              platform="local"
+              name={t('playlist.localTab')}
+              icon="save"
+              size="h-4 w-4"
+              iconSize="text-sm"
+            />
             {t('playlist.localTab')}
           </button>
         </div>

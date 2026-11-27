@@ -73,7 +73,7 @@ tests/             # Vitest 单元测试（core/main/platforms/renderer）
 - 评分因子（T8）：归一化含小写/繁转简/全角转半角/去括号；歌手 exact +0.15 / partial +0.05；专辑 exact +0.05 / partial +0.02；版本标记同 +0.08 / 异 −0.05；时长 +0.02。斜杠不切分（乐队名 `Weird Fishes/Arpeggi`）
 - 并发（`core/sync/syncPlaylist.ts`）：`searchConcurrency` 默认 3 的受控并发池；`searchIntervalMs` 为**全局相邻两次搜索请求的最小间隔**（预约式限速器）；同一首歌「歌名+歌手」与「纯歌名」并行预取；任务内关键词缓存（normalize(keyword) 为 key，含在途 promise 去重，失败不缓存）；任一请求 `rateLimited` 触发全局冷却 4s；搜索超时 15s、建单/加歌 60s；结果按输入 index 顺序收敛，进度/明细/断点语义与串行一致
 - 介入控制：`AbortSignal` 停止、`skipCheck` 跳过当前歌曲；`SyncAbortedError` 携带 partial 明细收敛为 `stopped` 报告；逐首明细存 `sync_tasks.detail`，重启后详情抽屉可见；重启残留 running 任务归 `interrupted`，stopped 保持
-- 同步来源：文本快速创建（`text-import`）与歌单导入（`playlist-import`）；失败按稳定 reason 码在渲染层翻译，平台原始错误透传；先建单流程下空输入不建单，未匹配保留已建空歌单
+- 同步来源：文本快速创建（`text-import`）、平台歌单跨平台同步（`playlist-import:<来源平台id>`，同步历史行展示「A 平台 → B 平台」，旧记录 `playlist-import` 兜底显示「歌单导入」，`sourceLabel.ts` 的 `sourcePlatformId` 解析）与本地歌单同步（`local-playlist`）；失败按稳定 reason 码在渲染层翻译，平台原始错误透传；先建单流程下空输入不建单，未匹配保留已建空歌单
 
 ### 3.3 平台接入
 - **网易云**：`NeteaseCloudMusicApi`（CJS + 内联 createRequire）；连续快搜触发 405 风控，限速 + 指数退避重试；`/login/qr/*` 扫码登录；歌单列表过滤 `specialType=5` 与 `subscribed=true`，仅显示自有歌单；写接口 `playlist_name_update` / `playlist_delete` / `playlist_track_delete`；`PlatformPlaylist` 带 `webUrl`（music.163.com）与 `appUrl`（orpheus://）

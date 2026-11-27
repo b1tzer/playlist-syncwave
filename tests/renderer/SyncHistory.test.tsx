@@ -33,6 +33,12 @@ const platforms = [
     icon: 'cloud',
     capabilities: { read: true, write: true },
   },
+  {
+    id: 'qqmusic',
+    name: 'QQ 音乐',
+    icon: 'queue_music',
+    capabilities: { read: true, write: true },
+  },
 ]
 
 const renderSyncHistory = (tasks: SyncTaskRecord[]) =>
@@ -137,5 +143,17 @@ describe('SyncHistory — 行摘要与来源展示', () => {
   it('来源 text-import 显示「文本导入」', () => {
     const view = renderSyncHistory([baseTask({ source: 'text-import' })])
     expect(view.container.textContent).toContain('文本导入')
+  })
+
+  it('平台歌单导入显示来源与目标平台名（A 平台 → B 平台），不再显示「歌单导入」', () => {
+    const view = renderSyncHistory([baseTask({ source: 'playlist-import:qqmusic' })])
+    expect(view.container.textContent).toContain('QQ 音乐')
+    expect(view.container.textContent).toContain('网易云音乐')
+    expect(view.container.textContent).not.toContain('歌单导入')
+  })
+
+  it('旧任务 playlist-import（无来源平台信息）兜底显示「歌单导入」', () => {
+    const view = renderSyncHistory([baseTask({ source: 'playlist-import' })])
+    expect(view.container.textContent).toContain('歌单导入')
   })
 })

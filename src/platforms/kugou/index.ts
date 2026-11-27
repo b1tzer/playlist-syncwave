@@ -775,12 +775,19 @@ export class KugouAdapter extends BasePlatformAdapter {
     name: string | undefined,
     credential: string,
   ): Promise<EncyclopediaContent> {
-    if (kind === 'singer') return this.fetchSingerSongs(id, credential)
+    if (kind === 'singer') return this.fetchSingerSongs(id, name, credential)
     return this.fetchAlbumTracks(id, name, credential)
   }
 
-  /** 歌手的歌：/kmr/v1/audio_group/author（sort=hot 最热）；实测：顶层 { total, error_code, data: [...] }，data 直接是歌曲数组 */
-  private async fetchSingerSongs(id: string, credential: string): Promise<EncyclopediaContent> {
+  /**
+   * 歌手的歌：/kmr/v1/audio_group/author（sort=hot 最热）；实测：顶层 { total, error_code, data: [...] }，
+   * data 直接是歌曲数组。该接口不带歌手头像：按名字搜索一次歌手补 Avatar（失败静默，仅无图）。
+   */
+  private async fetchSingerSongs(
+    id: string,
+    name: string | undefined,
+    credential: string,
+  ): Promise<EncyclopediaContent> {
     const res = await this.call(this.api.artist_audios!, {
       id,
       page: 1,
@@ -790,11 +797,17 @@ export class KugouAdapter extends BasePlatformAdapter {
     })
     const raw = asArray(res.data)
     const songs = raw.map((rawItem) => this.withSongUrl(this.mapPanelSong(asObject(rawItem))))
+    let imageUrl: string | undefined
+    if (name?.trim()) {
+      const candidates = await this.searchEncyclopedia('singer', name, credential).catch(() => [])
+      imageUrl = (candidates.find((c) => c.id === id) ?? candidates[0])?.picUrl
+    }
     return {
       kind: 'singer',
       id,
       name: songs[0]?.artist ?? '',
       songs,
+      imageUrl,
       source: 'kugou',
       sourceUrl: `https://www.kugou.com/singer/${encodeURIComponent(id)}.html`,
     }

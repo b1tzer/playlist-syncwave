@@ -22,7 +22,13 @@ import {
 } from '@core/models/sync'
 import type { MatchQuery } from '@core/models/match'
 import { logCenter } from './logging/logCenter'
-import { upsertSyncTask, listSyncTasks, removeSyncTask, clearSyncTasks } from './syncHistoryService'
+import {
+  upsertSyncTask,
+  listSyncTasks,
+  removeSyncTask,
+  clearSyncTasks,
+  reconcileStaleRunningTasks,
+} from './syncHistoryService'
 import { getSetting, setSetting, getAllSettings, syncTuning, SETTINGS_DEFAULTS } from './settingsService'
 import { restoreProxy, getProxySetting, setProxySetting, testProxy } from './proxy'
 import { applySecurityHeaders } from './security'
@@ -975,7 +981,28 @@ ipcMain.handle(
               })
             },
           })
+          // 终态兜底落库：渲染层写回丢失/失败时，DB 不再残留 running（同步历史不卡「进行中」）。
+          // choice-needed 保持 running 等待用户确认；渲染层随后以完整字段（文案/计数）覆盖。
+          const finalStatus =
+            report.status === 'choice-needed'
+              ? null
+              : report.status === 'stopped'
+                ? 'stopped'
+                : report.playlistId !== ''
+                  ? 'done'
+                  : 'failed'
+          if (finalStatus) {
+            checkpoint.persistFinal({ status: finalStatus, progress: 1 })
+          }
           return { taskId, report }
+        } catch (e) {
+          // 整体异常：主进程侧兜底归为失败，渲染层 catch 后再以完整字段覆盖
+          checkpoint.persistFinal({
+            status: 'failed',
+            progress: 1,
+            failedDetail: [e instanceof Error ? e.message : String(e)],
+          })
+          throw e
         } finally {
           control.done()
         }
@@ -1017,7 +1044,20 @@ ipcMain.handle('platform:skip-sync', (_event, taskId: string) =>
 // --- 同步历史（SQLite 持久化）---
 
 ipcMain.handle('sync-history:list', () =>
-  ipcLog.time('sync-history.list', async () => listSyncTasks(), undefined, 'debug'),
+  ipcLog.time(
+    'sync-history.list',
+    async () => {
+      // 归因残留 running：不在活跃执行集合的「终态写回丢失」任务归为 interrupted，
+      // 防止窗口 reload 后同步历史出现永不结束的「进行中」
+      const reconciled = reconcileStaleRunningTasks()
+      if (reconciled > 0) {
+        ipcLog.info('sync-history.list', '已归因残留 running 任务', { count: reconciled })
+      }
+      return listSyncTasks()
+    },
+    undefined,
+    'debug',
+  ),
 )
 
 ipcMain.handle('sync-history:upsert', (_event, task: SyncTaskRecord) =>
@@ -1402,14 +1442,26 @@ ipcMain.handle(
           }
           registerLocalPlaylistSyncTarget(pending.sourceLocalPlaylistId, platform, report.playlistId)
           notifySyncResult(report.playlistName, report.added, report.failed.length)
+          // 终态兜底落库：确认路径同样不依赖渲染层写回
+          checkpoint.persistFinal({
+            status: report.playlistId !== '' ? 'done' : 'failed',
+            progress: 1,
+          })
           return report
         } catch (e) {
           if (e instanceof SyncAbortedError) {
             ipcLog.info('platform.confirm-sync', '写入被用户停止', { platform, taskId })
             notifySyncStopped(pending.playlistName)
             registerLocalPlaylistSyncTarget(pending.sourceLocalPlaylistId, platform, e.partial.playlistId ?? '')
+            checkpoint.persistFinal({ status: 'stopped', progress: 1 })
             return stoppedReport(e.partial, pending.playlistName)
           }
+          // 整体异常：主进程侧兜底归为失败（会话已删除，任务不得停留在 running）
+          checkpoint.persistFinal({
+            status: 'failed',
+            progress: 1,
+            failedDetail: [e instanceof Error ? e.message : String(e)],
+          })
           throw e
         } finally {
           control.done()

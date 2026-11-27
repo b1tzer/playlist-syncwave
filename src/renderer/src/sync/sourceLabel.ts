@@ -21,3 +21,14 @@ export function syncSourceLabel(source: string, t: Translate): string {
 export function isLocalSource(source: string): boolean {
   return source === 'local-playlist'
 }
+
+const PLAYLIST_IMPORT_PREFIX = 'playlist-import:'
+
+/**
+ * 平台歌单导入任务的来源平台 id（格式 `playlist-import:<platformId>`）；
+ * 旧任务（无平台信息，值为 `playlist-import`）返回 null，展示兜底为「歌单导入」。
+ */
+export function sourcePlatformId(source: string): string | null {
+  if (!source.startsWith(PLAYLIST_IMPORT_PREFIX)) return null
+  return source.slice(PLAYLIST_IMPORT_PREFIX.length) || null
+}

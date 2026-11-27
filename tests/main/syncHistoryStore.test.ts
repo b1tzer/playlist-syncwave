@@ -120,6 +120,29 @@ describe('syncHistoryStore — SQLite 持久化', () => {
     expect(task?.failedDetail).toEqual(['已有原因'])
   })
 
+  it('finalizeStaleRunning 保留活跃任务，只归因不在活跃集合的 running 残留', () => {
+    store.upsertTask(makeTask({ id: 'active', status: 'running' }))
+    store.upsertTask(makeTask({ id: 'stale', status: 'running' }))
+    store.upsertTask(makeTask({ id: 'done', status: 'done' }))
+    const changes = store.finalizeStaleRunning(new Set(['active']))
+    expect(changes).toBe(1)
+    expect(store.getTask('active')?.status).toBe('running')
+    expect(store.getTask('stale')?.status).toBe('interrupted')
+    expect(store.getTask('done')?.status).toBe('done')
+  })
+
+  it('finalizeStaleRunning 空活跃集合等价 finalizeInterrupted（全部归因）', () => {
+    store.upsertTask(makeTask({ id: 'a', status: 'running' }))
+    store.upsertTask(makeTask({ id: 'b', status: 'running' }))
+    expect(store.finalizeStaleRunning(new Set())).toBe(2)
+    expect(store.listTasks().every((t) => t.status === 'interrupted')).toBe(true)
+  })
+
+  it('finalizeStaleRunning 无残留时返回 0', () => {
+    store.upsertTask(makeTask({ id: 'a', status: 'done' }))
+    expect(store.finalizeStaleRunning(new Set())).toBe(0)
+  })
+
   it('空库查询返回空数组，不抛异常', () => {
     expect(store.listTasks()).toEqual([])
     expect(store.finalizeInterrupted()).toBe(0)
@@ -169,6 +192,13 @@ describe('syncHistoryStore — SQLite 持久化', () => {
     // 渲染层进度/明细更新不带 playlistId：不得清空主进程已写入的歌单 ID
     store.upsertTask(makeTask({ id: 'keep', status: 'running', progress: 0.5 }))
     expect(store.getTask('keep')?.playlistId).toBe('pl-keep')
+  })
+
+  it('source 空串写入不覆盖已有来源（主进程 checkpoint 空快照不得清空渲染层来源）', () => {
+    store.upsertTask(makeTask({ id: 'keep', status: 'running', source: 'playlist-import:qqmusic' }))
+    // 主进程 checkpoint 兜底快照 source 为空：不得清空已保存的来源（渲染层展示依赖）
+    store.upsertTask(makeTask({ id: 'keep', status: 'running', progress: 0.5, source: '' }))
+    expect(store.getTask('keep')?.source).toBe('playlist-import:qqmusic')
   })
 
   it('sourceLocalPlaylistId 往返无损，且不带该字段的写入不清空已保存值', () => {

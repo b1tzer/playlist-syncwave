@@ -4,7 +4,7 @@ import { deriveTaskCenterState } from '@core/sync/taskCenter'
 import { useI18n } from '../i18n'
 import type { TranslationKey } from '../i18n/translations'
 import { userFacingErrorMessage } from '../utils/ipcError'
-import { closeTaskToast, notify, notifyTask, type ToastType } from './toast'
+import { closeTaskToast, finishTaskToast, notifyTask, type ToastType } from './toast'
 
 /** 同屏最多展示的运行中任务卡，超出仅显示汇总 */
 const MAX_RUNNING = 3
@@ -20,7 +20,8 @@ const FINISHED_TOAST: Record<SyncTaskStatus, { type: ToastType; labelKey: Transl
 
 /**
  * 任务中心：把同步任务状态推送到右上角通知栈（复用 Toast 组件，不单独渲染卡片）。
- * 运行中 = 持久任务卡（进度条 + 停止操作，同 key 更新）；结束 = 普通结果通知自动消失。
+ * 运行中 = 持久任务卡（进度条 + 停止操作，同 key 更新）；结束 = 同一张卡原地更新为
+ * 结果通知并自动消失（不关旧卡另弹新卡，执行结束不弹新窗口）。
  * 历史任务（应用重启恢复）不重复弹结果（deriveTaskCenterState 内部按 seen 过滤）。
  * 本组件不渲染 DOM；须挂载在 ToastHost 之后（effects 自下而上，保证先订阅后推送）。
  */
@@ -45,18 +46,18 @@ export default function TaskCenter({ tasks }: { tasks: SyncTaskRecord[] }) {
     activeRef.current = derived.active
     initializedRef.current = derived.initialized
 
-    // 结束任务：关闭对应持久卡，弹普通结果通知（失败附原因）
+    // 结束任务：持久任务卡「原地」更新为结果通知（不关旧卡另弹新卡），
+    // 执行方不再弹结果 toast，任务中心卡片是唯一结果出口；卡片已被用户关闭则静默
     for (const item of derived.finished) {
-      closeTaskToast(`task-${item.id}`)
       const meta = FINISHED_TOAST[item.status]
       const failed = item.status === 'failed' || item.status === 'interrupted'
-      notify(
-        meta.type,
-        item.name,
-        failed && item.reason
+      finishTaskToast(`task-${item.id}`, {
+        type: meta.type,
+        title: item.name,
+        detail: failed && item.reason
           ? userFacingErrorMessage(item.reason, t(meta.labelKey))
           : t(meta.labelKey),
-      )
+      })
     }
 
     // 运行中任务卡同步（同 key 更新进度；超出上限只显示汇总）

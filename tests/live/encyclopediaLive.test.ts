@@ -141,13 +141,15 @@ run('百科与歌曲详情真实链路验证', () => {
     expect(data.webUrl).toContain('186016')
   }, 30_000)
 
-  it('酷狗：匿名（仅设备指纹）歌手搜索与歌手歌曲清单', async () => {
+  it('酷狗：匿名（仅设备指纹）歌手搜索与歌手歌曲清单（含头像）', async () => {
     const candidates = await kugou.encyclopedia!.search('singer', '周杰伦', '')
     expect(candidates.length).toBeGreaterThan(0)
-    const detail = await kugou.encyclopedia!.detail('singer', candidates[0].id, '', '')
+    const detail = await kugou.encyclopedia!.detail('singer', candidates[0].id, '周杰伦', '')
     expect(detail.name).toBeTruthy()
     expect(detail.songs!.length).toBeGreaterThan(0)
     expect(detail.songs![0].title).toBeTruthy()
+    // 头像：详情接口不带图，经名字搜索补 Avatar（https 可直达）
+    expect(detail.imageUrl).toMatch(/^https:\/\//)
   }, 30_000)
 
   it('酷狗：匿名（仅设备指纹）专辑曲目与发行时间', async () => {

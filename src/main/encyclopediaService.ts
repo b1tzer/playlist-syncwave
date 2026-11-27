@@ -213,7 +213,13 @@ export function createEncyclopediaService(deps: {
           query.name,
           credential,
         )
-        if (content) return { status: 'content', content }
+        // 详情接口不带图时（如酷狗歌手歌曲接口）用搜索候选的头像兜底
+        if (content) {
+          if (!content.imageUrl && ranked[0].candidate.picUrl) {
+            return { status: 'content', content: { ...content, imageUrl: ranked[0].candidate.picUrl } }
+          }
+          return { status: 'content', content }
+        }
         // 详情失败：退回候选列表让用户手动点选
       }
       // 过滤无 id 的残缺候选（不可点选确认）

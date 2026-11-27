@@ -31,7 +31,10 @@ VALUES
 ON CONFLICT(id) DO UPDATE SET
   name = excluded.name,
   target_platform = excluded.target_platform,
-  source = excluded.source,
+  source = CASE
+    WHEN excluded.source = '' THEN source
+    ELSE excluded.source
+  END,
   status = excluded.status,
   total = excluded.total,
   added = excluded.added,
@@ -181,6 +184,21 @@ CREATE TABLE IF NOT EXISTS sync_tasks (
 
     /** 把「running」残留状态（上次异常退出）归为 interrupted，并写入中断原因 */
     finalizeInterrupted(): number {
+      return this.finalizeStaleRunning(new Set())
+    },
+
+    /**
+     * 把 running 且不在活跃任务集合中的记录归为 interrupted：
+     * - 应用启动时调用（activeTaskIds 为空 = 全部归因）；
+     * - 同步历史读取时调用（排除正在执行/等待确认的任务，只归因「终态写回丢失」的残留，
+     *   覆盖渲染进程 reload 后主进程不重启、finalizeInterrupted 不再执行的场景）。
+     */
+    finalizeStaleRunning(activeTaskIds: ReadonlySet<string>): number {
+      const staleIds = (db.prepare('SELECT id FROM sync_tasks WHERE status = ?').all('running') as unknown as Array<{ id: string }>)
+        .map((row) => row.id)
+        .filter((id) => !activeTaskIds.has(id))
+      if (staleIds.length === 0) return 0
+      const placeholders = staleIds.map(() => '?').join(',')
       const result = db
         .prepare(
           `UPDATE sync_tasks
@@ -189,9 +207,9 @@ CREATE TABLE IF NOT EXISTS sync_tasks (
                    WHEN failed_detail = '[]' THEN ?
                    ELSE failed_detail
                  END
-           WHERE status = 'running'`,
+           WHERE id IN (${placeholders})`,
         )
-        .run(JSON.stringify(INTERRUPTED_DETAIL))
+        .run(JSON.stringify(INTERRUPTED_DETAIL), ...staleIds)
       return result.changes
     },
   }

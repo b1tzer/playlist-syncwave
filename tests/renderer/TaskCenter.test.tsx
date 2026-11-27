@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { cleanup, fireEvent, render, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, waitFor } from '@testing-library/react'
 import type { SyncTaskRecord, SyncTaskStatus } from '@core/models/sync'
 import TaskCenter from '../../src/renderer/src/components/TaskCenter'
 import { ToastHost } from '../../src/renderer/src/components/toast'
@@ -60,7 +60,7 @@ describe('TaskCenter — 同步任务经通知栈展示', () => {
     expect(window.electronAPI.platforms.stopSync).toHaveBeenCalledWith('t1')
   })
 
-  it('任务由运行中转失败：运行卡消失，弹失败通知与失败原因', async () => {
+  it('任务由运行中转失败：原任务卡原地更新为失败结果，附失败原因', async () => {
     const view = renderWithI18n([makeTask('t1', 'running')])
     view.rerender(
       <I18nProvider>
@@ -68,13 +68,13 @@ describe('TaskCenter — 同步任务经通知栈展示', () => {
         <TaskCenter tasks={[makeTask('t1', 'failed')]} />
       </I18nProvider>,
     )
-    // 运行卡按退出动画关闭（250ms 后移除）
+    // 进度条消失（原地更新为结果卡，不另弹新卡）
     await waitFor(() => expect(view.queryByText(/50%/)).toBeNull())
     expect(view.getByText('任务-t1')).toBeTruthy()
     expect(view.getByText('目标平台服务不可用')).toBeTruthy()
   })
 
-  it('任务由运行转成功：弹「同步完成」通知，无失败原因', async () => {
+  it('任务由运行转成功：原任务卡原地更新为「同步完成」，无失败原因', async () => {
     const view = renderWithI18n([makeTask('t1', 'running')])
     view.rerender(
       <I18nProvider>
@@ -82,11 +82,31 @@ describe('TaskCenter — 同步任务经通知栈展示', () => {
         <TaskCenter tasks={[makeTask('t1', 'done')]} />
       </I18nProvider>,
     )
-    // 运行卡退出动画完成后仅剩结果通知
     await waitFor(() => expect(view.queryByText(/50%/)).toBeNull())
     expect(view.getByText('任务-t1')).toBeTruthy()
     expect(view.getByText('同步完成')).toBeTruthy()
     expect(view.queryByText('目标平台服务不可用')).toBeNull()
+  })
+
+  it('结果卡自动消失：转终态后不再持续驻留', async () => {
+    vi.useFakeTimers()
+    try {
+      const view = renderWithI18n([makeTask('t1', 'running')])
+      view.rerender(
+        <I18nProvider>
+          <ToastHost />
+          <TaskCenter tasks={[makeTask('t1', 'done')]} />
+        </I18nProvider>,
+      )
+      expect(view.getByText('同步完成')).toBeTruthy()
+      // 推进结果卡通知时长（5500ms）+ 退出动画（250ms）：卡片应整体移除
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(6000)
+      })
+      expect(view.queryByText('任务-t1')).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('应用启动恢复的历史任务不弹结果通知（回归：历史恢复时结果轰炸）', () => {
@@ -100,5 +120,20 @@ describe('TaskCenter — 同步任务经通知栈展示', () => {
     expect(view.getByText('任务-t1')).toBeTruthy()
     fireEvent.click(view.getByRole('button', { name: 'close' }))
     await waitFor(() => expect(view.queryByText('任务-t1')).toBeNull())
+  })
+
+  it('运行卡被用户关闭后任务结束：不复活结果通知（执行结束不弹新窗口）', async () => {
+    const view = renderWithI18n([makeTask('t1', 'running')])
+    fireEvent.click(view.getByRole('button', { name: 'close' }))
+    await waitFor(() => expect(view.queryByText('任务-t1')).toBeNull())
+    view.rerender(
+      <I18nProvider>
+        <ToastHost />
+        <TaskCenter tasks={[makeTask('t1', 'failed')]} />
+      </I18nProvider>,
+    )
+    // 卡片已关闭：结束静默，不出现任务名/失败原因/「同步失败」
+    expect(view.queryByText('任务-t1')).toBeNull()
+    expect(view.queryByText('目标平台服务不可用')).toBeNull()
   })
 })

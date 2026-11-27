@@ -90,6 +90,15 @@ export function skipRunningSync(taskId: string): boolean {
   return false
 }
 
+/**
+ * 当前活跃同步任务 id 集合：执行中（runningSyncs）∪ 等待用户确认（pendingSyncs）。
+ * 同步历史读取时用于归因：不在集合中的 running 记录是「终态写回丢失」的残留，应归为 interrupted，
+ * 否则用户打开同步历史会看到永不结束的「进行中」。
+ */
+export function activeSyncTaskIds(): Set<string> {
+  return new Set([...runningSyncs.keys(), ...pendingSyncs.keys()])
+}
+
 /** 搜索请求超时：正常 1~2s 内返回，收紧到 15s 快速失败进入退避重试（并发池下卡死请求不再长时间占坑） */
 const SEARCH_TIMEOUT_MS = 15_000
 /** 建单/批量写入超时：批量操作平台端处理较慢，保留宽松上限 */

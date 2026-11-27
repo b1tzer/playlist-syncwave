@@ -84,12 +84,33 @@ export function notifyTask(
   show(toast)
 }
 
-/** 关闭任务卡片（任务结束后调用，结果另用 notify 弹普通通知） */
+/** 关闭任务卡片（任务消失/汇总切换时移除，不产生结果通知） */
 export function closeTaskToast(key: string): void {
   const id = taskCardIds.get(key)
   if (id === undefined) return
   taskCardIds.delete(key)
   close(id)
+}
+
+/**
+ * 任务结束：持久任务卡「原地」更新为结果通知（复用卡片 id，不关旧卡另弹新卡），
+ * 随后自动消失。卡片已被用户手动关闭时静默——执行结束不再弹新窗口。
+ */
+export function finishTaskToast(
+  key: string,
+  opts: { type: ToastType; title: string; detail?: string },
+): void {
+  const id = taskCardIds.get(key)
+  if (id === undefined) return
+  taskCardIds.delete(key)
+  show({
+    id,
+    type: opts.type,
+    title: opts.title,
+    detail: opts.detail,
+    duration: opts.type === 'error' ? 6000 : opts.detail ? 5500 : 4000,
+    leaving: false,
+  })
 }
 
 function show(toast: ToastItem): void {
@@ -196,14 +217,19 @@ export function ToastHost() {
       }
       const toast = event.toast
       setToasts((prev) => {
-        // 同 key 更新既有卡片（任务进度更新）；无 key 按堆叠上限追加
+        // 同 key 更新既有卡片（任务进度更新）；key 未命中时按 id 匹配
+        // （任务卡原地转结果通知复用同 id），均未命中才追加
+        let idx = -1
         if (toast.key !== undefined) {
-          const idx = prev.findIndex((t) => t.key === toast.key)
-          if (idx >= 0) {
-            const next = [...prev]
-            next[idx] = toast
-            return next
-          }
+          idx = prev.findIndex((t) => t.key === toast.key)
+        }
+        if (idx === -1) {
+          idx = prev.findIndex((t) => t.id === toast.id)
+        }
+        if (idx >= 0) {
+          const next = [...prev]
+          next[idx] = toast
+          return next
         }
         return [...prev.slice(-(MAX_VISIBLE - 1)), toast]
       })
@@ -215,6 +241,10 @@ export function ToastHost() {
   }, [])
 
   const dismiss = (id: number) => {
+    // 持久任务卡被用户手动关闭后，任务结束不再原地复活结果通知（执行结束不弹新窗口）
+    for (const [key, cardId] of taskCardIds) {
+      if (cardId === id) taskCardIds.delete(key)
+    }
     setToasts((prev) =>
       prev.map((t) => (t.id === id && !t.leaving ? { ...t, leaving: true } : t)),
     )
