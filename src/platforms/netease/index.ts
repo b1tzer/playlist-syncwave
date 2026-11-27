@@ -148,8 +148,8 @@ export class NeteaseAdapter extends BasePlatformAdapter {
             : {}),
         }
       })
-      // 无 id 的残缺条目无法点选确认，直接过滤
-      .filter((c) => c.id !== '')
+      // 无 id 或上游记 0（翻唱/改编条目缺 id）的残缺条目无法点选确认，直接过滤
+      .filter((c) => c.id !== '' && c.id !== '0')
   }
 
   private async fetchEncyclopediaDetail(

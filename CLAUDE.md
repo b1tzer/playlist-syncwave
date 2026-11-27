@@ -43,7 +43,7 @@
 要点：
 - `planning.md` 以**当前状态**为准：只描述现行技术约定、已交付能力与发布前人工验收清单；过程叙事（原计划/已变更/修复迭代/历史测试数）不进正文，需要追溯时查 git 历史。
 - `docs/platform-api-fields.md` 是上游接口契约：字段表须标注来源（✅ 实测抓取 / 📐 SDK·NCM·适配器源码），未实测不得冒充实测。
-- 版本号表、测试数等易腐化数字，改完顺手核对一次。当前基线：四平台、十二张 SQLite 表（含 `schema_migrations`）、迁移至 v13、缓存 schema v7、584 项测试（另有 9 项真实网络链路验证，`LIVE_VERIFY=1 npx vitest run tests/live` 时运行）、TypeScript 6.0.3 / Vite 8 / Vitest 5 / Electron 45。
+- 版本号表、测试数等易腐化数字，改完顺手核对一次。当前基线：四平台、十二张 SQLite 表（含 `schema_migrations`）、迁移至 v13、缓存 schema v7、585 项测试（另有 9 项真实网络链路验证，`LIVE_VERIFY=1 npx vitest run tests/live` 时运行）、TypeScript 6.0.3 / Vite 8 / Vitest 5 / Electron 45。
 - 发布前自动化门禁：`npm run typecheck && npm run lint && npm run test && npm run build` 全绿；人工验收清单见 `planning.md` 第 5 节（2026-11-25 已完成）。
 - 发布相关变更（版本、流程、更新源）同步更新 `CHANGELOG.md`，并在 `README.md`「发布流程」与 `planning.md` 第 8 节保持一致。
 

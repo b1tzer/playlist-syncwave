@@ -268,6 +268,16 @@ export function createEncyclopediaService(deps: {
   }
 
   function confirm(req: EncyclopediaConfirmRequest): void {
+    // 上游脏数据把缺 id 记为 0：无效 id 不落映射，避免脏映射污染后续直达与本地歌曲标识回写
+    if (!isValidEntityId(req.entityId)) {
+      log.warn('encyclopedia.confirm', '忽略无效实体 id（上游脏数据）', {
+        platform: req.platform,
+        kind: req.kind,
+        name: req.name,
+        entityId: req.entityId,
+      })
+      return
+    }
     deps.store.save(req.platform, req.kind, req.name, req.entityId, req.entityName)
     invalidateName(req.platform, req.kind, req.name)
     log.debug('encyclopedia.confirm', '已记录纠偏映射', {

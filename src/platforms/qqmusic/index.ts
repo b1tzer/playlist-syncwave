@@ -280,8 +280,8 @@ export class QqMusicAdapter extends BasePlatformAdapter {
           singer: pickString(item.singer_name, item.singerName, item.singername),
         }
       })
-      // 无 id 的残缺条目无法点选确认，直接过滤
-      .filter((c) => c.id !== '')
+      // 无 id 或上游记 0 的残缺条目无法点选确认，直接过滤
+      .filter((c) => c.id !== '' && c.id !== '0')
   }
 
   private async fetchEncyclopediaDetail(

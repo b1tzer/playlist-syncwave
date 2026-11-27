@@ -75,7 +75,7 @@ import { buildApplicationMenu, installWindowShortcuts } from './menu'
 import { setupAutoUpdater, checkForUpdates, openInstaller, setAutoUpdateEnabled } from './updater'
 import { notifySyncResult, notifySyncStopped } from './notifications'
 import { createPlaylistCacheService } from './playlistCacheService'
-import { createEncyclopediaService } from './encyclopediaService'
+import { createEncyclopediaService, isValidEntityId } from './encyclopediaService'
 import { createSongDetailService } from './songDetailService'
 import { getDatabase, takePendingResumeTasks } from './appDatabase'
 import type { SyncTaskRecord, SyncChoice } from '@core/models/sync'
@@ -1317,8 +1317,7 @@ ipcMain.handle('encyclopedia:confirm', (_event, req: EncyclopediaConfirmRequest)
         (req.kind !== 'singer' && req.kind !== 'album') ||
         typeof req.name !== 'string' ||
         !req.name.trim() ||
-        typeof req.entityId !== 'string' ||
-        !req.entityId ||
+        !isValidEntityId(req.entityId) ||
         typeof req.entityName !== 'string' ||
         !req.entityName
       ) {

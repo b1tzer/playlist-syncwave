@@ -315,6 +315,25 @@ describe('createEncyclopediaService.lookup', () => {
     expect(result).toMatchObject({ status: 'content', content: { id: 'c9' } })
   })
 
+  it('confirm 拒绝无效实体 id（空串/0 上游脏数据不落映射）', async () => {
+    const { service, store } = setup({ encyclopedia: { search: vi.fn(), detail: vi.fn() } })
+    service.confirm({
+      platform: 'netease',
+      kind: 'singer',
+      name: '周杰伦',
+      entityId: '0',
+      entityName: '周杰伦',
+    })
+    service.confirm({
+      platform: 'netease',
+      kind: 'singer',
+      name: '周杰伦',
+      entityId: '',
+      entityName: '周杰伦',
+    })
+    expect(store.save).not.toHaveBeenCalled()
+  })
+
   it('令牌桶耗尽时静默降级为空态', async () => {
     const { service } = setup({
       encyclopedia: {
