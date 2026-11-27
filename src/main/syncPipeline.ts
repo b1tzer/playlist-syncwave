@@ -19,7 +19,8 @@ import { getPlatform, resolveAdapter } from './platformRegistry'
 import { findMappings, saveAutoMapping } from './mappingService'
 import { deriveTaskCounts, markTaskDetailFailed } from '@core/sync/taskStats'
 import { getDatabase } from './appDatabase'
-import { syncTuning } from './settingsService'
+import { getSetting, syncTuning } from './settingsService'
+import { isUserReadableMessage, normalizeIpcError } from '@core/ipcError'
 import { notifySyncResult, notifySyncStopped } from './notifications'
 import { logCenter } from './logging/logCenter'
 
@@ -143,11 +144,18 @@ export function registerLocalPlaylistSyncTarget(
   broadcastSync('local-playlist:changed', { id: sourceLocalPlaylistId })
 }
 
-/** 失败明细行：`歌名 - 歌手（原因）`（主进程恢复执行终态写入用，与渲染层同格式） */
+/**
+ * 失败明细行：`歌名 - 歌手（原因）`（主进程恢复执行终态写入用，与渲染层同格式）。
+ * 原因经友好化过滤：剥离 IPC 包装，技术性报错回退通用文案，保证落库/广播内容可直接展示。
+ */
 export function failedDetailLines(failed: SyncFailedItem[]): string[] {
-  return failed.map(
-    (f) => `${f.query.title}${f.query.artist ? ` - ${f.query.artist}` : ''}（${f.message}）`,
-  )
+  const zh = getSetting<string>('language', 'zh-CN') !== 'en-US'
+  const fallback = zh ? '同步失败' : 'Sync failed'
+  return failed.map((f) => {
+    const reason = normalizeIpcError(f.message ?? '')
+    const readable = reason && isUserReadableMessage(reason) ? reason : fallback
+    return `${f.query.title}${f.query.artist ? ` - ${f.query.artist}` : ''}（${readable}）`
+  })
 }
 
 /** 恢复输入清单：原始输入优先，旧任务缺失时按明细 index 重建 */

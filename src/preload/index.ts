@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
+import { normalizeIpcError } from '@core/ipcError'
 import type {
   PlatformAccount,
   PlatformMeta,
@@ -80,6 +81,18 @@ export interface PlaylistRefreshEvent<T> {
   removedIds?: string[]
 }
 
+/**
+ * 统一 IPC 调用入口（第一层错误兜底）：
+ * Electron 会把主进程 reject 的错误包装成 "Error invoking remote method 'xxx': Error: …"，
+ * 在 preload 层统一剥离包装后重新抛出，任何渲染层调用点拿到的错误消息
+ * 都不再暴露内部通道名，即使调用点漏了错误处理也不会把包装原文展示给用户。
+ */
+function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
+  return ipcRenderer.invoke(channel, ...args).catch((e: unknown) => {
+    throw new Error(normalizeIpcError(e) || '操作失败，请稍后重试')
+  })
+}
+
 const api = {
   /** 运行平台（darwin/win32/linux），渲染层用于红绿灯避让等平台差异布局 */
   platform: process.platform,
@@ -88,23 +101,23 @@ const api = {
     language: string
     theme: string
   },
-  getVersion: (): Promise<string> => ipcRenderer.invoke('app:get-version'),
-  encrypt: (plain: string): Promise<string> => ipcRenderer.invoke('crypto:encrypt', plain),
+  getVersion: (): Promise<string> => invoke('app:get-version'),
+  encrypt: (plain: string): Promise<string> => invoke('crypto:encrypt', plain),
   /** 在系统浏览器/平台应用中打开链接（http/https/平台深链白名单） */
-  openExternal: (url: string): Promise<void> => ipcRenderer.invoke('app:open-external', url),
+  openExternal: (url: string): Promise<void> => invoke('app:open-external', url),
   /** 打开文件选择器导入歌单文本文件（m3u/m3u8/csv/txt/lrc/json），取消返回 null */
   openTextFile: (): Promise<{ name: string; content: string } | null> =>
-    ipcRenderer.invoke('app:open-text-file'),
+    invoke('app:open-text-file'),
   /** 导出文本文件：选择保存位置后写入，返回保存路径（取消返回 null） */
   saveTextFile: (defaultName: string, content: string, extension: string): Promise<string | null> =>
-    ipcRenderer.invoke('app:save-text-file', defaultName, content, extension),
+    invoke('app:save-text-file', defaultName, content, extension),
 
   /** 网络代理：读取/设置（空串清除）/连通性测试 */
   proxy: {
-    get: (): Promise<string> => ipcRenderer.invoke('proxy:get'),
-    set: (url: string): Promise<void> => ipcRenderer.invoke('proxy:set', url),
+    get: (): Promise<string> => invoke('proxy:get'),
+    set: (url: string): Promise<void> => invoke('proxy:set', url),
     test: (url: string): Promise<{ ok: boolean; latencyMs?: number; error?: string }> =>
-      ipcRenderer.invoke('proxy:test', url),
+      invoke('proxy:test', url),
   },
   /** 渲染进程日志投递：主进程校验后写入统一日志管线 */
   log: (entry: LogEntry): void => {
@@ -117,14 +130,14 @@ const api = {
     return () => ipcRenderer.removeListener('app:navigate', listener)
   },
   /** 开机启动：读取系统登录项真实状态 / 应用设置 */
-  getAutoLaunch: (): Promise<boolean> => ipcRenderer.invoke('app:get-auto-launch'),
+  getAutoLaunch: (): Promise<boolean> => invoke('app:get-auto-launch'),
   setAutoLaunch: (enabled: boolean): Promise<void> =>
-    ipcRenderer.invoke('app:set-auto-launch', enabled),
+    invoke('app:set-auto-launch', enabled),
 
   /** 自动更新：状态流转（与主进程 updater.UpdateStatus 保持同构） */
   updater: {
-    check: (): Promise<void> => ipcRenderer.invoke('update:check'),
-    openInstaller: (): Promise<void> => ipcRenderer.invoke('update:open-installer'),
+    check: (): Promise<void> => invoke('update:check'),
+    openInstaller: (): Promise<void> => invoke('update:open-installer'),
     onStatus: (callback: (status: UpdateStatus) => void): (() => void) => {
       const listener = (_event: unknown, status: UpdateStatus) => callback(status)
       ipcRenderer.on('update:status', listener)
@@ -139,20 +152,20 @@ const api = {
   },
 
   platforms: {
-    list: (): Promise<PlatformMeta[]> => ipcRenderer.invoke('platform:list'),
+    list: (): Promise<PlatformMeta[]> => invoke('platform:list'),
     createQr: (platform: string, channel?: string): Promise<QrLoginTicket> =>
-      ipcRenderer.invoke('platform:create-qr', platform, channel),
+      invoke('platform:create-qr', platform, channel),
     checkQr: (platform: string, key: string): Promise<QrLoginResult> =>
-      ipcRenderer.invoke('platform:check-qr', platform, key),
+      invoke('platform:check-qr', platform, key),
     /** 网页登录：主进程打开登录窗口，成功后返回账号；用户取消返回 null */
     beginWebLogin: (platform: string): Promise<PlatformAccount | null> =>
-      ipcRenderer.invoke('platform:begin-web-login', platform),
+      invoke('platform:begin-web-login', platform),
     loginStatus: (platform: string): Promise<PlatformAccount | null> =>
-      ipcRenderer.invoke('platform:login-status', platform),
-    logout: (platform: string): Promise<void> => ipcRenderer.invoke('platform:logout', platform),
+      invoke('platform:login-status', platform),
+    logout: (platform: string): Promise<void> => invoke('platform:logout', platform),
     /** 歌单列表（force=true 手动强制刷新，受限流阈值约束） */
     userPlaylists: (platform: string, force?: boolean): Promise<PlaylistFetchResult<PlatformPlaylist[]>> =>
-      ipcRenderer.invoke('platform:user-playlists', platform, force === true),
+      invoke('platform:user-playlists', platform, force === true),
     /** 歌单列表分页（滚动加载：offset 从 0 起，limit ≤200；force 强制重新验证，silent 限流时静默） */
     userPlaylistsPage: (
       platform: string,
@@ -161,7 +174,7 @@ const api = {
       force?: boolean,
       silent?: boolean,
     ): Promise<PagedFetchResult<PlatformPlaylist>> =>
-      ipcRenderer.invoke(
+      invoke(
         'platform:user-playlists-page',
         platform,
         offset,
@@ -175,7 +188,7 @@ const api = {
       playlistId: string,
       force?: boolean,
     ): Promise<PlaylistFetchResult<PlatformSong[]>> =>
-      ipcRenderer.invoke('platform:playlist-songs', platform, playlistId, force === true),
+      invoke('platform:playlist-songs', platform, playlistId, force === true),
     /** 歌单歌曲分页（滚动加载：offset 从 0 起，limit ≤200；force 强制重新验证，silent 限流时静默） */
     playlistSongsPage: (
       platform: string,
@@ -185,7 +198,7 @@ const api = {
       force?: boolean,
       silent?: boolean,
     ): Promise<PagedFetchResult<PlatformSong>> =>
-      ipcRenderer.invoke(
+      invoke(
         'platform:playlist-songs-page',
         platform,
         playlistId,
@@ -219,20 +232,20 @@ const api = {
       limit?: number,
       page?: number,
     ): Promise<PlatformSong[]> =>
-      ipcRenderer.invoke('platform:search-songs', platform, keyword, limit, page),
+      invoke('platform:search-songs', platform, keyword, limit, page),
     renamePlaylist: (platform: string, playlistId: string, name: string): Promise<void> =>
-      ipcRenderer.invoke('platform:playlist-rename', platform, playlistId, name),
+      invoke('platform:playlist-rename', platform, playlistId, name),
     createPlaylist: (platform: string, name: string): Promise<string> =>
-      ipcRenderer.invoke('platform:playlist-create', platform, name),
+      invoke('platform:playlist-create', platform, name),
     deletePlaylist: (platform: string, playlistId: string): Promise<void> =>
-      ipcRenderer.invoke('platform:playlist-delete', platform, playlistId),
+      invoke('platform:playlist-delete', platform, playlistId),
     addSongsToPlaylist: (platform: string, playlistId: string, songIds: string[]): Promise<void> =>
-      ipcRenderer.invoke('platform:playlist-add-songs', platform, playlistId, songIds),
+      invoke('platform:playlist-add-songs', platform, playlistId, songIds),
     removeSongsFromPlaylist: (
       platform: string,
       playlistId: string,
       songIds: string[],
-    ): Promise<void> => ipcRenderer.invoke('platform:playlist-remove-songs', platform, playlistId, songIds),
+    ): Promise<void> => invoke('platform:playlist-remove-songs', platform, playlistId, songIds),
     syncPlaylist: (
       platform: string,
       taskId: string,
@@ -245,7 +258,7 @@ const api = {
       /** 来源本地歌单 id：同步建单成功后登记反向关联（本地列表点亮平台 logo） */
       sourceLocalPlaylistId?: string,
     ): Promise<{ taskId: string; report: SyncReport }> =>
-      ipcRenderer.invoke('platform:sync-playlist', platform, {
+      invoke('platform:sync-playlist', platform, {
         taskId,
         queries,
         playlistName,
@@ -259,18 +272,18 @@ const api = {
       taskId: string,
       selections: SyncSelection[],
     ): Promise<SyncReport> =>
-      ipcRenderer.invoke('platform:confirm-sync', platform, taskId, selections),
+      invoke('platform:confirm-sync', platform, taskId, selections),
     cancelSync: (taskId: string): Promise<void> =>
-      ipcRenderer.invoke('platform:cancel-sync', taskId),
+      invoke('platform:cancel-sync', taskId),
     /** 查询主进程当前待确认的同步会话（刷新后恢复确认窗口用） */
     listPendingConfirms: (): Promise<PendingConfirmInfo[]> =>
-      ipcRenderer.invoke('platform:pending-confirm'),
+      invoke('platform:pending-confirm'),
     /** 停止运行中的同步任务（已完成部分保留） */
     stopSync: (taskId: string): Promise<void> =>
-      ipcRenderer.invoke('platform:stop-sync', taskId),
+      invoke('platform:stop-sync', taskId),
     /** 请求跳过当前正在处理的歌曲，从下一首继续 */
     skipSync: (taskId: string): Promise<void> =>
-      ipcRenderer.invoke('platform:skip-sync', taskId),
+      invoke('platform:skip-sync', taskId),
     onSyncProgress: (callback: (progress: SyncProgress) => void): (() => void) => {
       const listener = (_event: unknown, progress: SyncProgress) => callback(progress)
       ipcRenderer.on('sync:progress', listener)
@@ -291,11 +304,11 @@ const api = {
   },
 
   syncHistory: {
-    list: (): Promise<SyncTaskRecord[]> => ipcRenderer.invoke('sync-history:list'),
+    list: (): Promise<SyncTaskRecord[]> => invoke('sync-history:list'),
     upsert: (task: SyncTaskRecord): Promise<void> =>
-      ipcRenderer.invoke('sync-history:upsert', task),
-    remove: (id: string): Promise<void> => ipcRenderer.invoke('sync-history:remove', id),
-    clear: (): Promise<void> => ipcRenderer.invoke('sync-history:clear'),
+      invoke('sync-history:upsert', task),
+    remove: (id: string): Promise<void> => invoke('sync-history:remove', id),
+    clear: (): Promise<void> => invoke('sync-history:clear'),
     /** 主进程执行中定期落库后广播任务快照（含恢复执行），渲染层据此实时刷新界面 */
     onTaskUpdated: (callback: (task: SyncTaskRecord) => void): (() => void) => {
       const listener = (_event: unknown, task: SyncTaskRecord) => callback(task)
@@ -306,26 +319,26 @@ const api = {
 
   settings: {
     getAll: (): Promise<Record<string, string | number | boolean>> =>
-      ipcRenderer.invoke('settings:get-all'),
+      invoke('settings:get-all'),
     get: (key: string, fallback: string | number | boolean): Promise<string | number | boolean> =>
-      ipcRenderer.invoke('settings:get', key, fallback),
+      invoke('settings:get', key, fallback),
     set: (key: string, value: string | number | boolean): Promise<void> =>
-      ipcRenderer.invoke('settings:set', key, value),
+      invoke('settings:set', key, value),
   },
 
   mappings: {
     stats: (): Promise<Array<{ platform: string; count: number; confirmed: number }>> =>
-      ipcRenderer.invoke('mappings:stats'),
-    clear: (platform: string): Promise<void> => ipcRenderer.invoke('mappings:clear', platform),
+      invoke('mappings:stats'),
+    clear: (platform: string): Promise<void> => invoke('mappings:clear', platform),
   },
 
   /** 清空歌单/歌曲本地缓存（危险区操作，返回删除行数） */
   cache: {
-    clear: (): Promise<{ playlists: number; songs: number }> => ipcRenderer.invoke('cache:clear'),
+    clear: (): Promise<{ playlists: number; songs: number }> => invoke('cache:clear'),
   },
 
   localPlaylists: {
-    list: (): Promise<LocalPlaylist[]> => ipcRenderer.invoke('local-playlist:list'),
+    list: (): Promise<LocalPlaylist[]> => invoke('local-playlist:list'),
     create: (
       name: string,
       songs: Array<{
@@ -335,12 +348,12 @@ const api = {
         durationMs?: number
         coverUrl?: string
       }>,
-    ): Promise<LocalPlaylist | null> => ipcRenderer.invoke('local-playlist:create', name, songs),
+    ): Promise<LocalPlaylist | null> => invoke('local-playlist:create', name, songs),
     rename: (id: string, name: string): Promise<void> =>
-      ipcRenderer.invoke('local-playlist:rename', id, name),
-    delete: (id: string): Promise<void> => ipcRenderer.invoke('local-playlist:delete', id),
+      invoke('local-playlist:rename', id, name),
+    delete: (id: string): Promise<void> => invoke('local-playlist:delete', id),
     songs: (id: string): Promise<LocalPlaylistSong[]> =>
-      ipcRenderer.invoke('local-playlist:songs', id),
+      invoke('local-playlist:songs', id),
     addSongs: (
       id: string,
       songs: Array<{
@@ -350,16 +363,16 @@ const api = {
         durationMs?: number
         coverUrl?: string
       }>,
-    ): Promise<void> => ipcRenderer.invoke('local-playlist:add-songs', id, songs),
+    ): Promise<void> => invoke('local-playlist:add-songs', id, songs),
     removeSongs: (id: string, positions: number[]): Promise<void> =>
-      ipcRenderer.invoke('local-playlist:remove-songs', id, positions),
+      invoke('local-playlist:remove-songs', id, positions),
     /** 平台歌单整单导出为本地歌单（保留平台 id 与次级唯一标识） */
     importPlatformPlaylist: (
       platform: string,
       playlist: PlatformPlaylist,
       targetId?: string,
     ): Promise<LocalPlaylistSyncResult | null> =>
-      ipcRenderer.invoke('local-playlist:import-platform', platform, playlist, targetId),
+      invoke('local-playlist:import-platform', platform, playlist, targetId),
     /** 主进程写入本地歌单后广播，渲染层据此刷新列表 */
     onChanged: (callback: () => void): (() => void) => {
       const listener = () => callback()

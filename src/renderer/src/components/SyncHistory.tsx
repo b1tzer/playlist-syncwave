@@ -6,6 +6,7 @@ import { useI18n } from '../i18n'
 import type { TranslationKey, TranslateParams } from '../i18n/translations'
 import { syncItemTitle } from '../sync/helpers'
 import { syncSourceLabel, isLocalSource } from '../sync/sourceLabel'
+import { userFacingErrorMessage } from '../utils/ipcError'
 import { deriveTaskCounts, firstFailureReason, taskSummaryKind } from '@core/sync/taskStats'
 import SongList from './SongList'
 import PlatformLogo from './PlatformLogo'
@@ -103,8 +104,20 @@ function failedReasonText(t: Translate, item: SyncItemResult): string {
     case 'skipped':
       return t('syncHistory.itemSkipped')
     default:
-      return item.message ?? t('sync.failedGeneric')
+      // 展示处兜底：历史任务明细可能存有旧版原始错误，统一过滤技术性报错
+      return userFacingErrorMessage(item.message ?? '', t('sync.failedGeneric'))
   }
+}
+
+/**
+ * 失败原因行的展示兜底：技术性报错过滤为通用文案；
+ * 「歌名（原因）」格式行在原因不可展示时保留歌名部分，不丢上下文。
+ */
+function failedDetailLine(t: Translate, line: string): string {
+  const friendly = userFacingErrorMessage(line, '')
+  if (friendly) return friendly
+  const idx = line.indexOf('（')
+  return idx > 0 ? line.slice(0, idx) : t('sync.failedGeneric')
 }
 
 /** 明细项在模板中的稳定 id（组内唯一） */
@@ -175,7 +188,7 @@ function TaskDetailSection({
         task.failedDetail.length > 0 ? (
           <ul className="space-y-1 font-label-sm text-label-sm text-error">
             {task.failedDetail.map((f, i) => (
-              <li key={i}>· {f}</li>
+              <li key={i}>· {failedDetailLine(t, f)}</li>
             ))}
           </ul>
         ) : (
@@ -189,7 +202,7 @@ function TaskDetailSection({
             task.failedDetail.length > 0 && (
               <ul className="mb-3 space-y-1 font-label-sm text-label-sm text-error">
                 {task.failedDetail.map((f, i) => (
-                  <li key={i}>· {f}</li>
+                  <li key={i}>· {failedDetailLine(t, f)}</li>
                 ))}
               </ul>
             )}
@@ -604,7 +617,7 @@ export default function SyncHistory({
                 {taskSummaryKind(task.status) === 'failure' && (
                   <span className="flex items-center gap-1 text-error">
                     <span className="material-symbols-outlined text-sm">error_outline</span>
-                    {firstFailureReason(task) ?? t('sync.failedGeneric')}
+                    {userFacingErrorMessage(firstFailureReason(task) ?? '', t('sync.failedGeneric'))}
                   </span>
                 )}
               </div>

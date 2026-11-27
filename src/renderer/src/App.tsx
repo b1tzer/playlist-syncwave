@@ -334,7 +334,7 @@ export default function App() {
           added: rep.added,
           failed: rep.failed.length,
           progress: 1,
-          failedDetail: failedDetailLines(rep.failed),
+          failedDetail: failedDetailLines(t, rep.failed),
           detail: rep.items,
           playlistId: rep.playlistId || undefined,
         })
@@ -392,7 +392,7 @@ export default function App() {
         added: counts.added,
         failed: counts.failed,
         progress: 1,
-        failedDetail: failedDetailLines(rep.failed),
+        failedDetail: failedDetailLines(t, rep.failed),
         detail: rep.items,
         playlistId: rep.playlistId || undefined,
       })

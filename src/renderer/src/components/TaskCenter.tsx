@@ -8,6 +8,7 @@ import {
 } from '@core/sync/taskCenter'
 import { useI18n } from '../i18n'
 import type { TranslationKey } from '../i18n/translations'
+import { userFacingErrorMessage } from '../utils/ipcError'
 import PlatformLogo from './PlatformLogo'
 import ProgressBar from './ProgressBar'
 
@@ -144,7 +145,9 @@ function FinishedCard({
           failed ? 'text-error' : 'text-on-surface-variant'
         }`}
       >
-        {failed && item.reason ? item.reason : t(meta.labelKey)}
+        {failed && item.reason
+          ? userFacingErrorMessage(item.reason, t(meta.labelKey))
+          : t(meta.labelKey)}
       </p>
     </div>
   )

@@ -11,6 +11,7 @@ import { createRendererLogger } from '../logging/rendererLogger'
 import { useI18n } from '../i18n'
 import { notify } from '../components/toast'
 import { notifyError } from '../utils/notifyError'
+import { userFacingErrorMessage } from '../utils/ipcError'
 import { syncFailedText } from './helpers'
 import { deriveTaskCounts, markTaskDetailFailed } from '@core/sync/taskStats'
 
@@ -230,7 +231,9 @@ export function useSyncRunner() {
           playlistId: rep.playlistId || undefined,
         })
       } catch (e) {
-        const msg = e instanceof Error ? e.message : t('sync.failedGeneric')
+        // 错误文案源头友好化：剥离 IPC 包装，技术性报错回退通用文案。
+        // 此后 msg 进入任务记录（failedDetail/明细/落库）与 toast，展示侧不再出现原始异常。
+        const msg = userFacingErrorMessage(e, t('sync.failedGeneric'))
         log.error('runner.failed', '同步失败', e, { targetPlatform })
         setError(msg)
         // 错误提示走右上角 toast，代码性报错过滤为通用文案

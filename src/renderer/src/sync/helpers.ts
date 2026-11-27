@@ -1,6 +1,7 @@
 import { normalize } from '@core/matcher/matchSong'
 import type { SyncFailedItem } from '@core/models/sync'
 import type { TranslationKey, TranslateParams } from '../i18n/translations'
+import { userFacingErrorMessage } from '../utils/ipcError'
 
 export type Translate = (key: TranslationKey, params?: TranslateParams) => string
 
@@ -14,7 +15,10 @@ export function syncItemTitle(q: { title: string; artist?: string }): string {
   return `${q.title}${q.artist ? ` - ${q.artist}` : ''}`
 }
 
-/** 同步失败条目按稳定 reason 码翻译；平台原始错误直接透传 */
+/**
+ * 同步失败条目按稳定 reason 码翻译；平台原始错误经友好化后透传
+ * （剥离 IPC 包装，技术性报错回退通用文案）。
+ */
 export function syncFailedText(t: Translate, f: SyncFailedItem): string {
   const title = syncItemTitle(f.query)
   switch (f.reason) {
@@ -25,13 +29,16 @@ export function syncFailedText(t: Translate, f: SyncFailedItem): string {
     case 'rate-limited':
       return t('sync.failedRateLimited')
     default:
-      return f.message
+      return userFacingErrorMessage(f.message ?? '', t('sync.failedGeneric'))
   }
 }
 
-/** 失败明细行：`歌名 - 歌手（原因）` */
-export function failedDetailLines(failed: SyncFailedItem[]): string[] {
-  return failed.map((f) => `${syncItemTitle(f.query)}（${f.message}）`)
+/** 失败明细行：`歌名 - 歌手（原因）`，原因经友好化过滤 */
+export function failedDetailLines(t: Translate, failed: SyncFailedItem[]): string[] {
+  return failed.map(
+    (f) =>
+      `${syncItemTitle(f.query)}（${userFacingErrorMessage(f.message ?? '', t('sync.failedGeneric'))}）`,
+  )
 }
 
 /** 毫秒时长 → m:ss；缺省显示 -- */
