@@ -37,8 +37,12 @@ type SettledMatch =
   | { type: 'matched'; songId: string; matchedSong?: SyncMatchedResource }
   | { type: 'choice'; attempt: MatchQuery; candidates: PlatformSong[] }
 
-/** 限流触发后的全局冷却时长：所有在途/后续搜索暂停，等待平台风控窗口过去 */
-const RATE_LIMIT_COOLDOWN_MS = 4_000
+/**
+ * 限流触发后的全局冷却时长：所有在途/后续搜索暂停，等待平台风控窗口过去。
+ * 实测网易云匿名搜索 405 风控窗口为分钟级，4s 冷却内重试全部落空（33 秒 88 请求全灭），
+ * 故拉长至 20s，限流期间的重试请求同样等待冷却结束再发起。
+ */
+const RATE_LIMIT_COOLDOWN_MS = 20_000
 
 /**
  * 阶段一：受控并发搜索 + 金标准判定。
@@ -151,7 +155,12 @@ export async function planSync(
             }
             const retryable = e instanceof SearchError ? e.retryable : false
             if (!retryable || retry === searchRetries) return null
-            const waitMs = Math.min(1000 * 2 ** retry, 5000)
+            // 普通可重试错误按指数退避；限流错误至少等到冷却窗口结束再重试，
+            // 否则重试请求会在风控期内继续叠加，形成「重试即加速限流」的负反馈
+            const rateLimited = e instanceof SearchError && e.rateLimited
+            const waitMs = rateLimited
+              ? Math.max(cooldownUntil - Date.now(), 1000)
+              : Math.min(1000 * 2 ** retry, 5000)
             log.warn('plan.search-retry', '搜索失败，准备重试', {
               title: query.title,
               keyword,

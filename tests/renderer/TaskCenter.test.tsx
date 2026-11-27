@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { cleanup, fireEvent, render } from '@testing-library/react'
+import { cleanup, fireEvent, render, waitFor } from '@testing-library/react'
 import type { SyncTaskRecord, SyncTaskStatus } from '@core/models/sync'
 import TaskCenter from '../../src/renderer/src/components/TaskCenter'
+import { ToastHost } from '../../src/renderer/src/components/toast'
 import { I18nProvider } from '../../src/renderer/src/i18n'
 
 const makeTask = (
@@ -27,19 +28,12 @@ const makeTask = (
   ...overrides,
 })
 
-const platforms = [
-  {
-    id: 'netease',
-    name: '网易云音乐',
-    icon: 'cloud',
-    capabilities: { read: true, write: true },
-  },
-]
-
+// TaskCenter 声明在 ToastHost 之后：挂载 effects 按声明顺序执行，先订阅后推送
 const renderWithI18n = (tasks: SyncTaskRecord[]) =>
   render(
     <I18nProvider>
-      <TaskCenter tasks={tasks} platforms={platforms} />
+      <ToastHost />
+      <TaskCenter tasks={tasks} />
     </I18nProvider>,
   )
 
@@ -52,56 +46,59 @@ beforeEach(() => {
   }
 })
 
-describe('TaskCenter — 右上角任务中心组件', () => {
-  it('运行中任务显示任务名与进度百分比', () => {
+describe('TaskCenter — 同步任务经通知栈展示', () => {
+  it('运行中任务以持久通知卡展示：任务名与进度百分比', () => {
     const view = renderWithI18n([makeTask('t1', 'running', { progress: 0.42 })])
-    const running = view.getByTestId('task-center-running')
-    expect(running.textContent).toContain('任务-t1')
-    expect(running.textContent).toContain('42%')
-    expect(view.queryByTestId('task-center-finished')).toBeNull()
+    expect(view.getByText('任务-t1')).toBeTruthy()
+    expect(view.getByText(/42%/)).toBeTruthy()
+    expect(view.queryByText(/同步完成/)).toBeNull()
   })
 
-  it('任务由运行中转失败：显示失败卡片与失败原因', () => {
+  it('运行中任务卡带停止按钮，点击调 stopSync', () => {
+    const view = renderWithI18n([makeTask('t1', 'running')])
+    fireEvent.click(view.getByRole('button', { name: '停止任务' }))
+    expect(window.electronAPI.platforms.stopSync).toHaveBeenCalledWith('t1')
+  })
+
+  it('任务由运行中转失败：运行卡消失，弹失败通知与失败原因', async () => {
     const view = renderWithI18n([makeTask('t1', 'running')])
     view.rerender(
       <I18nProvider>
-        <TaskCenter tasks={[makeTask('t1', 'failed')]} platforms={platforms} />
+        <ToastHost />
+        <TaskCenter tasks={[makeTask('t1', 'failed')]} />
       </I18nProvider>,
     )
-    expect(view.queryByTestId('task-center-running')).toBeNull()
-    const finished = view.getByTestId('task-center-finished')
-    expect(finished.getAttribute('data-status')).toBe('failed')
-    expect(finished.textContent).toContain('任务-t1')
-    expect(finished.textContent).toContain('目标平台服务不可用')
+    // 运行卡按退出动画关闭（250ms 后移除）
+    await waitFor(() => expect(view.queryByText(/50%/)).toBeNull())
+    expect(view.getByText('任务-t1')).toBeTruthy()
+    expect(view.getByText('目标平台服务不可用')).toBeTruthy()
   })
 
-  it('任务由运行转成功：显示成功卡片，无失败原因', () => {
+  it('任务由运行转成功：弹「同步完成」通知，无失败原因', async () => {
     const view = renderWithI18n([makeTask('t1', 'running')])
     view.rerender(
       <I18nProvider>
-        <TaskCenter tasks={[makeTask('t1', 'done')]} platforms={platforms} />
+        <ToastHost />
+        <TaskCenter tasks={[makeTask('t1', 'done')]} />
       </I18nProvider>,
     )
-    const finished = view.getByTestId('task-center-finished')
-    expect(finished.getAttribute('data-status')).toBe('done')
-    expect(finished.textContent).toContain('同步完成')
+    // 运行卡退出动画完成后仅剩结果通知
+    await waitFor(() => expect(view.queryByText(/50%/)).toBeNull())
+    expect(view.getByText('任务-t1')).toBeTruthy()
+    expect(view.getByText('同步完成')).toBeTruthy()
+    expect(view.queryByText('目标平台服务不可用')).toBeNull()
   })
 
-  it('应用启动恢复的历史任务不弹出结果卡片（回归：历史恢复时结果轰炸）', () => {
+  it('应用启动恢复的历史任务不弹结果通知（回归：历史恢复时结果轰炸）', () => {
     const view = renderWithI18n([makeTask('t-done', 'done'), makeTask('t-fail', 'failed')])
-    expect(view.queryByTestId('task-center-finished')).toBeNull()
-    expect(view.queryByTestId('task-center-running')).toBeNull()
+    expect(view.queryByText('任务-t-done')).toBeNull()
+    expect(view.queryByText('任务-t-fail')).toBeNull()
   })
 
-  it('失败卡片可手动关闭', () => {
+  it('通知卡可手动关闭', async () => {
     const view = renderWithI18n([makeTask('t1', 'running')])
-    view.rerender(
-      <I18nProvider>
-        <TaskCenter tasks={[makeTask('t1', 'failed')]} platforms={platforms} />
-      </I18nProvider>,
-    )
-    expect(view.getByTestId('task-center-finished')).toBeTruthy()
-    fireEvent.click(view.getByRole('button', { name: '关闭' }))
-    expect(view.queryByTestId('task-center-finished')).toBeNull()
+    expect(view.getByText('任务-t1')).toBeTruthy()
+    fireEvent.click(view.getByRole('button', { name: 'close' }))
+    await waitFor(() => expect(view.queryByText('任务-t1')).toBeNull())
   })
 })

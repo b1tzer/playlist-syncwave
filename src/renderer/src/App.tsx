@@ -491,8 +491,6 @@ export default function App() {
               </button>
             )}
           </div>
-          {/* 右上角任务中心：运行中任务显示名称与进度，结束后显示成功/失败与失败原因 */}
-          <TaskCenter tasks={tasks} platforms={platforms} />
         </header>
 
         <main className="flex-1 overflow-y-auto">
@@ -602,6 +600,9 @@ export default function App() {
 
       {/* 右上角全局通知 */}
       <ToastHost />
+      {/* 任务中心：逻辑组件（不渲染 DOM），把同步任务进度/结果推送到通知栈。
+          必须声明在 ToastHost 之后：挂载 effects 按声明顺序执行，先订阅后推送 */}
+      <TaskCenter tasks={tasks} />
     </div>
   )
 }
