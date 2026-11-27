@@ -2,6 +2,11 @@
 
 本项目遵循语义化版本（SemVer）。首个正式版本为 `v0.1.0`。
 
+## [未发布]
+
+### 变更
+- 应用图标全面重绘为「双色同步圆弧 + 声波柱」：深色拟物金属背板，上弧红橙→翡翠绿、下弧青→黄绿高对比渐变，柔和实体切线箭头；`build/icon.svg` 为唯一矢量源，重导出 `build/icon.png`(1024)、`build/icon.icns`（mac 打包改用原生 icns）与 `build/icons/` 十规格 PNG，渲染层/站点 `app-icon.svg` 同步替换，新增 `scripts/generate-icns.sh` 一键导出
+
 ## [0.2.0] - 2026-11-26
 
 ### 新增

@@ -13,6 +13,7 @@ files:
   - '!tests/**'
   - '!docs/**'
   - '!music_logos/**'
+  - '!scripts/**'
   - '!build/*.svg'
   - '!playlist.txt'
   - '!planning.md'
@@ -34,7 +35,7 @@ npmRebuild: true
 
 mac:
   category: public.app-category.music
-  icon: build/icon.png
+  icon: build/icon.icns
   target:
     - dmg
     - zip
