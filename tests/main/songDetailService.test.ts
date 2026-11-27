@@ -31,6 +31,7 @@ describe('createSongDetailService.lookup', () => {
       '186016',
       { albumId: '18915' },
       { title: undefined, artist: undefined },
+      undefined,
     )
   })
 
@@ -44,6 +45,22 @@ describe('createSongDetailService.lookup', () => {
       '186016',
       { albumId: '18915' },
       { title: '晴天', artist: '周杰伦' },
+      undefined,
+    )
+  })
+
+  it('登录凭证透传给适配器（QQ 搜索兜底需登录态）', async () => {
+    const detail = vi.fn().mockResolvedValue({ lyrics: 'x' })
+    const service = createSongDetailService({
+      resolveAdapter: vi.fn().mockResolvedValue(makeAdapter({ detail })),
+      getCredential: vi.fn().mockReturnValue('qq-session-token'),
+    })
+    await service.lookup({ ...baseRequest, platform: 'qqmusic', title: '晴天', artist: '周杰伦' })
+    expect(detail).toHaveBeenCalledWith(
+      '186016',
+      { albumId: '18915' },
+      { title: '晴天', artist: '周杰伦' },
+      'qq-session-token',
     )
   })
 

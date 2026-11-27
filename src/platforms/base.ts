@@ -117,6 +117,7 @@ export interface PlatformSongDetail {
     songId: string,
     identifiers: PlatformSongIdentifiers,
     meta?: { title?: string; artist?: string },
+    credential?: string,
   ): Promise<SongDetailData>
 }
 

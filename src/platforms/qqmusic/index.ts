@@ -141,15 +141,20 @@ export class QqMusicAdapter extends BasePlatformAdapter {
   // ==============================
 
   readonly encyclopedia: PlatformEncyclopedia = {
-    search: async (kind: EncyclopediaKind, name: string): Promise<EncyclopediaCandidate[]> => {
-      return this.searchEncyclopedia(kind, name)
+    search: async (
+      kind: EncyclopediaKind,
+      name: string,
+      credential?: string,
+    ): Promise<EncyclopediaCandidate[]> => {
+      return this.searchEncyclopedia(kind, name, credential)
     },
     detail: async (
       kind: EncyclopediaKind,
       id: string,
       name?: string,
+      credential?: string,
     ): Promise<EncyclopediaContent> => {
-      return this.fetchEncyclopediaDetail(kind, id, name)
+      return this.fetchEncyclopediaDetail(kind, id, name, credential)
     },
   }
 
@@ -158,8 +163,8 @@ export class QqMusicAdapter extends BasePlatformAdapter {
   // ==============================
 
   readonly songDetail: PlatformSongDetail = {
-    detail: (songId, identifiers, meta): Promise<SongDetailData> => {
-      return this.fetchSongDetail(songId, identifiers, meta)
+    detail: (songId, identifiers, meta, credential): Promise<SongDetailData> => {
+      return this.fetchSongDetail(songId, identifiers, meta, credential)
     },
   }
 
@@ -167,13 +172,16 @@ export class QqMusicAdapter extends BasePlatformAdapter {
     _songId: string,
     identifiers: PlatformSongIdentifiers,
     meta?: { title?: string; artist?: string },
+    credential?: string,
   ): Promise<SongDetailData> {
     let songMid = identifiers.songMid
     let albumMid = identifiers.albumMid
     // 兜底定位：次级标识缺失（旧缓存/旧本地数据/手工歌单）时按「歌名 + 歌手」搜索，
     // 取精确歌名命中且歌手相符的首条，回填 mid/albumMid（getSongInfo 用数字 id 反查实测 404，不可用）
     if (!songMid && meta?.title) {
-      const fallback = await this.searchSongMids(meta.title, meta.artist).catch(() => null)
+      const fallback = await this.searchSongMids(meta.title, meta.artist, credential).catch(
+        () => null,
+      )
       songMid = fallback?.songMid
       if (!albumMid) albumMid = fallback?.albumMid
     }
@@ -207,11 +215,12 @@ export class QqMusicAdapter extends BasePlatformAdapter {
   private async searchSongMids(
     title: string,
     artist?: string,
+    credential?: string,
   ): Promise<{ songMid?: string; albumMid?: string } | null> {
     const res = await this.call(
       'GET',
       `/search?keyword=${encodeURIComponent(title)}&type=song&limit=10&page=1`,
-      '',
+      credential ?? '',
     )
     const items = asArray(res.items).map((raw) => asObject(raw))
     const matches = items.filter(
@@ -230,12 +239,16 @@ export class QqMusicAdapter extends BasePlatformAdapter {
     }
   }
 
-  private async searchEncyclopedia(kind: EncyclopediaKind, name: string): Promise<EncyclopediaCandidate[]> {
+  private async searchEncyclopedia(
+    kind: EncyclopediaKind,
+    name: string,
+    credential?: string,
+  ): Promise<EncyclopediaCandidate[]> {
     const type = kind === 'singer' ? 'singer' : 'album'
     const res = await this.call(
       'GET',
       `/search?keyword=${encodeURIComponent(name)}&type=${type}&limit=20&page=1`,
-      '',
+      credential ?? '',
     )
     const items = asArray(res.items)
     return items
@@ -271,9 +284,10 @@ export class QqMusicAdapter extends BasePlatformAdapter {
     kind: EncyclopediaKind,
     id: string,
     name?: string,
+    credential?: string,
   ): Promise<EncyclopediaContent> {
     if (kind === 'singer') return this.fetchSingerSongs(id)
-    return this.fetchAlbumTracks(id, name)
+    return this.fetchAlbumTracks(id, name, credential)
   }
 
   /** 面板曲目附歌曲页跳转：QQ 歌曲页用 songMid，缺失时不提供跳转 */
@@ -302,7 +316,11 @@ export class QqMusicAdapter extends BasePlatformAdapter {
   }
 
   /** 专辑曲目：按专辑名搜索歌曲并精确过滤专辑名（包内无专辑曲目接口，实测可用） */
-  private async fetchAlbumTracks(albumMid: string, name?: string): Promise<EncyclopediaContent> {
+  private async fetchAlbumTracks(
+    albumMid: string,
+    name?: string,
+    credential?: string,
+  ): Promise<EncyclopediaContent> {
     const keyword = (name ?? '').trim()
     if (!keyword) {
       throw new Error('QQ音乐：获取专辑曲目需要专辑名')
@@ -310,7 +328,7 @@ export class QqMusicAdapter extends BasePlatformAdapter {
     const res = await this.call(
       'GET',
       `/search?keyword=${encodeURIComponent(keyword)}&type=song&limit=50&page=1`,
-      '',
+      credential ?? '',
     )
     const items = asArray(res.items).map((raw) => asObject(raw))
     const tracks = items.filter(

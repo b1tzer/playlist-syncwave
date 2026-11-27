@@ -132,8 +132,12 @@ const encyclopediaService = createEncyclopediaService({
   getCredential: (platform) => getPlatform(platform).getCredential(),
 })
 
-// 歌曲详情补充：歌词/发行时间/平台跳转（失败静默返回 null，详情卡保持本地信息）
-const songDetailService = createSongDetailService({ resolveAdapter })
+// 歌曲详情补充：歌词/发行时间/平台跳转（失败静默返回 null，详情卡保持本地信息）；
+// QQ 搜索兜底需登录态，经 getCredential 注入凭证
+const songDetailService = createSongDetailService({
+  resolveAdapter,
+  getCredential: (platform) => getPlatform(platform).getCredential(),
+})
 
 /** 广播歌单缓存后台刷新结果到所有窗口（渲染层按 platform/playlistId 过滤） */
 function broadcastPlaylistRefresh(channel: string, payload: unknown): void {

@@ -32,6 +32,8 @@ function cacheKey(request: SongDetailRequest): string {
  */
 export function createSongDetailService(deps: {
   resolveAdapter: (platformId: string) => Promise<PlatformAdapter>
+  /** 平台登录凭证（QQ 搜索兜底需登录态；未提供视为匿名） */
+  getCredential?: (platformId: string) => string | null
   now?: () => number
 }) {
   const log = createLogger({ module: 'main.song-detail' })
@@ -61,11 +63,14 @@ export function createSongDetailService(deps: {
     try {
       const adapter = await deps.resolveAdapter(request.platform)
       if (!adapter.songDetail) return null
+      const credential = deps.getCredential?.(request.platform) ?? undefined
       const result = await withTimeout(
-        adapter.songDetail.detail(request.songId, request.identifiers ?? {}, {
-          title: request.title,
-          artist: request.artist,
-        }),
+        adapter.songDetail.detail(
+          request.songId,
+          request.identifiers ?? {},
+          { title: request.title, artist: request.artist },
+          credential,
+        ),
         PLATFORM_TIMEOUT_MS,
       )
       lru.set(key, result)
