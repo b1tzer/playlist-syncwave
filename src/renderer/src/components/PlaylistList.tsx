@@ -22,9 +22,6 @@ export interface PlaylistListItem {
   sources?: Array<{ platform: string; playlistId: string }>
 }
 
-/** 多个来源 logo 堆叠时的固定 Z 轴旋转角度（度）：所有 logo 统一倾斜，模拟整齐的专辑堆叠视角 */
-const STACKED_LOGO_ROTATION = -8
-
 interface PlaylistListProps<T extends PlaylistListItem> {
   items: T[]
   /** 本地歌单来源 logo 所需的平台元信息 */
@@ -168,7 +165,7 @@ export default function PlaylistList<T extends PlaylistListItem>({
         const flashing = flashIds?.has(item.id) ?? false
         const entered = enteredIds.has(item.id)
         const sources = item.sources ?? []
-        /** 多个来源时堆叠展示：重叠 30%、逐个微旋转，像一叠散开的专辑 */
+        /** 多个来源时堆叠展示：每个 logo 与前一个重叠 40%，不旋转 */
         const stacked = sources.length > 1
         return (
           <li
@@ -219,19 +216,24 @@ export default function PlaylistList<T extends PlaylistListItem>({
               >
                 <CoverImage src={item.coverUrl} alt={item.name} size="sm" fallbackIcon="queue_music" />
                 <MarqueeText text={item.name} className={playlistNameClass} />
-                <span className="flex shrink-0 items-center gap-1">
+                <span
+                  className="flex shrink-0 items-center gap-1"
+                  style={stacked ? { perspective: '48px' } : undefined}
+                >
                   {sources.map((source, idx) => {
                     const meta = platforms?.find((m) => m.id === source.platform)
                     return (
                       <span
                         key={`${source.platform}:${source.playlistId}`}
                         title={meta?.name ?? source.platform}
-                        className={`inline-flex shrink-0 ${stacked ? 'drop-shadow' : ''}`}
+                        className={`inline-flex shrink-0 ${stacked ? 'drop-shadow-sm' : ''}`}
                         style={
                           stacked
                             ? {
-                                // translateX 百分比相对自身宽度：每个 logo 与前一个重叠 40%
-                                transform: `${idx === 0 ? '' : 'translateX(-40%) '}rotate(${STACKED_LOGO_ROTATION}deg)`,
+                                // logo 固定 1rem（h-4 w-4）：-0.5rem 即与前一个重叠 50%，布局级压缩宽度；
+                                // rotateY 绕竖直轴偏转，配合父级 perspective 呈现专辑堆叠的透视感
+                                marginLeft: idx > 0 ? '-0.5rem' : undefined,
+                                transform: 'rotateY(20deg)',
                               }
                             : undefined
                         }
