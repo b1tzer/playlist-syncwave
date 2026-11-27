@@ -60,16 +60,16 @@ function toIdString(value: number | undefined): string | undefined {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? String(value) : undefined
 }
 
-/** 歌手/实体 id 数组 → 字符串数组（数字/字符串/带 id 字段的对象均兼容），去重去空 */
+/** 歌手/实体 id 数组 → 字符串数组（数字/字符串/带 id 字段的对象均兼容），去重去空；数字 0 视为缺 id（同网易云上游脏数据） */
 function toIdList(value: unknown): string[] | undefined {
   const ids = asArray(value)
     .map((x) => {
-      if (typeof x === 'number') return String(x)
+      if (typeof x === 'number') return x > 0 ? String(x) : undefined
       if (typeof x === 'string') return x
       const o = asObject(x)
       return pickString(o.id, o.singerid, o.singer_id, o.singerId)
     })
-    .filter((x): x is string => Boolean(x))
+    .filter((x): x is string => Boolean(x) && x !== '0')
   const unique = [...new Set(ids)]
   return unique.length > 0 ? unique : undefined
 }

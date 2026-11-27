@@ -590,6 +590,35 @@ describe('KugouAdapter — 映射契约', () => {
     )
   })
 
+  it('搜索映射：SingerId 为 0 的上游脏数据不进入 singerIds（点击回退名字搜索）', async () => {
+    const api = makeApi({
+      search: async () => ({
+        status: 200,
+        body: {
+          data: {
+            lists: [
+              {
+                FileHash: 'ABC123',
+                SongName: '晴天 (原唱 周杰伦)',
+                SingerName: 'RyaVocal',
+                SingerId: [0],
+                AlbumName: 'Cover',
+                AlbumID: 77,
+                MixSongID: 88,
+                Duration: 269,
+              },
+            ],
+          },
+        },
+        cookie: [],
+      }),
+    })
+    const songs = await new KugouAdapter(api, DEVICE).searchSongs('c', '晴天')
+    expect(songs[0].artist).toBe('RyaVocal')
+    expect(songs[0].identifiers?.singerIds).toBeUndefined()
+    expect(songs[0].identifiers).toEqual({ albumId: '77', mixSongId: '88' })
+  })
+
   it('搜索映射：兼容嵌套数组协议版本（lists[0] 为歌曲数组）', async () => {
     const api = makeApi({
       search: async () => ({

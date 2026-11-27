@@ -425,7 +425,9 @@ function mapTrack(t: unknown): PlatformSong {
     .filter((a): a is string => a !== undefined)
   const singerIds = asArray(item.ar ?? item.artists)
     .map((a) => pickString(asObject(a).id))
-    .filter((id): id is string => id !== undefined)
+    // 上游翻唱/改编条目的歌手 id 常为 0（数字 0 经 pickString 转成 "0"），
+    // 直达 artists 接口必 404：过滤掉，点击时回退名字搜索
+    .filter((id): id is string => id !== undefined && id !== '0')
   const identifiers = {
     albumId: pickString(album.id),
     ...(singerIds.length ? { singerIds } : {}),

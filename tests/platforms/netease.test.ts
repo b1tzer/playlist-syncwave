@@ -170,6 +170,30 @@ describe('NeteaseAdapter — 映射契约', () => {
     })
   })
 
+  it('歌单歌曲映射：歌手 id 为 0 的上游脏数据不进入 singerIds（点击回退名字搜索）', async () => {
+    const api = makeApi({
+      playlist_detail: async () => ({
+        body: {
+          playlist: {
+            tracks: [
+              {
+                id: 8,
+                name: '晴天 (原唱 周杰伦)',
+                ar: [{ id: 0, name: 'RyaVocal' }],
+                al: { name: 'Cover' },
+                dt: 240000,
+              },
+            ],
+          },
+        },
+      }),
+    })
+    const songs = await new NeteaseAdapter(api).getPlaylistSongs('c', '1')
+    expect(songs[0].artist).toBe('RyaVocal')
+    expect(songs[0].identifiers?.singerIds).toBeUndefined()
+    expect(songs[0].identifiers).toBeUndefined()
+  })
+
   it('歌单歌曲映射：多歌手拼接、时长毫秒', async () => {
     const api = makeApi({
       playlist_detail: async () => ({

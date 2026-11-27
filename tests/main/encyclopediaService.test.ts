@@ -86,6 +86,11 @@ describe('rankCandidates — 同名消歧打分', () => {
     const ranked = rankCandidates('周杰伦', [candidate({ id: '', name: '周杰伦' })])
     expect(decideDirect(ranked)).toBe(false)
   })
+
+  it('decideDirect：榜首 id 为 "0" 的上游脏候选不直达', () => {
+    const ranked = rankCandidates('周杰伦', [candidate({ id: '0', name: '周杰伦' })])
+    expect(decideDirect(ranked)).toBe(false)
+  })
 })
 
 describe('createEncyclopediaService.lookup', () => {
@@ -161,6 +166,42 @@ describe('createEncyclopediaService.lookup', () => {
     expect(detail).toHaveBeenCalledWith('singer', '6452', '周杰伦', undefined)
     expect(search).not.toHaveBeenCalled()
     expect(store.find).not.toHaveBeenCalled()
+  })
+
+  it('请求自带 id 为 "0"（上游脏数据）→ 跳过直达，回退名字搜索', async () => {
+    const search = vi.fn().mockResolvedValue([{ id: 'c1', name: '周杰伦' }])
+    const detail = vi.fn().mockResolvedValue({
+      kind: 'singer',
+      id: 'c1',
+      name: '周杰伦',
+      songs: [{ id: '186016', title: '晴天', artist: '周杰伦' }],
+      source: 'netease',
+    })
+    const { service } = setup({ encyclopedia: { search, detail } })
+    const result = await service.lookup({ ...baseQuery, id: '0' })
+    expect(result).toMatchObject({ status: 'content', content: { id: 'c1' } })
+    // 无效 id 不发直达请求，走搜索
+    expect(detail).not.toHaveBeenCalledWith('singer', '0', '周杰伦', undefined)
+    expect(search).toHaveBeenCalledWith('singer', '周杰伦', undefined)
+  })
+
+  it('纠偏映射指向无效 id（空串脏数据）→ 清掉映射并回退搜索', async () => {
+    const search = vi.fn().mockResolvedValue([{ id: 'c1', name: '周杰伦' }])
+    const detail = vi.fn().mockResolvedValue({
+      kind: 'singer',
+      id: 'c1',
+      name: '周杰伦',
+      songs: [{ id: '186016', title: '晴天', artist: '周杰伦' }],
+      source: 'netease',
+    })
+    const { service, store } = setup({
+      encyclopedia: { search, detail },
+      mapping: { entityId: '', entityName: '周杰伦' },
+    })
+    const result = await service.lookup(baseQuery)
+    expect(result).toMatchObject({ status: 'content', content: { id: 'c1' } })
+    expect(store.remove).toHaveBeenCalledWith('netease', 'singer', '周杰伦')
+    expect(search).toHaveBeenCalledWith('singer', '周杰伦', undefined)
   })
 
   it('纠偏映射命中 → 直达详情；forceSearch 跳过映射走搜索', async () => {

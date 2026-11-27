@@ -62,15 +62,24 @@ export function rankCandidates(
 }
 
 /**
+ * 实体 id 有效性：非空字符串且不是 "0"。
+ * 上游脏数据把缺 id 记为 0（翻唱/改编条目），经 pickString 转成 "0" 后
+ * 直达详情接口必 404；判定无效时回退名字搜索。
+ */
+export function isValidEntityId(id: string | undefined): id is string {
+  return typeof id === 'string' && id.length > 0 && id !== '0'
+}
+
+/**
  * 唯一高置信判定：榜首名字精确（1000）或别名精确（900）命中，
  * 且次席未达到别名精确档位（无第二个精确命中）。
- * 榜首 id 必须非空（搜索层可能返回无 id 的残缺条目）。
+ * 榜首 id 必须有效（搜索层可能返回无 id 的残缺条目）。
  * 满足则服务层直接拉详情，否则返回候选列表让用户点选。
  */
 export function decideDirect(ranked: RankedCandidate[]): boolean {
   if (ranked.length === 0) return false
   const top = ranked[0]
-  if (!top.candidate.id) return false
+  if (!isValidEntityId(top.candidate.id)) return false
   const second = ranked[1]
   return top.score >= 900 && (second === undefined || second.score < 900)
 }
@@ -191,11 +200,14 @@ export function createEncyclopediaService(deps: {
         query.forceSearch
           ? undefined
           : (query.id ?? resolveEntityId(query, mapping))
-      if (directId) {
+      if (isValidEntityId(directId)) {
         const content = await fetchContent(encyclopedia, query.kind, directId, query.name, credential)
         if (content) return { status: 'content', content }
         // id 已失效（如平台清理数据）：清掉映射后走名字搜索
         if (mapping) deps.store.remove(query.platform, query.kind, query.name)
+      } else if (mapping) {
+        // 映射指向无效 id（空/0 等脏数据）：清掉后走名字搜索
+        deps.store.remove(query.platform, query.kind, query.name)
       }
 
       // 2. 名字搜索 + 消歧打分
