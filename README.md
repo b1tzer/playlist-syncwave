@@ -51,7 +51,7 @@ npm run typecheck  # TypeScript 全量类型检查
 npm run lint       # ESLint
 ```
 
-发布前依次执行 `npm run typecheck && npm run lint && npm run test && npm run build`，全部通过后再打包；人工验收已于 2026-11-25 完成（清单见 `planning.md` 第 5 节）。当前基线：457 项测试全部通过（含 jsdom + Testing Library 组件测试）。
+发布前依次执行 `npm run typecheck && npm run lint && npm run test && npm run build`，全部通过后再打包；人工验收已于 2026-11-25 完成（清单见 `planning.md` 第 5 节）。当前基线：463 项测试全部通过（含 jsdom + Testing Library 组件测试）。
 
 ### 打包
 
