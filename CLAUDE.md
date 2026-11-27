@@ -78,7 +78,7 @@
 - 登录态内存缓存（`main/loginStatusCache.ts`）：`platform:login-status` 命中缓存直接返回（渲染层 reload 后秒回，不重复网络查询），首次查询写入；扫码登录成功/登出/保活失效清除，网页登录 cookie 到手先写 `pending` 临时态、后台校验/资料补全后覆盖为正式账号。
 - 数据层模式：`createXxxStore(db)` 依赖注入 + `appDatabase.getDatabase()` 统一入口 + `xxxService.ts` 供 IPC 调用。
 - npm 11 默认拦截安装脚本（如 electron 二进制），需 `npm install-scripts approve <pkg>` 后再 rebuild。
-- 酷狗平台规则：歌单列表仅显示自建/系统歌单，收藏的他人歌单不显示。判定用 v7/get_all_list 条目的 `type` 字段（实测 0=自建/系统收藏夹——默认收藏 `is_def=1`、我喜欢 `is_def=2`，1=收藏他人歌单；`is_mine` 恒为 0 不可用）。过滤只作用于显示列表（`fetchPlaylists`），写操作索引 `playlistIndex` 保留完整。酷狗搜索接口 `v2/search/song` 响应 `data.lists` 为**歌曲对象数组（flat）**，解析需兼容嵌套数组协议版本（见 `docs/platform-api-fields.md` 3.4）。
+- 酷狗平台规则：歌单列表仅显示自建/系统歌单，收藏的他人歌单不显示。判定用 v7/get_all_list 条目的 `type` 字段（实测 0=自建/系统收藏夹——默认收藏 `is_def=1`、我喜欢 `is_def=2`，1=收藏他人歌单；`is_mine` 恒为 0 不可用）。过滤只作用于显示列表（`fetchPlaylists`），写操作索引 `playlistIndex` 保留完整。酷狗搜索接口 `v2/search/song` 响应 `data.lists` 为**歌曲对象数组（flat）**，解析需兼容嵌套数组协议版本（见 `docs/platform-api-fields.md` 3.4）。酷狗创建歌单接口 `/cloudlist.service/v5/add_list` 部分协议版本**不返回 listid**（歌单实际已创建）：响应解析失败（含 listid=0）时回读歌单列表按名称兜底找回 id（800ms 后重试一次），仍未找到才报「创建歌单失败」。
 - 网易云平台规则：歌单列表仅显示自有歌单——过滤 `specialType=5`（「我喜欢的音乐」收藏夹）与 `subscribed=true`（收藏的他人歌单）；缺失字段视为自有。
 - 网易云 API 风控敏感：连续快速请求会触发 405 风控，需限速并支持重试。同步匹配阶段为受控并发池（`searchConcurrency` 默认 3）：`searchIntervalMs` 语义为**全局相邻两次搜索请求的最小间隔**（预约式限速器）；同一首歌「歌名+歌手」与「纯歌名」并行预取（预算内）；任务内关键词缓存（normalize(keyword)，含在途 promise 去重，失败不缓存）；任一请求被风控（rateLimited）触发全局冷却 4s 暂停后续发起；搜索请求超时 15s（建单/加歌 60s）。
 - QQ音乐 sealed token 依赖 `QQ_SESSION_SECRET`，该密钥已持久化到 userData，删除会导致全部登录失效。

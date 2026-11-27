@@ -1315,7 +1315,7 @@
 
 | 函数 | 上游接口 | 入参 | 说明 |
 |---|---|---|---|
-| `playlist_add` | 创建歌单 | `name`（trim 后）、`type: 0` | 返回新歌单 listid |
+| `playlist_add` | 创建歌单 | `name`（trim 后）、`type: 0` | ⚠️ 部分协议版本不返回 listid（歌单实际已创建）；解析失败（含 listid=0）时回读歌单列表按名称兜底找回 id，800ms 后重试一次，仍未找到才报错 |
 | `playlist_tracks_add` | 添加歌曲 | `listid`、`data` | `data` 为 `名称\|hash\|album_id\|mixsongid` 格式，多条逗号拼接，每批 ≤100；名称中的 `\|`/`,` 替换为空格；元数据在搜索/拉歌单时已缓存 |
 | `playlist_tracks_del` | 移除歌曲 | `listid`、`fileids` | **按云歌单条目 fileid 而非 hash**，逗号拼接；缓存缺失时先拉歌单歌曲填充 |
 | `playlist_update` | 重命名 | `listid`、`name`、`type`、`total_ver` | 必须携带歌单 type 与版本号 total_ver |

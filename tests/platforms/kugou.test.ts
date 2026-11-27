@@ -607,6 +607,49 @@ describe('KugouAdapter — 映射契约', () => {
     await expect(bad.createPlaylist('c', 'x')).rejects.toThrow('酷狗：创建歌单失败')
   })
 
+  it('创建歌单：响应未携带 listid（歌单实际已建）→ 回读歌单列表按名称兜底找回 id', async () => {
+    // 回归：v5/add_list 部分协议版本不返回 listid，曾导致「说失败但歌单已创建」
+    const api = makeApi({
+      playlist_add: async () => ({ status: 200, body: { status: 1 }, cookie: [] }),
+      user_playlist: async () => ({
+        status: 200,
+        body: { data: { info: [{ listid: 666, name: 'Coding Playlist' }] } },
+        cookie: [],
+      }),
+    })
+    const adapter = new KugouAdapter(api, DEVICE)
+    expect(await adapter.createPlaylist('c', 'Coding Playlist')).toBe('666')
+  })
+
+  it('创建歌单：响应无 listid 且列表同步延迟 → 稍等重试后按名称兜底', async () => {
+    let calls = 0
+    const api = makeApi({
+      playlist_add: async () => ({ status: 200, body: { status: 1 }, cookie: [] }),
+      user_playlist: async () => {
+        calls++
+        return {
+          status: 200,
+          body: {
+            data: { info: calls === 1 ? [] : [{ listid: 777, name: '延迟歌单' }] },
+          },
+          cookie: [],
+        }
+      },
+    })
+    const adapter = new KugouAdapter(api, DEVICE)
+    expect(await adapter.createPlaylist('c', '延迟歌单')).toBe('777')
+    expect(calls).toBe(2)
+  })
+
+  it('创建歌单：listid 为 0 视为无效，回读兜底；列表也没有 → 抛错', async () => {
+    const api = makeApi({
+      playlist_add: async () => ({ status: 200, body: { data: { listid: 0 } }, cookie: [] }),
+    })
+    await expect(new KugouAdapter(api, DEVICE).createPlaylist('c', '幽灵歌单')).rejects.toThrow(
+      '酷狗：创建歌单失败',
+    )
+  })
+
   it('添加歌曲：元数据缓存 miss 时抛明确错误', async () => {
     const adapter = new KugouAdapter(makeApi(), DEVICE)
     await expect(adapter.addSongsToPlaylist('c', '99', ['unknown'])).rejects.toThrow(

@@ -758,8 +758,33 @@ export class KugouAdapter extends BasePlatformAdapter {
       cookie: this.buildCookie(credential),
     })
     const data = asObject(res.data ?? res)
-    const id = pickString(data.listid, data.list_id, res.listid)
-    if (!id) throw new Error('酷狗：创建歌单失败')
+    // 实测 v5/add_list 部分协议版本不返回 listid（歌单实际已创建）：
+    // 响应字段先采样记录，解析失败时回读歌单列表按名称兜底找回 id
+    const id = pickString(data.listid, data.list_id, data.id, res.listid)
+    if (!id || id === '0') {
+      this.log.warn('playlist.create-no-id', '建单响应未携带歌单 id，回读列表兜底', {
+        name: trimmed,
+        sample: res,
+      })
+      // 平台列表可能有秒级同步延迟：未找到时稍等重试一次
+      let rows = await this.fetchPlaylistItems(credential)
+      let hit = rows.find((r) => pickString(r.name, r.specialname)?.trim() === trimmed)
+      if (!hit) {
+        await new Promise((resolve) => setTimeout(resolve, 800))
+        rows = await this.fetchPlaylistItems(credential)
+        hit = rows.find((r) => pickString(r.name, r.specialname)?.trim() === trimmed)
+      }
+      const fallbackId = hit ? pickString(hit.listid, hit.id) : undefined
+      if (!fallbackId) {
+        this.log.error('playlist.create-fallback-miss', '回读列表未找到刚创建的歌单', {
+          name: trimmed,
+          sample: rows.slice(0, 3).map((r) => pickString(r.name, r.specialname)),
+        })
+        throw new Error('酷狗：创建歌单失败（接口未返回歌单 id）')
+      }
+      this.playlistIndex.set(fallbackId, { listId: fallbackId, type: 0, totalVer: 0 })
+      return fallbackId
+    }
     this.playlistIndex.set(id, { listId: id, type: 0, totalVer: 0 })
     return id
   }
