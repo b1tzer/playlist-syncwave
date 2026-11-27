@@ -22,8 +22,8 @@ export interface PlaylistListItem {
   sources?: Array<{ platform: string; playlistId: string }>
 }
 
-/** 多个来源 logo 堆叠时的旋转角度序列（度，按下标取模），模拟散开的专辑堆叠视角 */
-const STACKED_LOGO_ROTATIONS = [-9, 6, -12, 4, -7, 10]
+/** 多个来源 logo 堆叠时的固定 Z 轴旋转角度（度）：所有 logo 统一倾斜，模拟整齐的专辑堆叠视角 */
+const STACKED_LOGO_ROTATION = -8
 
 interface PlaylistListProps<T extends PlaylistListItem> {
   items: T[]
@@ -230,10 +230,8 @@ export default function PlaylistList<T extends PlaylistListItem>({
                         style={
                           stacked
                             ? {
-                                // translateX 百分比相对自身宽度：每个 logo 与前一个重叠 30%
-                                transform: `${idx === 0 ? '' : 'translateX(-30%) '}rotate(${
-                                  STACKED_LOGO_ROTATIONS[idx % STACKED_LOGO_ROTATIONS.length]
-                                }deg)`,
+                                // translateX 百分比相对自身宽度：每个 logo 与前一个重叠 40%
+                                transform: `${idx === 0 ? '' : 'translateX(-40%) '}rotate(${STACKED_LOGO_ROTATION}deg)`,
                               }
                             : undefined
                         }
